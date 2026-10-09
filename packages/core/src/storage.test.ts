@@ -13,7 +13,7 @@ async function fixture() {
 const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z"};
 
 test("empty database migrates with foreign keys and FTS5",async()=>{const x=await fixture();try{
- assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations").all(), row=>({...row})),[{version:1}]);
+ assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2}]);
  assert.equal((x.store.db.prepare("PRAGMA foreign_keys").get() as {foreign_keys:number}).foreign_keys,1);
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records_fts WHERE source_records_fts MATCH 'review'").get() as {n:number}).n,1);
@@ -37,16 +37,22 @@ test("retention removes excerpts, FTS rows and caches but keeps tombstone",async
  assert.equal((x.store.db.prepare("SELECT reason FROM deletion_tombstones").get() as {reason:string}).reason,"retention_expired");
 }finally{await x.cleanup();}});
 
-test("review states require audited API transition and cannot leave terminal state",async()=>{const x=await fixture();try{
+test("direct audit pre-inserts cannot bypass API-only transitions for any review entity",async()=>{const x=await fixture();try{
  assert.throws(()=>x.store.db.prepare("INSERT INTO action_items(id,description,review_state) VALUES('bad','bad','approved')").run(),/start proposed/);
  x.store.db.prepare("INSERT INTO action_items(id,description) VALUES(?,?)").run("a1","Review synthetic PR");
- assert.throws(()=>x.store.db.prepare("UPDATE action_items SET review_state='approved' WHERE id='a1'").run(),/requires audit/);
+ x.store.db.prepare("INSERT INTO people(id,display_name) VALUES('p1','Synthetic Person')").run();
+ x.store.db.prepare("INSERT INTO evidence(id,subject_person_id,observation,author,observed_at,sensitivity) VALUES('e1','p1','Synthetic observation','manager','2026-10-09T09:00:00.000Z','private')").run();
+ x.store.db.prepare("INSERT INTO drafts(id,type,period,audience,input_record_ids_json,generated_at) VALUES('d1','review','2026-Q4','manager','[]','2026-10-09T09:00:00.000Z')").run();
+ for(const [type,id,table,column] of [["action_item","a1","action_items","review_state"],["evidence","e1","evidence","status"],["draft","d1","drafts","reviewer_state"]] as const){
+  assert.throws(()=>x.store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,'proposed','approved','intruder','bypass','2026-10-09T10:00:00.000Z')").run(type,id),/only be written by storage API/);
+  assert.throws(()=>x.store.db.prepare(`UPDATE ${table} SET ${column}='approved' WHERE id=?`).run(id),/requires storage API/);
+  x.store.transition(type,id,"approved","manager","verified source","2026-10-09T10:00:00.000Z");
+  assert.equal((x.store.db.prepare(`SELECT ${column} state FROM ${table} WHERE id=?`).get(id) as {state:string}).state,"approved");
+ }
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit").get() as {n:number}).n,3);
  x.store.transition("action_item","a1","approved","manager","verified source","2026-10-09T10:00:00.000Z");
- assert.equal((x.store.db.prepare("SELECT review_state FROM action_items WHERE id='a1'").get() as {review_state:string}).review_state,"approved");
  assert.throws(()=>x.store.transition("action_item","a1","rejected","manager","changed mind","2026-10-09T11:00:00.000Z"),/terminal review state/);
- x.store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','a1','approved','rejected','intruder','bypass','2026-10-09T11:00:00.000Z')").run();
- assert.throws(()=>x.store.db.prepare("UPDATE action_items SET review_state='rejected' WHERE id='a1'").run(),/terminal review state/);
- assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit WHERE entity_id='a1'").get() as {n:number}).n,2);
+ assert.throws(()=>x.store.db.prepare("UPDATE action_items SET review_state='rejected' WHERE id='a1'").run(),/requires storage API/);
  assert.throws(()=>x.store.db.prepare("DELETE FROM review_audit WHERE entity_id='a1'").run(),/append-only/);
 }finally{await x.cleanup();}});
 
@@ -56,6 +62,14 @@ test("a deletion tombstone prevents stale sync from restoring excerpts",async()=
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"later",observedAt:"2026-10-11T00:00:00.000Z",records:[{...record,observedAt:"2026-10-11T00:00:00.000Z",lastSeenAt:"2026-10-11T00:00:00.000Z"}]});
  const row=x.store.db.prepare("SELECT excerpt,deleted_at FROM source_records").get() as {excerpt:null;deleted_at:string};
  assert.equal(row.excerpt,null); assert.equal(row.deleted_at,"2026-10-10T00:00:00.000Z");
+}finally{await x.cleanup();}});
+
+test("delete-before-sync persists a durable tombstone and suppresses stale materialization",async()=>{const x=await fixture();try{
+ x.store.deleteSource(record.provider,record.sourceId,"source_deleted","2026-10-10T00:00:00.000Z");
+ assert.deepEqual({...x.store.db.prepare("SELECT provider,source_id,content_hash FROM deletion_tombstones").get()},{provider:record.provider,source_id:record.sourceId,content_hash:null});
+ x.store.persistSync({connector:"github",scope:"acme/api",cursor:"stale",observedAt:record.observedAt,records:[record]});
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,0);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM deletion_tombstones").get() as {n:number}).n,1);
 }finally{await x.cleanup();}});
 
 test("versioned export/import and SQLite backup restore data",async()=>{const x=await fixture();try{

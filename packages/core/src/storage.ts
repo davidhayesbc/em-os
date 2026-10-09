@@ -124,6 +124,48 @@ CREATE TABLE deletion_tombstones (
  content_hash TEXT NOT NULL, PRIMARY KEY(provider,source_id)
 ) STRICT;
 `},
+  {
+    version: 2,
+    sql: `
+DROP TRIGGER action_review_guard;
+DROP TRIGGER evidence_review_guard;
+DROP TRIGGER draft_review_guard;
+DROP TRIGGER action_items_initial_review_guard;
+DROP TRIGGER evidence_initial_review_guard;
+DROP TRIGGER drafts_initial_review_guard;
+CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER review_audit_no_insert BEFORE INSERT ON review_audit WHEN em_review_write_mode() NOT IN ('transition','import') BEGIN SELECT RAISE(ABORT,'review audit may only be written by storage API'); END;
+CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.review_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER evidence_review_guard BEFORE UPDATE OF status ON evidence WHEN old.status <> new.status BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.status <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER draft_review_guard BEFORE UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER action_review_audit AFTER UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item',old.id,old.review_state,new.review_state,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+CREATE TRIGGER evidence_review_audit AFTER UPDATE OF status ON evidence WHEN old.status <> new.status AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('evidence',old.id,old.status,new.status,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+CREATE TRIGGER draft_review_audit AFTER UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('draft',old.id,old.reviewer_state,new.reviewer_state,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+ALTER TABLE deletion_tombstones RENAME TO deletion_tombstones_v1;
+CREATE TABLE deletion_tombstones (
+ provider TEXT NOT NULL, source_id TEXT NOT NULL, deleted_at TEXT NOT NULL, reason TEXT NOT NULL,
+ content_hash TEXT, PRIMARY KEY(provider,source_id)
+) STRICT;
+INSERT INTO deletion_tombstones SELECT * FROM deletion_tombstones_v1;
+DROP TABLE deletion_tombstones_v1;
+`},
 ] as const;
 
 export interface SourceInput {
@@ -143,8 +185,13 @@ function utc(value: string): string {
 
 export class SqliteStorage implements Storage {
  readonly db: DatabaseSync;
+ #reviewWrite: {mode:"transition"; actor:string; reason:string; changedAt:string}|{mode:"import"}|undefined;
  constructor(readonly path: string) {
   this.db = new DatabaseSync(path);
+  this.db.function("em_review_write_mode",()=>this.#reviewWrite?.mode??"none");
+  this.db.function("em_review_actor",()=>this.#reviewWrite?.mode==="transition"?this.#reviewWrite.actor:"");
+  this.db.function("em_review_reason",()=>this.#reviewWrite?.mode==="transition"?this.#reviewWrite.reason:"");
+  this.db.function("em_review_changed_at",()=>this.#reviewWrite?.mode==="transition"?this.#reviewWrite.changedAt:"");
   this.db.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000");
  }
  async initialize(): Promise<void> {
@@ -162,10 +209,11 @@ export class SqliteStorage implements Storage {
  }
  persistSync(batch: SyncBatch, beforeCursor?: ()=>void): void {
   const sql=`INSERT INTO source_records(id,provider,source_id,stable_url,occurred_at,observed_at,excerpt,content_hash,classification,last_seen_at,retention_until)
- VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,occurred_at=excluded.occurred_at,observed_at=excluded.observed_at,excerpt=excluded.excerpt,content_hash=excluded.content_hash,classification=excluded.classification,last_seen_at=excluded.last_seen_at,retention_until=excluded.retention_until,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`;
+ SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
+ ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,occurred_at=excluded.occurred_at,observed_at=excluded.observed_at,excerpt=excluded.excerpt,content_hash=excluded.content_hash,classification=excluded.classification,last_seen_at=excluded.last_seen_at,retention_until=excluded.retention_until,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`;
   this.transaction(()=>{
    const statement=this.db.prepare(sql);
-   for(const r of batch.records) statement.run(r.id,r.provider,r.sourceId,r.stableUrl??null,r.occurredAt?utc(r.occurredAt):null,utc(r.observedAt),r.excerpt??null,r.contentHash,r.classification,utc(r.lastSeenAt),r.retentionUntil?utc(r.retentionUntil):null);
+   for(const r of batch.records) statement.run(r.id,r.provider,r.sourceId,r.stableUrl??null,r.occurredAt?utc(r.occurredAt):null,utc(r.observedAt),r.excerpt??null,r.contentHash,r.classification,utc(r.lastSeenAt),r.retentionUntil?utc(r.retentionUntil):null,r.provider,r.sourceId);
    beforeCursor?.();
    this.db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,watermark,last_success_at,fetched_count) VALUES(?,?,?,?,?,?)
     ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,watermark=excluded.watermark,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO_UTC}`)
@@ -191,19 +239,20 @@ export class SqliteStorage implements Storage {
   if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
   const config={action_item:["action_items","review_state"],evidence:["evidence","status"],draft:["drafts","reviewer_state"]} as const;
   const [table,column]=config[entityType];
+  const at=utc(changedAt);
   this.transaction(()=>{ const row=this.db.prepare(`SELECT ${column} state FROM ${table} WHERE id=?`).get(entityId) as {state:string}|undefined; if(!row) throw new Error("entity not found");
    if(row.state===toState) return;
    if(row.state!=="proposed") throw new Error(`terminal review state cannot transition: ${row.state}`);
-   this.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,?,?,?,?,?)").run(entityType,entityId,row.state,toState,actor,reason,utc(changedAt));
-   this.db.prepare(`UPDATE ${table} SET ${column}=?,updated_at=? WHERE id=?`).run(toState,utc(changedAt),entityId);
+   this.#reviewWrite={mode:"transition",actor,reason,changedAt:at};
+   try { this.db.prepare(`UPDATE ${table} SET ${column}=?,updated_at=? WHERE id=?`).run(toState,at,entityId); }
+   finally { this.#reviewWrite=undefined; }
   });
  }
  deleteSource(provider:string, sourceId:string, reason:string, deletedAt:string): void {
-  this.transaction(()=>{ const row=this.db.prepare("SELECT id,content_hash FROM source_records WHERE provider=? AND source_id=?").get(provider,sourceId) as {id:string;content_hash:string}|undefined; if(!row)return;
+  this.transaction(()=>{ const row=this.db.prepare("SELECT id,content_hash FROM source_records WHERE provider=? AND source_id=?").get(provider,sourceId) as {id:string;content_hash:string}|undefined;
    const at=utc(deletedAt);
-   this.db.prepare("DELETE FROM cache_entries WHERE source_record_id=?").run(row.id);
-   this.db.prepare("UPDATE source_records SET excerpt=NULL,deleted_at=?,deletion_reason=?,updated_at=? WHERE id=?").run(at,reason,at,row.id);
-   this.db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES(?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET deleted_at=excluded.deleted_at,reason=excluded.reason,content_hash=excluded.content_hash").run(provider,sourceId,at,reason,row.content_hash);
+   if(row){this.db.prepare("DELETE FROM cache_entries WHERE source_record_id=?").run(row.id); this.db.prepare("UPDATE source_records SET excerpt=NULL,deleted_at=?,deletion_reason=?,updated_at=? WHERE id=?").run(at,reason,at,row.id);}
+   this.db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES(?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET deleted_at=excluded.deleted_at,reason=excluded.reason,content_hash=COALESCE(deletion_tombstones.content_hash,excluded.content_hash)").run(provider,sourceId,at,reason,row?.content_hash??null);
   });
  }
  applyRetention(now:string): number {
@@ -217,9 +266,11 @@ export class SqliteStorage implements Storage {
  }
  importData(data:StorageExport): void {
   if(data.format!=="em-os-storage"||data.version!==STORAGE_EXPORT_VERSION) throw new Error("unsupported storage export");
-  this.transaction(()=>{ this.db.exec("PRAGMA defer_foreign_keys=ON");
+  this.transaction(()=>{ this.db.exec("PRAGMA defer_foreign_keys=ON"); this.#reviewWrite={mode:"import"};
+   try {
    for(const table of [...clearTables].reverse()) this.db.exec(`DELETE FROM ${table}`);
    for(const table of exportTables) for(const row of data.tables[table]??[]) { const keys=Object.keys(row); if(!keys.length)continue; this.db.prepare(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(()=>"?").join(",")})`).run(...keys.map(k=>row[k] as never)); }
+   } finally { this.#reviewWrite=undefined; }
   });
  }
  async backupTo(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
