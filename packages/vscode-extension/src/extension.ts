@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { AttentionQueue, isSnapshotStale, type QueueChange, type QueueItem, type QueueSnapshot, syntheticOfflineSnapshot } from "./attentionQueue";
+import { AttentionQueue, effectiveItemFreshness, isSnapshotStale, mergeQueueSnapshot, type QueueChange, type QueueItem, type QueueSnapshot, syntheticOfflineSnapshot } from "./attentionQueue";
 
 const STATE_KEY = "em-os.attentionQueue.v1";
 
@@ -43,11 +43,12 @@ class QueueProvider implements vscode.TreeDataProvider<QueueNode> {
     }
 
     const data = node.item;
+    const freshness = effectiveItemFreshness(this.queue.snapshot, data, new Date());
     const item = new vscode.TreeItem(data.title, vscode.TreeItemCollapsibleState.None);
     item.id = `em-os.item.${data.id}`;
-    item.description = `${data.freshness.toUpperCase()} · ${data.status}${data.dueAt ? ` · due ${data.dueAt}` : ""}`;
+    item.description = `${freshness.toUpperCase()} · ${data.status}${data.dueAt ? ` · due ${data.dueAt}` : ""}`;
     item.tooltip = new vscode.MarkdownString([
-      `**${data.freshness === "stale" ? "STALE — not current" : "Current"}**`,
+      `**${freshness === "stale" ? "STALE — not current" : "Current"}**`,
       `Status: ${data.status}`,
       data.dueAt ? `Due: ${data.dueAt}` : "Due: not set",
       `Why: ${data.rationale}`,
@@ -55,11 +56,11 @@ class QueueProvider implements vscode.TreeDataProvider<QueueNode> {
       `Observed: ${data.observedAt}`,
       `Source: ${data.sourceLabel}`,
     ].join("\n\n"));
-    item.iconPath = new vscode.ThemeIcon(data.freshness === "stale" ? "warning" : "circle-large-outline");
+    item.iconPath = new vscode.ThemeIcon(freshness === "stale" ? "warning" : "circle-large-outline");
     item.contextValue = `em-os.queueItem.${data.status}`;
     item.command = { command: "em-os.openSource", title: "Open source", arguments: [node] };
     item.accessibilityInformation = {
-      label: `${data.title}. ${data.freshness}. ${data.status}. ${data.rationale}. ${data.dueAt ? `Due ${data.dueAt}` : "No due date"}. Source ${data.sourceLabel}`,
+      label: `${data.title}. ${freshness === "stale" ? "Stale, not current" : "Current"}. ${data.status}. ${data.rationale}. ${data.dueAt ? `Due ${data.dueAt}` : "No due date"}. Source ${data.sourceLabel}`,
       role: "treeitem",
     };
     return item;
@@ -103,7 +104,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("em-os.sync", async () => {
       const now = new Date();
-      const snapshot = syntheticOfflineSnapshot(now);
+      const snapshot = mergeQueueSnapshot(provider.getQueue().snapshot, syntheticOfflineSnapshot(now));
       await save(new AttentionQueue(snapshot));
       await view.reveal(provider.getChildren()[0]!, { focus: true, select: true });
       await vscode.window.showWarningMessage(snapshot.syncError ?? "Sync completed");

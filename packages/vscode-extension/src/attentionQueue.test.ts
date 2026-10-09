@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AttentionQueue, isSnapshotStale, syntheticOfflineSnapshot } from "./attentionQueue";
+import { AttentionQueue, effectiveItemFreshness, isSnapshotStale, mergeQueueSnapshot, syntheticOfflineSnapshot } from "./attentionQueue";
 
 const now = new Date("2026-10-09T09:00:00.000Z");
 
@@ -22,7 +22,27 @@ test("a previously fresh snapshot expires instead of being presented as current"
     items: snapshot.items.map((item) => ({ ...item, freshness: "fresh" as const })),
   };
   assert.equal(isSnapshotStale(fresh, now), true);
+  assert.equal(effectiveItemFreshness(fresh, fresh.items[0]!, now), "stale");
   assert.equal(isSnapshotStale({ ...fresh, generatedAt: "2026-10-09T08:30:00.000Z" }, now), false);
+});
+
+test("refresh preserves confirmed, completed, and snoozed action state", () => {
+  const original = syntheticOfflineSnapshot(now);
+  const extra = { ...original.items[0]!, id: "synthetic-completed", status: "proposed" as const };
+  let queue = new AttentionQueue({ ...original, items: [...original.items, extra] });
+  queue = queue.change({ type: "confirm", id: "synthetic-review-14" });
+  queue = queue.change({ type: "snooze", id: "synthetic-ci-27", until: "2026-10-10T09:00:00.000Z" });
+  queue = queue.change({ type: "complete", id: "synthetic-completed" });
+
+  const refreshed = syntheticOfflineSnapshot(new Date("2026-10-09T10:00:00.000Z"));
+  const merged = mergeQueueSnapshot(queue.snapshot, refreshed);
+  assert.equal(merged.items.find((item) => item.id === "synthetic-review-14")?.status, "confirmed");
+  assert.deepEqual(
+    merged.items.find((item) => item.id === "synthetic-ci-27"),
+    { ...refreshed.items[1], status: "snoozed", snoozedUntil: "2026-10-10T09:00:00.000Z" },
+  );
+  assert.equal(merged.items.find((item) => item.id === "synthetic-completed")?.status, "completed");
+  assert.equal(new AttentionQueue(merged).visible(now).some((item) => item.id === "synthetic-completed"), false);
 });
 
 test("confirm, snooze, and complete update action state", () => {
