@@ -10,6 +10,15 @@ const expect = (condition, message) => {
 expect(fixture.classification === 'synthetic', 'fixture must be classified synthetic');
 expect(fixture.probe.transport === 'UNVERIFIED', 'fixture must not claim a verified MCP transport');
 expect(fixture.probe.authentication === 'UNVERIFIED', 'fixture must not claim verified authentication');
+expect(
+  fixture.probe.requestedCapabilities.length === 1
+    && fixture.probe.requestedCapabilities[0] === 'tools/list',
+  'unapproved synthetic discovery must request only tools/list',
+);
+expect(
+  !fixture.probe.requestedCapabilities.includes('resources/list'),
+  'resources/list must remain absent until an explicit approval condition is modeled',
+);
 expect(fixture.probe.prohibitedOperations.includes('update'), 'write operations must be prohibited');
 expect(fixture.probe.prohibitedOperations.includes('delete'), 'delete operations must be prohibited');
 expect(fixture.probe.prohibitedOperations.includes('merge'), 'merge operations must be prohibited');
