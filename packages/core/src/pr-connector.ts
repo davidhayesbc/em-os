@@ -11,6 +11,7 @@ export type ConnectorFailureKind = "permission" | "rate-limit" | "offline" | "sc
 export interface PrConnectorConfig {
   provider: string;
   repositories: readonly string[];
+  sourceOrigins: readonly string[];
   scopes: readonly string[];
   pageSize?: number;
   maxPages?: number;
@@ -129,16 +130,20 @@ function timestamp(value: unknown, label: string): string {
   return result;
 }
 
-function stableUrl(value: unknown, repository: string, sourceId: string): string {
+function stableUrl(value: unknown, repository: string, sourceId: string, sourceOrigins: ReadonlySet<string>): string {
   const result = text(value, "record.url", 2048);
   let parsed: URL;
   try { parsed = new URL(result); } catch { throw new ConnectorError("schema", "record.url must be an absolute HTTPS URL", false); }
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash) throw new ConnectorError("schema", "record.url must be a stable HTTPS URL without credentials or fragment", false);
-  if (!parsed.pathname.includes(repository) || !parsed.pathname.split("/").includes(sourceId)) throw new ConnectorError("schema", "record.url must identify its repository and source ID", false);
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash || parsed.search) throw new ConnectorError("schema", "record.url must be a canonical HTTPS URL without credentials, query, or fragment", false);
+  if (!sourceOrigins.has(parsed.origin)) throw new ConnectorError("schema", "record.url origin is outside the configured allowlist", false);
+  const [owner, name] = repository.split("/");
+  if (parsed.pathname !== `/${owner}/${name}/pull/${sourceId}`) {
+    throw new ConnectorError("schema", "record.url must use the canonical /owner/repository/pull/source-id path", false);
+  }
   return result;
 }
 
-export function parsePrPage(value: unknown, expectedRepository: string): PrPage {
+export function parsePrPage(value: unknown, expectedRepository: string, sourceOrigins: readonly string[] = []): PrPage {
   const page = object(value, "page");
   exactKeys(page, allowedPageKeys, "page");
   if (page.schemaVersion !== PR_CONNECTOR_SCHEMA_VERSION) throw new ConnectorError("schema", "unsupported PR connector schema version", false);
@@ -161,7 +166,7 @@ export function parsePrPage(value: unknown, expectedRepository: string): PrPage 
     if (typeof record.isDraft !== "boolean" || typeof record.reviewRequestedOfViewer !== "boolean") throw new ConnectorError("schema", "record boolean fields are invalid", false);
     changes.push({ record: {
       provider: "", repository, id: sourceId, title: text(record.title, "record.title", 300),
-      url: stableUrl(record.url, repository, sourceId), author: text(record.author, "record.author", 200), state,
+      url: stableUrl(record.url, repository, sourceId, new Set(sourceOrigins)), author: text(record.author, "record.author", 200), state,
       isDraft: record.isDraft, reviewRequestedOfViewer: record.reviewRequestedOfViewer, ciStatus,
       ...(record.ciUpdatedAt === undefined ? {} : { ciUpdatedAt: timestamp(record.ciUpdatedAt, "record.ciUpdatedAt") }),
       updatedAt: timestamp(record.updatedAt, "record.updatedAt"),
@@ -217,6 +222,13 @@ export async function syncPullRequests(config: Readonly<PrConnectorConfig>, tran
   if (transport.route !== "synthetic-fixture" && transport.route !== "approved-claude-runner") throw new ConnectorError("configuration", "unapproved PR ingress route", false);
   const repositories = [...new Set(config.repositories)];
   if (repositories.length === 0 || repositories.some((repo) => !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo))) throw new ConnectorError("configuration", "an explicit repository allowlist is required", false);
+  const sourceOrigins = [...new Set(config.sourceOrigins)];
+  if (sourceOrigins.length === 0 || sourceOrigins.some((origin) => {
+    try {
+      const parsed = new URL(origin);
+      return parsed.protocol !== "https:" || parsed.origin !== origin || parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "";
+    } catch { return true; }
+  })) throw new ConnectorError("configuration", "an explicit canonical HTTPS source origin allowlist is required", false);
   if (config.scopes.length !== 1 || config.scopes[0] !== PR_READ_SCOPE) throw new ConnectorError("configuration", `the only approved scope is ${PR_READ_SCOPE}`, false);
   const limit = config.pageSize ?? MAX_PAGE_SIZE;
   const maxPages = config.maxPages ?? MAX_PAGES_PER_SYNC;
@@ -233,7 +245,7 @@ export async function syncPullRequests(config: Readonly<PrConnectorConfig>, tran
       while (pages < maxPages) {
         const response = await fetchWithRetry(transport, { repository, scopes: [PR_READ_SCOPE], limit, ...(cursor.cursor ? { cursor: cursor.cursor } : {}), ...(!cursor.cursor && cursor.watermark ? { updatedSince: cursor.watermark } : {}) }, retryBudget);
         retries += response.retries;
-        const page = parsePrPage(response.raw, repository);
+        const page = parsePrPage(response.raw, repository, sourceOrigins);
         const normalized = deduplicate(page.changes, config.provider);
         const next = { ...(page.nextCursor ? { cursor: page.nextCursor } : {}), ...(page.watermark ? { watermark: page.watermark } : cursor.watermark ? { watermark: cursor.watermark } : {}) };
         await store.commitPage({ connectorId, repository, records: normalized.records, deletedSourceIds: normalized.deleted, cursor: next, observedAt: page.observedAt });

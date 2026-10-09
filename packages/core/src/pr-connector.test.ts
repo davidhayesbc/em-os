@@ -49,7 +49,7 @@ async function fixturePages(): Promise<unknown[]> {
   return fixture.pages["acme/widget"] ?? [];
 }
 
-const config = { provider: "synthetic-git", repositories: ["acme/widget"], scopes: ["pull_requests:read"], maxTransientRetries: 1 } as const;
+const config = { provider: "synthetic-git", repositories: ["acme/widget"], sourceOrigins: ["https://example.invalid"], scopes: ["pull_requests:read"], maxTransientRetries: 1 } as const;
 
 test("paginates, deduplicates, reconciles updates and deletions", async () => {
   const transport = new PagesTransport(await fixturePages());
@@ -99,6 +99,28 @@ test("rejects schema drift and preserves prior data", async () => {
   assert.throws(() => parsePrPage({ schemaVersion: 2, observedAt: new Date().toISOString(), records: [] }, "acme/widget"), /schema version/);
 });
 
+test("accepts only allowlisted origins and canonical repository PR paths", async () => {
+  const [fixture] = await fixturePages();
+  assert.doesNotThrow(() => parsePrPage(fixture, "acme/widget", config.sourceOrigins));
+  const withUrl = (url: string): unknown => {
+    const page = structuredClone(fixture) as { records: Array<Record<string, unknown>> };
+    page.records[0]!.url = url;
+    return page;
+  };
+  assert.throws(
+    () => parsePrPage(withUrl("https://attacker.invalid/not-acme/widget/pull/101"), "acme/widget", config.sourceOrigins),
+    /origin is outside the configured allowlist/,
+  );
+  assert.throws(
+    () => parsePrPage(withUrl("https://example.invalid/not-acme/widget/pull/101"), "acme/widget", config.sourceOrigins),
+    /canonical \/owner\/repository\/pull\/source-id path/,
+  );
+  assert.throws(
+    () => parsePrPage(withUrl("https://example.invalid/acme/widget/pull/999"), "acme/widget", config.sourceOrigins),
+    /canonical \/owner\/repository\/pull\/source-id path/,
+  );
+});
+
 test("fixture mode performs no network access", async () => {
   const originalFetch = globalThis.fetch;
   let networkCalls = 0;
@@ -119,6 +141,10 @@ test("fails closed for unapproved routes, scopes, and repositories", async () =>
   await assert.rejects(
     syncPullRequests({ ...config, repositories: ["not-a-repository"] }, new PagesTransport(pages), new MemoryStore()),
     /allowlist/,
+  );
+  await assert.rejects(
+    syncPullRequests({ ...config, sourceOrigins: ["http://example.invalid"] }, new PagesTransport(pages), new MemoryStore()),
+    /source origin allowlist/,
   );
   const transport = new PagesTransport(pages);
   (transport as unknown as { route: string }).route = "direct-mcp";
