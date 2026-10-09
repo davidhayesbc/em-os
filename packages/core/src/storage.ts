@@ -2,6 +2,7 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { PullRequestRecord, Storage } from "./contracts.js";
+import type { SlackPersistencePage } from "./slack-connector.js";
 
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
@@ -124,6 +125,28 @@ CREATE TABLE deletion_tombstones (
  content_hash TEXT NOT NULL, PRIMARY KEY(provider,source_id)
 ) STRICT;
 `},
+  {
+    version: 2,
+    sql: `
+CREATE TABLE review_queue_proposals (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('action','decision')),
+ description TEXT NOT NULL, source_record_id TEXT NOT NULL REFERENCES source_records(id) ON DELETE RESTRICT,
+ review_state TEXT NOT NULL DEFAULT 'proposed' CHECK(review_state IN ('proposed','approved','rejected')),
+ created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC})
+) STRICT;
+CREATE INDEX review_queue_proposals_state_idx ON review_queue_proposals(review_state,kind,updated_at);
+CREATE TRIGGER review_queue_proposals_initial_guard BEFORE INSERT ON review_queue_proposals WHEN new.review_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'review queue proposals must start proposed'); END;
+CREATE TRIGGER review_queue_proposals_terminal_guard BEFORE UPDATE OF review_state ON review_queue_proposals WHEN old.review_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'terminal review state cannot transition'); END;
+CREATE TABLE proposal_review_audit (
+ id INTEGER PRIMARY KEY, proposal_id TEXT NOT NULL REFERENCES review_queue_proposals(id) ON DELETE RESTRICT,
+ from_state TEXT NOT NULL, to_state TEXT NOT NULL, actor TEXT NOT NULL, reason TEXT NOT NULL, changed_at TEXT NOT NULL
+) STRICT;
+CREATE TRIGGER proposal_review_audit_no_update BEFORE UPDATE ON proposal_review_audit BEGIN SELECT RAISE(ABORT,'proposal review audit is append-only'); END;
+CREATE TRIGGER proposal_review_audit_no_delete BEFORE DELETE ON proposal_review_audit BEGIN SELECT RAISE(ABORT,'proposal review audit is append-only'); END;
+CREATE TRIGGER review_queue_proposals_audit_guard BEFORE UPDATE OF review_state ON review_queue_proposals WHEN old.review_state <> new.review_state BEGIN
+ SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM proposal_review_audit WHERE proposal_id=old.id AND from_state=old.review_state AND to_state=new.review_state) THEN RAISE(ABORT,'review transition requires audit') END;
+END;
+`},
 ] as const;
 
 export interface SourceInput {
@@ -132,7 +155,7 @@ export interface SourceInput {
 }
 export interface SyncBatch { connector: string; scope: string; cursor?: string; watermark?: string; observedAt: string; records: readonly SourceInput[]; }
 export interface StorageExport { format: "em-os-storage"; version: 1; exportedAt: string; tables: Record<string, Record<string, unknown>[]>; }
-const exportTables = ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","deletion_tombstones"] as const;
+const exportTables = ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","review_queue_proposals","proposal_review_audit","deletion_tombstones"] as const;
 const clearTables = [...exportTables, "cache_entries"] as const;
 
 function utc(value: string): string {
@@ -170,6 +193,44 @@ export class SqliteStorage implements Storage {
    this.db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,watermark,last_success_at,fetched_count) VALUES(?,?,?,?,?,?)
     ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,watermark=excluded.watermark,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO_UTC}`)
     .run(batch.connector,batch.scope,batch.cursor??null,batch.watermark??null,utc(batch.observedAt),batch.records.length);
+  });
+ }
+ getCursor(connector:string, scope:string):string|undefined {
+  const row=this.db.prepare("SELECT cursor FROM sync_cursors WHERE connector=? AND scope=?").get(connector,scope) as {cursor:string|null}|undefined;
+  return row?.cursor??undefined;
+ }
+ recordSlackError(connector:string, scope:string, message:string):void {
+  this.db.prepare(`INSERT INTO sync_cursors(connector,scope,last_error) VALUES(?,?,?) ON CONFLICT(connector,scope) DO UPDATE SET last_error=excluded.last_error,updated_at=${ISO_UTC}`).run(connector,scope,message.slice(0,300));
+ }
+ persistSlackPage(page:SlackPersistencePage):void {
+  const sourceSql=`INSERT INTO source_records(id,provider,source_id,stable_url,occurred_at,observed_at,excerpt,content_hash,classification,last_seen_at,retention_until)
+   VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,occurred_at=excluded.occurred_at,observed_at=excluded.observed_at,excerpt=excluded.excerpt,content_hash=excluded.content_hash,classification=excluded.classification,last_seen_at=excluded.last_seen_at,retention_until=excluded.retention_until,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`;
+  this.transaction(()=>{
+   const sourceStatement=this.db.prepare(sourceSql);
+   for(const r of page.records) sourceStatement.run(r.id,r.provider,r.sourceId,r.stableUrl??null,utc(r.occurredAt),utc(r.observedAt),r.excerpt,r.contentHash,r.classification,utc(r.lastSeenAt),utc(r.retentionUntil));
+   for(const sourceId of page.deletedSourceIds){
+    const row=this.db.prepare("SELECT id,content_hash FROM source_records WHERE provider='slack' AND source_id=?").get(sourceId) as {id:string;content_hash:string}|undefined;
+    if(!row) continue;
+    this.db.prepare("DELETE FROM review_queue_proposals WHERE source_record_id=? AND review_state='proposed'").run(row.id);
+    this.db.prepare("DELETE FROM cache_entries WHERE source_record_id=?").run(row.id);
+    const at=utc(page.observedAt);
+    this.db.prepare("UPDATE source_records SET excerpt=NULL,deleted_at=?,deletion_reason='source_deleted',updated_at=? WHERE id=?").run(at,at,row.id);
+    this.db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES('slack',?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET deleted_at=excluded.deleted_at,reason=excluded.reason,content_hash=excluded.content_hash").run(sourceId,at,"source_deleted",row.content_hash);
+   }
+   for(const proposal of page.proposals) this.db.prepare(`INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES(?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,description=excluded.description,updated_at=${ISO_UTC} WHERE review_queue_proposals.review_state='proposed'`)
+    .run(proposal.id,proposal.kind,proposal.description,proposal.sourceRecordId);
+   this.db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,last_success_at,last_error,fetched_count) VALUES(?,?,?,?,NULL,?)
+    ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO_UTC}`)
+    .run(page.connector,page.scope,page.cursor??null,utc(page.observedAt),page.records.length+page.deletedSourceIds.length);
+  });
+ }
+ transitionSlackProposal(proposalId:string,toState:"approved"|"rejected",actor:string,reason:string,changedAt:string):void {
+  if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
+  this.transaction(()=>{const row=this.db.prepare("SELECT review_state state FROM review_queue_proposals WHERE id=?").get(proposalId) as {state:string}|undefined;
+   if(!row)throw new Error("proposal not found"); if(row.state!=="proposed")throw new Error(`terminal review state cannot transition: ${row.state}`);
+   const at=utc(changedAt); this.db.prepare("INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,?,?,?,?)").run(proposalId,row.state,toState,actor,reason,at);
+   this.db.prepare("UPDATE review_queue_proposals SET review_state=?,updated_at=? WHERE id=?").run(toState,at,proposalId);
   });
  }
  async savePullRequests(records: readonly PullRequestRecord[], observedAt: string): Promise<void> {
