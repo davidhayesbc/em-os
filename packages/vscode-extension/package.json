@@ -1,0 +1,32 @@
+{
+  "name": "em-os-vscode",
+  "displayName": "EM OS",
+  "description": "Thin local shell for EM OS",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "em-os",
+  "engines": {"vscode": "^1.105.0"},
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:em-os.sync", "onCommand:em-os.openInbox", "onCommand:em-os.whatNext",
+    "onCommand:em-os.draftWeeklyUpdate", "onCommand:em-os.captureEvidence"
+  ],
+  "contributes": {
+    "commands": [
+      {"command": "em-os.sync", "title": "EM OS: Sync"},
+      {"command": "em-os.openInbox", "title": "EM OS: Open Inbox"},
+      {"command": "em-os.whatNext", "title": "EM OS: What Next"},
+      {"command": "em-os.draftWeeklyUpdate", "title": "EM OS: Draft Weekly Update"},
+      {"command": "em-os.captureEvidence", "title": "EM OS: Capture Evidence"}
+    ],
+    "configuration": {
+      "title": "EM OS",
+      "properties": {
+        "em-os.workspacePath": {"type": "string", "default": "", "description": "Optional local Foam workspace path. Do not store credentials here."},
+        "em-os.staleCiHours": {"type": "number", "default": 24, "minimum": 1, "description": "Age before failing CI becomes an attention candidate."}
+      }
+    }
+  },
+  "scripts": {"build": "tsc -b"},
+  "dependencies": {"@em-os/core": "0.1.0"}
+}
