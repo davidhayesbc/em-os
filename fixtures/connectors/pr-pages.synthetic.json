@@ -1,0 +1,29 @@
+{
+  "fixtureVersion": 1,
+  "classification": "synthetic",
+  "recordedFrom": "fabricated contract; not a production response",
+  "pages": {
+    "acme/widget": [
+      {
+        "schemaVersion": 1,
+        "observedAt": "2026-10-09T09:00:00.000Z",
+        "records": [
+          {"sourceId":"101","url":"https://example.invalid/acme/widget/pull/101","repository":"acme/widget","title":"Synthetic pagination record","author":"Example Author","state":"open","isDraft":false,"reviewRequestedOfViewer":true,"ciStatus":"pending","updatedAt":"2026-10-09T08:00:00.000Z"},
+          {"sourceId":"101","url":"https://example.invalid/acme/widget/pull/101","repository":"acme/widget","title":"Synthetic older duplicate","author":"Example Author","state":"open","isDraft":false,"reviewRequestedOfViewer":true,"ciStatus":"pending","updatedAt":"2026-10-09T07:00:00.000Z"}
+        ],
+        "nextCursor": "page-2",
+        "watermark": "2026-10-09T08:00:00.000Z"
+      },
+      {
+        "schemaVersion": 1,
+        "observedAt": "2026-10-09T09:01:00.000Z",
+        "records": [
+          {"sourceId":"101","url":"https://example.invalid/acme/widget/pull/101","repository":"acme/widget","title":"Synthetic updated record","author":"Example Author","state":"merged","isDraft":false,"reviewRequestedOfViewer":false,"ciStatus":"passing","ciUpdatedAt":"2026-10-09T08:30:00.000Z","updatedAt":"2026-10-09T08:30:00.000Z"},
+          {"sourceId":"102","url":"https://example.invalid/acme/widget/pull/102","repository":"acme/widget","title":"Synthetic deleted record","author":"Second Example","state":"closed","isDraft":false,"reviewRequestedOfViewer":false,"ciStatus":"unknown","updatedAt":"2026-10-09T08:15:00.000Z"}
+        ],
+        "deletedSourceIds": ["102"],
+        "watermark": "2026-10-09T08:30:00.000Z"
+      }
+    ]
+  }
+}
