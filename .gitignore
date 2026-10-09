@@ -1,0 +1,47 @@
+# EM OS must never commit work content, credentials, or local runtime state.
+# Checked-in examples and fixtures must be synthetic only.
+
+# Local application state and databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+.em-os/
+.em-os-data/
+workspaces/
+
+# Private work artifacts
+Daily-Logs/
+Weekly-Summaries/
+People/
+1-1s/
+Meeting-Notes/
+notes/
+transcripts/
+exports/
+prompts/
+cache/
+logs/
+*.log
+
+# Credentials and environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials.json
+secrets.json
+
+# Editor, OS and package output
+.vscode/settings.json
+.vscode/mcp.json
+.DS_Store
+Thumbs.db
+node_modules/
+dist/
+coverage/
