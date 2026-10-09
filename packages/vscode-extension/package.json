@@ -1,24 +1,49 @@
 {
   "name": "em-os-vscode",
   "displayName": "EM OS",
-  "description": "Thin local shell for EM OS",
+  "description": "Accessible, local-first attention queue for EM OS",
   "version": "0.1.0",
   "private": true,
   "publisher": "em-os",
   "engines": {"vscode": "^1.105.0"},
   "main": "./dist/extension.js",
-  "activationEvents": [
-    "onCommand:em-os.sync", "onCommand:em-os.openInbox", "onCommand:em-os.whatNext",
-    "onCommand:em-os.draftWeeklyUpdate", "onCommand:em-os.captureEvidence"
-  ],
+  "activationEvents": ["onView:em-os.attention"],
   "contributes": {
     "commands": [
-      {"command": "em-os.sync", "title": "EM OS: Sync"},
+      {"command": "em-os.sync", "title": "EM OS: Sync", "icon": "$(sync)"},
       {"command": "em-os.openInbox", "title": "EM OS: Open Inbox"},
       {"command": "em-os.whatNext", "title": "EM OS: What Next"},
       {"command": "em-os.draftWeeklyUpdate", "title": "EM OS: Draft Weekly Update"},
-      {"command": "em-os.captureEvidence", "title": "EM OS: Capture Evidence"}
+      {"command": "em-os.captureEvidence", "title": "EM OS: Capture Evidence"},
+      {"command": "em-os.openSource", "title": "EM OS: Open Source", "icon": "$(link-external)"},
+      {"command": "em-os.confirm", "title": "EM OS: Confirm Action", "icon": "$(check)"},
+      {"command": "em-os.complete", "title": "EM OS: Complete Action", "icon": "$(pass-filled)"},
+      {"command": "em-os.snooze", "title": "EM OS: Snooze Action", "icon": "$(clock)"}
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {"id": "em-os", "title": "EM OS", "icon": "$(checklist)"}
+      ]
+    },
+    "views": {
+      "em-os": [
+        {"id": "em-os.attention", "name": "Attention Queue", "icon": "$(checklist)", "contextualTitle": "EM OS Attention Queue"}
+      ]
+    },
+    "viewsWelcome": [
+      {"view": "em-os.attention", "contents": "No actionable items.\n[Sync synthetic data](command:em-os.sync)"}
+    ],
+    "menus": {
+      "view/title": [
+        {"command": "em-os.sync", "when": "view == em-os.attention", "group": "navigation"}
+      ],
+      "view/item/context": [
+        {"command": "em-os.openSource", "when": "view == em-os.attention && viewItem =~ /em-os.queueItem/", "group": "inline@1"},
+        {"command": "em-os.confirm", "when": "view == em-os.attention && viewItem == em-os.queueItem.proposed", "group": "inline@2"},
+        {"command": "em-os.complete", "when": "view == em-os.attention && viewItem =~ /em-os.queueItem/", "group": "actions@1"},
+        {"command": "em-os.snooze", "when": "view == em-os.attention && viewItem =~ /em-os.queueItem/", "group": "actions@2"}
+      ]
+    },
     "configuration": {
       "title": "EM OS",
       "properties": {
