@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { lstat, mkdir, realpath, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ModelAdapter, ModelPolicyError, ModelUnavailableError, type DataClass, type GenerationRequest, type RuntimeSchema } from "./model-provider";
 
 export interface ApprovedDraftFact {
@@ -162,7 +162,30 @@ export async function saveFoamDraft(workspacePath: string, relativePath: string,
   const destination = resolve(join(root, relativePath));
   const rel = relative(root, destination);
   if (rel.startsWith("..") || isAbsolute(rel) || !destination.endsWith(".md")) throw new Error("Draft path must be a Markdown file inside the Foam workspace");
-  await mkdir(dirname(destination), { recursive: true });
-  await writeFile(destination, markdown, { encoding: "utf8", flag: "wx" });
-  return destination;
+
+  await mkdir(root, { recursive: true });
+  const physicalRoot = await realpath(root);
+  const parentParts = dirname(rel).split(sep).filter((part) => part !== "." && part !== "");
+  let parent = physicalRoot;
+  for (const part of parentParts) {
+    parent = join(parent, part);
+    try {
+      await mkdir(parent);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    const stats = await lstat(parent);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error("Draft path parent must be a non-symlinked directory inside the Foam workspace");
+    }
+  }
+
+  const physicalParent = await realpath(parent);
+  const physicalRel = relative(physicalRoot, physicalParent);
+  if (physicalRel.startsWith("..") || isAbsolute(physicalRel)) {
+    throw new Error("Draft path parent resolves outside the Foam workspace");
+  }
+  const physicalDestination = join(physicalParent, basename(destination));
+  await writeFile(physicalDestination, markdown, { encoding: "utf8", flag: "wx" });
+  return physicalDestination;
 }

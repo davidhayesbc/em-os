@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -121,4 +121,21 @@ test("Foam saver creates an editable Markdown draft without overwrite or path es
   assert.equal(await readFile(destination, "utf8"), "# Draft\n");
   await assert.rejects(() => saveFoamDraft(workspace, "Weekly-Summaries/2026-W41-draft.md", "overwrite"));
   await assert.rejects(() => saveFoamDraft(workspace, "../outside.md", "escape"));
+  await assert.rejects(() => saveFoamDraft(workspace, "Weekly-Summaries/not-markdown.txt", "wrong type"));
+});
+
+test("Foam saver rejects a symlinked parent without writing outside the workspace", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "em-os-foam-"));
+  const outside = await mkdtemp(join(tmpdir(), "em-os-foam-outside-"));
+  await mkdir(workspace, { recursive: true });
+  await symlink(outside, join(workspace, "Weekly-Summaries"), "dir");
+
+  await assert.rejects(
+    () => saveFoamDraft(workspace, "Weekly-Summaries/2026-W41-draft.md", "escape"),
+    /non-symlinked directory/,
+  );
+  await assert.rejects(
+    () => readFile(join(outside, "2026-W41-draft.md"), "utf8"),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+  );
 });
