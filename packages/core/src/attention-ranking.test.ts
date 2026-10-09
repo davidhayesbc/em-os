@@ -39,6 +39,12 @@ test("stable ties use observed time then key independent of input order", () => 
   assert.deepEqual(rankAttention([b, a], policy, now).map((x) => x.key), ["a", "b"]);
 });
 
+test("offset-equivalent observed instants fall through to the stable key", () => {
+  const z = { ...base, id: "z", observedAt: "2026-11-01T01:00:00-05:00", explicitPriority: 1 };
+  const a = { ...base, id: "a", observedAt: "2026-11-01T06:00:00Z", explicitPriority: 1 };
+  assert.deepEqual(rankAttention([z, a], policy, now).map((x) => x.key), ["a", "z"]);
+});
+
 test("dismiss, active snooze, score threshold, and per-kind cap suppress items", () => {
   const items = [{ ...base, id: "a", explicitPriority: 2 }, { ...base, id: "b", explicitPriority: 1 }, { ...base, id: "c" }];
   const feedback = [event({ itemId: "a", action: "dismiss" }), event({ itemId: "b", action: "snooze", until: "2026-11-01T07:00:00Z" })];

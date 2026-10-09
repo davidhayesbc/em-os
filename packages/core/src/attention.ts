@@ -103,7 +103,9 @@ export function rankAttention(input: readonly AttentionWorkItem[], policy: Atten
       reason: components.map((component) => component.explanation).join("; ") || "Pinned by manager", score,
       scoreComponents: components, ruleIds: components.map((component) => component.ruleId), contextStatus, pinned });
   }
-  ranked.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.score - a.score || a.observedAt.localeCompare(b.observedAt) || a.key.localeCompare(b.key));
+  ranked.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.score - a.score
+    || requireInstant(a.observedAt, "observedAt") - requireInstant(b.observedAt, "observedAt")
+    || a.key.localeCompare(b.key));
   const counts = new Map<string, number>();
   return ranked.filter((item) => { const count = counts.get(item.kind) ?? 0; if (count >= policy.maxPerKind) return false;
     counts.set(item.kind, count + 1); return true; }).slice(0, policy.maxItems);
