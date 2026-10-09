@@ -7,6 +7,17 @@ function requiredString(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function requiredTimestamp(record: Record<string, unknown>, key: string, index: number): string {
+  const value = requiredString(record, key);
+  if (!Number.isFinite(Date.parse(value))) throw new Error(`Invalid ${key} at PR ${index}`);
+  return value;
+}
+
+function optionalTimestamp(record: Record<string, unknown>, key: string, index: number): string | undefined {
+  if (record[key] === undefined) return undefined;
+  return requiredTimestamp(record, key, index);
+}
+
 export function parsePullRequestFixture(value: unknown): PullRequestFixture {
   if (!value || typeof value !== "object") throw new Error("Fixture must be an object");
   const fixture = value as Record<string, unknown>;
@@ -27,8 +38,8 @@ export function parsePullRequestFixture(value: unknown): PullRequestFixture {
       id: requiredString(record, "id"), title: requiredString(record, "title"), url,
       author: requiredString(record, "author"), isDraft: record.isDraft,
       reviewRequestedOfViewer: record.reviewRequestedOfViewer, ciStatus: ciStatus as CiStatus,
-      ciUpdatedAt: typeof record.ciUpdatedAt === "string" ? record.ciUpdatedAt : undefined,
-      updatedAt: requiredString(record, "updatedAt"),
+      ciUpdatedAt: optionalTimestamp(record, "ciUpdatedAt", index),
+      updatedAt: requiredTimestamp(record, "updatedAt", index),
     };
   });
   return { schemaVersion: 1, fetchedAt, prs };
