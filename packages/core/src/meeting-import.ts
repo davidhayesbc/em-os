@@ -23,6 +23,7 @@ export interface MeetingProposal {
   source: MeetingSourceAnchor;
   state: MeetingProposalState;
   duplicateSuggestion?: { proposalId: string; similarity: number; decision: "manager-required" | "merge" | "separate" };
+  duplicateDecisionActor?: { identity: string; role: "manager" };
   mergedIntoProposalId?: string;
   createdAt: string;
   reviewedAt?: string;
@@ -48,6 +49,11 @@ export interface ReviewEdit {
   owner?: string;
   dueAt?: string;
   subject?: string;
+}
+
+export interface DuplicateDecisionActor {
+  identity: string;
+  role: string;
 }
 
 const MARKER = /^\s*[-*]\s*(ACTION|DECISION|EVIDENCE)\s*:\s*(?:\[([^\]]+)\]\s*)?(.+?)\s*$/i;
@@ -122,10 +128,14 @@ export class MeetingReviewQueue {
     return structuredClone(item);
   }
 
-  decideDuplicate(id: string, decision: "merge" | "separate"): MeetingProposal {
+  decideDuplicate(id: string, decision: "merge" | "separate", actor: DuplicateDecisionActor): MeetingProposal {
     const item = this.requireProposed(id);
     if (!item.duplicateSuggestion) throw new Error("proposal has no duplicate suggestion");
+    const identity = actor.identity.trim();
+    if (!identity) throw new Error("duplicate decision actor identity is required");
+    if (actor.role !== "manager") throw new Error("duplicate decision requires a manager actor");
     item.duplicateSuggestion.decision = decision;
+    item.duplicateDecisionActor = { identity, role: "manager" };
     item.mergedIntoProposalId = decision === "merge" ? item.duplicateSuggestion.proposalId : undefined;
     return structuredClone(item);
   }
@@ -163,7 +173,7 @@ export interface LocalMeetingImportOptions {
 }
 
 export class LocalMeetingNoteImportAdapter {
-  readonly #roots: readonly string[];
+  readonly #approvedRoots: readonly string[];
   readonly #queue: MeetingReviewQueue;
   readonly #readText: (path: string) => Promise<string>;
   readonly #resolveRealPath: (path: string) => Promise<string>;
@@ -171,7 +181,7 @@ export class LocalMeetingNoteImportAdapter {
 
   constructor(options: LocalMeetingImportOptions) {
     if (!options.approvedRoots.length) throw new Error("at least one approved local import root is required");
-    this.#roots = options.approvedRoots.map((root) => resolve(root));
+    this.#approvedRoots = options.approvedRoots.map((root) => resolve(root));
     this.#queue = options.queue;
     this.#readText = options.readText ?? ((path) => readFile(path, "utf8"));
     this.#resolveRealPath = options.resolveRealPath ?? realpath;
@@ -181,8 +191,13 @@ export class LocalMeetingNoteImportAdapter {
   async importFile(path: string, now = new Date().toISOString()): Promise<MeetingImportResult> {
     try {
       if (!isAbsolute(path)) return failure("not-approved", "Meeting note path must be absolute and inside an approved root", false);
-      const canonical = await this.#resolveRealPath(path);
-      if (!this.#roots.some((root) => within(root, canonical))) return failure("not-approved", "Meeting note is outside approved local import roots", false);
+      // Compare roots and files only after both have passed through the same
+      // platform canonicalizer (symlinks, macOS /tmp, and Windows namespaces).
+      const [canonical, roots] = await Promise.all([
+        this.#resolveRealPath(path),
+        Promise.all(this.#approvedRoots.map((root) => this.#resolveRealPath(root))),
+      ]);
+      if (!roots.some((root) => within(root, canonical))) return failure("not-approved", "Meeting note is outside approved local import roots", false);
       const raw = await this.#readText(canonical);
       const documentId = this.#idFactory(canonical);
       const lines = raw.split(/\r?\n/);

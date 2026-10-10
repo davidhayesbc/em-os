@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -61,15 +61,21 @@ test("edits preserve immutable source links and anchors", () => {
   assert.throws(() => queue.edit(created.id, { text: "change after approval" }), /immutable/);
 });
 
-test("similar proposals require an explicit manager merge-or-separate decision", () => {
+test("similar proposals require an explicit audited manager merge-or-separate decision", () => {
   const queue = new MeetingReviewQueue();
   const source = (anchor: string) => ({ documentId: "doc", documentTitle: "note.md", documentUri: "file:///note.md", anchor, quote: `ACTION ${anchor}` });
   queue.enqueue({ kind: "action", text: "Review the launch readiness checklist", source: source("L1") }, NOW);
   const duplicate = queue.enqueue({ kind: "action", text: "Review launch readiness checklist with team", source: source("L2") }, NOW);
   assert.equal(duplicate.duplicateSuggestion?.decision, "manager-required");
   assert.throws(() => queue.accept(duplicate.id, "Manager", "Looks right", REVIEWED), /manager must decide/);
-  queue.decideDuplicate(duplicate.id, "separate");
-  assert.equal(queue.accept(duplicate.id, "Manager", "Separate commitments", REVIEWED).state, "approved");
+  assert.throws(() => queue.decideDuplicate(duplicate.id, "separate", { identity: "  ", role: "manager" }), /identity is required/);
+  assert.throws(() => queue.decideDuplicate(duplicate.id, "separate", { identity: "person-1", role: "contributor" }), /requires a manager actor/);
+  assert.equal(queue.get(duplicate.id)?.duplicateSuggestion?.decision, "manager-required");
+  const resolved = queue.decideDuplicate(duplicate.id, "separate", { identity: "manager-42", role: "manager" });
+  assert.deepEqual(resolved.duplicateDecisionActor, { identity: "manager-42", role: "manager" });
+  const accepted = queue.accept(duplicate.id, "Manager", "Separate commitments", REVIEWED);
+  assert.equal(accepted.state, "approved");
+  assert.deepEqual(accepted.duplicateDecisionActor, { identity: "manager-42", role: "manager" });
 });
 
 test("manager-selected merge links the duplicate while retaining both source anchors", () => {
@@ -82,8 +88,9 @@ test("manager-selected merge links the duplicate while retaining both source anc
     kind: "decision", text: "Use the staged rollout for the launch",
     source: { documentId: "doc-b", documentTitle: "b.md", documentUri: "file:///b.md", anchor: "L9", quote: "DECISION: Use the staged rollout for the launch" },
   }, NOW);
-  const linked = queue.decideDuplicate(duplicate.id, "merge");
+  const linked = queue.decideDuplicate(duplicate.id, "merge", { identity: "manager-7", role: "manager" });
   assert.equal(linked.mergedIntoProposalId, first.id);
+  assert.deepEqual(linked.duplicateDecisionActor, { identity: "manager-7", role: "manager" });
   assert.equal(queue.accept(duplicate.id, "Manager", "Same decision", REVIEWED).state, "approved");
   assert.deepEqual(queue.get(first.id)?.source, first.source);
   assert.deepEqual(queue.get(duplicate.id)?.source, duplicate.source);
@@ -112,10 +119,34 @@ test("sensitive text is redacted from proposal fields and bounded source quote",
   assert.ok(!serialized.includes("person@example.test"));
 });
 
+test("approved roots and imported files use the same canonical namespace", async () => {
+  const lexicalRoot = join(tmpdir(), "em-os-lexical-root");
+  const lexicalFile = join(lexicalRoot, "planning.synthetic.md");
+  const canonicalRoot = join(tmpdir(), "em-os-canonical-root");
+  const canonicalFile = join(canonicalRoot, "planning.synthetic.md");
+  const queue = new MeetingReviewQueue();
+  const resolved = new Map([[lexicalRoot, canonicalRoot], [lexicalFile, canonicalFile]]);
+  const adapter = new LocalMeetingNoteImportAdapter({
+    approvedRoots: [lexicalRoot],
+    queue,
+    resolveRealPath: async (path) => resolved.get(path) ?? path,
+    readText: async (path) => {
+      assert.equal(path, canonicalFile);
+      return "- ACTION: Import through a canonicalized approved root";
+    },
+  });
+
+  const result = await adapter.importFile(lexicalFile, NOW);
+  assert.equal(result.ok, true);
+  assert.equal(queue.list().length, 1);
+});
+
 test("unapproved paths and permission or offline failures are safe and queue nothing", async () => {
   const { root, path } = await fixture("- ACTION: Safe synthetic action");
+  const outsideRoot = join(root, "other");
+  await mkdir(outsideRoot);
   const outsideQueue = new MeetingReviewQueue();
-  const outside = new LocalMeetingNoteImportAdapter({ approvedRoots: [join(root, "other")], queue: outsideQueue });
+  const outside = new LocalMeetingNoteImportAdapter({ approvedRoots: [outsideRoot], queue: outsideQueue });
   const denied = await outside.importFile(path, NOW);
   assert.equal(denied.ok, false);
   if (!denied.ok) assert.equal(denied.error.code, "not-approved");
