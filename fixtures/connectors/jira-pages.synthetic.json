@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "pages": [
+    {
+      "observedAt": "2026-11-01T07:02:00.000Z",
+      "nextCursor": "jira-cursor-9",
+      "items": [
+        {
+          "id": "10007",
+          "projectKey": "ENG",
+          "key": "ENG-7",
+          "summary": "Plan launch follow-up",
+          "browseUrl": "https://jira.example.invalid/browse/ENG-7",
+          "updatedAt": "2026-11-01T05:30:00Z",
+          "assignee": "alex@example.invalid",
+          "assigneeCandidates": [],
+          "relatedUrls": ["https://calendar.example.invalid/event/evt-1"]
+        }
+      ]
+    }
+  ]
+}

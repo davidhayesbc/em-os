@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "pages": [
+    {
+      "observedAt": "2026-11-01T07:00:00.000Z",
+      "nextPageToken": "calendar-page-2",
+      "items": [
+        {
+          "id": "evt-1",
+          "calendarId": "team-calendar",
+          "title": "Plan launch follow-up",
+          "htmlLink": "https://calendar.example.invalid/event/evt-1#details",
+          "start": "2026-11-01T01:30:00-04:00",
+          "updatedAt": "2026-11-01T06:00:00.000Z",
+          "organizer": "alex@example.invalid",
+          "organizerCandidates": [
+            {"personId": "person-alex-1", "label": "Alex One", "confidence": 0.7},
+            {"personId": "person-alex-2", "label": "Alex Two", "confidence": 0.7}
+          ],
+          "relatedUrls": ["https://jira.example.invalid/browse/ENG-7"]
+        }
+      ]
+    },
+    {
+      "observedAt": "2026-11-01T07:01:00.000Z",
+      "nextCursor": "calendar-cursor-2",
+      "items": [
+        {"id": "evt-old", "calendarId": "team-calendar", "title": "Deleted", "htmlLink": "https://calendar.example.invalid/event/evt-old", "start": "2026-10-31T16:00:00Z", "updatedAt": "2026-11-01T06:30:00Z", "deleted": true}
+      ]
+    }
+  ]
+}
