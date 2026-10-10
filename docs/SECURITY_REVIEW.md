@@ -74,7 +74,7 @@ SEC-02 are code/integration blockers independent of the open gates.
   branch onto the hardened `feat/t_f0183985-sqlite`, and add a migration-collision
   test that asserts the final version chain is `1,2,3` and that
   `em_review_write_mode` guards and `review_queue_proposals` both exist.
-- **Owner:** coder (storage/integration). Repair task: `t_7f3c9a10`.
+- **Owner:** coder (storage/integration). Repair task: `t_7abfbd35`.
 
 ## 3. Remediation findings (non-blocking for the synthetic prototype)
 
@@ -231,7 +231,7 @@ redaction inputs and are asserted to be removed from stored output.
 | Finding | Owner | Blocking |
 |---|---|---|
 | SEC-01 CI repo-safety scan | security (this PR) → coder | yes |
-| SEC-02 migration version collision | coder (task `t_7f3c9a10`) | yes |
+| SEC-02 migration version collision | coder (task `t_7abfbd35`) | yes |
 | SEC-03 importData key injection | coder (storage) | no |
 | SEC-04 encrypted backup/at-rest | security + product-owner | no (open gate G-SEC-02) |
 | SEC-05 connector redaction | coder (connectors) | no |
