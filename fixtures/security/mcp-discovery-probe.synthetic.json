@@ -1,0 +1,54 @@
+{
+  "fixtureVersion": 1,
+  "classification": "synthetic",
+  "purpose": "Contract shape for a read-only MCP Locker discovery probe; not a captured Locker response.",
+  "probe": {
+    "transport": "UNVERIFIED",
+    "authentication": "UNVERIFIED",
+    "requestedCapabilities": ["tools/list", "resources/list"],
+    "requestedScopes": ["read:pull-requests"],
+    "prohibitedOperations": ["create", "update", "delete", "comment", "merge", "send", "admin"],
+    "requestLogPolicy": "Metadata only: endpoint class, tool name, outcome, duration, retry count and schema fingerprint. Never log request/response bodies, headers, tokens, source excerpts or prompts."
+  },
+  "syntheticToolListResponse": {
+    "tools": [
+      {
+        "name": "pull_requests.list",
+        "description": "SYNTHETIC EXAMPLE ONLY: lists pull requests with cursor pagination.",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "limit"],
+          "properties": {
+            "repository": {"type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+$"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "cursor": {"type": "string", "maxLength": 512},
+            "updatedSince": {"type": "string", "format": "date-time"}
+          }
+        }
+      }
+    ]
+  },
+  "syntheticPage": {
+    "items": [
+      {
+        "id": "synthetic-pr-1042",
+        "url": "https://example.invalid/acme/widget/pull/1042",
+        "repository": "acme/widget",
+        "state": "open",
+        "updatedAt": "2026-01-15T10:00:00Z",
+        "reviewRequested": true,
+        "body": "Not retained by the proposed adapter."
+      }
+    ],
+    "nextCursor": "synthetic-next-page-token",
+    "watermark": "2026-01-15T10:00:00Z"
+  },
+  "expectedAdapterBehavior": {
+    "allowlist": ["pull_requests.list"],
+    "fieldMinimization": ["id", "url", "repository", "state", "updatedAt", "reviewRequested"],
+    "cursorRule": "Persist the cursor or watermark only in the same committed transaction as normalized records. Do not advance it on malformed data, timeout, permission denial, cancellation or partial page processing.",
+    "retryRule": "Retry only transient network/429/5xx outcomes with a bounded exponential backoff and Retry-After when supplied. Never retry authorization failures, schema violations or write-capable tools.",
+    "schemaRule": "Reject unknown required fields, tool-name drift, pagination-shape drift and result objects that exceed the approved schema until reviewed."
+  }
+}
