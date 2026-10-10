@@ -11,6 +11,7 @@ These records turn `docs/PRODUCT_SPEC.md` into implementation boundaries. They a
 | [0005](0005-model-provider-interface.md) | Accepted interface; routes gated | Capability- and classification-aware model provider abstraction |
 | [0006](0006-provenance-citations.md) | Accepted | Immutable provenance and validated citations with human approval |
 | [0007](0007-local-paths-failure-offline.md) | Accepted with policy gates | OS app-data paths, fail-closed routes, isolated sync failures, honest freshness |
+| [0008](0008-at-rest-protection-encrypted-backup.md) | Accepted with conditions (G-SEC-02 Passed) | OS full-disk baseline; AES-256-GCM key-envelope backups; synthetic prototype label until envelope ships |
 
 ## Decision vocabulary
 
