@@ -31,5 +31,5 @@ jobs:
       - name: Verify runner architecture
         shell: bash
         run: node -e "if(process.arch !== '${{ matrix.expected_arch }}') { throw new Error('Expected ${{ matrix.expected_arch }}, got '+process.arch) }"
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run ci

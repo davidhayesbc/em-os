@@ -40,3 +40,15 @@ test("rejects an invalid ciUpdatedAt with the PR index and field", () => {
   fixture.prs[0]!.ciUpdatedAt = "not-a-timestamp";
   assert.throws(() => parsePullRequestFixture(fixture), /Invalid ciUpdatedAt at PR 0/);
 });
+
+for (const [description, url, expected] of [
+  ["credentials", "https://token:secret@example.invalid/pull/42", /must not contain credentials/],
+  ["a query string", "https://example.invalid/pull/42?token=secret", /must not contain a query string/],
+  ["a fragment", "https://example.invalid/pull/42#private", /must not contain a fragment/],
+] as const) {
+  test(`rejects a source URL containing ${description}`, () => {
+    const fixture = syntheticFixture() as { prs: Array<Record<string, unknown>> };
+    fixture.prs[0]!.url = url;
+    assert.throws(() => parsePullRequestFixture(fixture), expected);
+  });
+}

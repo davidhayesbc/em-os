@@ -33,6 +33,9 @@ export function parsePullRequestFixture(value: unknown): PullRequestFixture {
     const url = requiredString(record, "url");
     const parsedUrl = new URL(url);
     if (parsedUrl.protocol !== "https:") throw new Error(`PR ${index} source URL must use https`);
+    if (parsedUrl.username || parsedUrl.password) throw new Error(`PR ${index} source URL must not contain credentials`);
+    if (parsedUrl.search) throw new Error(`PR ${index} source URL must not contain a query string`);
+    if (parsedUrl.hash) throw new Error(`PR ${index} source URL must not contain a fragment`);
     return {
       provider: requiredString(record, "provider"), repository: requiredString(record, "repository"),
       id: requiredString(record, "id"), title: requiredString(record, "title"), url,
