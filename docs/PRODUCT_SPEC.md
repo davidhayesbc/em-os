@@ -159,9 +159,9 @@ planning. A task sourced from this list must update its checkbox when its
 acceptance evidence is complete; partial work must leave the item unchecked
 and record the remaining scope.
 
-- [ ] Spec 0 — Complete product/security discovery and record the MCP Locker adapter matrix, approved data boundaries, existing Claude skill inventory, VS Code feasibility, and approved model routes.
-- [ ] Spec 1 — Build the cross-platform core, CLI/extension scaffold, local settings, and synthetic PR-attention demo.
-- [ ] Spec 2 — Implement storage, provenance, migrations, idempotency, audit states, retention, and backup/restore tests.
+- [x] Spec 0 — Complete product/security discovery and record the MCP Locker adapter matrix, approved data boundaries, existing Claude skill inventory, VS Code feasibility, and approved model routes. See `docs/SECURITY_CONNECTOR_DISCOVERY.md`; direct MCP and real-data routes remain fail-closed pending the listed approvals.
+- [x] Spec 1 — Build the cross-platform core, CLI/extension scaffold, local settings, and synthetic PR-attention demo.
+- [x] Spec 2 — Implement storage, provenance, migrations, idempotency, audit states, retention, and backup/restore tests.
 - [ ] Spec 3 — Complete the read-only PR connector spike with permitted MCP Locker access and synthetic paginated contract fixtures.
 - [ ] Spec 4 — Build the deterministic attention engine and accessible UI with suppression and freshness handling.
 - [ ] Spec 5 — Implement the approved drafting/model adapter with citation validation, offline fallback, and prompt-injection tests.
