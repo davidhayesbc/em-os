@@ -17,23 +17,24 @@ The review's scope note applies: the MVP is a synthetic prototype with no real w
 
 2. **Backup/exports are application-encrypted regardless of disk encryption.** Everything that copies data off the DB path or between devices — `backupTo()`, `writeExport()`, and any `backupToInsecure()`-equivalent plaintext path, which is **reserved for development, must be explicitly named as insecure, and must never be the default** — is wrapped in an AES-256-GCM key-envelope format, `em-os-enc-backup` version 1 (see §Envelope format). The DB itself stays plain SQLite; this decision is about backups/exports and the layering policy.
 
-3. **Envelope format, `em-os-enc-backup` v1 — outer JSON, inner payload unchanged.** The inner format remains the existing `em-os-storage` JSON export (version, checksummed, importable). The outer envelope is:
+3. **Envelope format, `em-os-enc-backup` v1 — outer JSON, inner artifact unchanged.** The inner payload stays the artifact it wraps verbatim: the `em-os-storage` JSON export for `writeExport()` (UTF-8 bytes), or the SQLite backup copy for the encrypted `backupTo()` path. `artifact` records which. The outer envelope is exactly:
 
    ```json
    {
      "format": "em-os-enc-backup",
      "version": 1,
-     "inner": "<base64 ciphertext of em-os-storage JSON>",
-     "nonce_b64": "<base64 96-bit AES-GCM nonce>",
-     "kdf": { "alg": "PBKDF2-HMAC-SHA256", "iterations": 600000, "salt_b64": "<base64 128-bit salt>", "dkLen": 32 },
+     "artifact": "em-os-storage | sqlite-backup",
+     "inner": "<base64 ciphertext of the inner artifact>",
+     "nonce_b64": "<base64 96-bit AES-GCM nonce, unique per envelope>",
+     "kdf": { "alg": "HKDF-SHA-256", "source": "os-keystore", "info": "em-os backup key v1", "salt_b64": "<base64 128-bit fresh salt>", "dkLen": 32 },
      "cipher": "AES-256-GCM",
      "tag_b64": "<base64 128-bit GCM tag>",
      "created_at": "<ISO-8601 UTC>",
-     "schema_version": "<inner em-os-storage version at creation>"
+     "schema_version": 1
    }
    ```
 
-   The data-encryption key (DEK, 256-bit) is uniformly random, generated per backup, and never written to disk. The key-encryption key (KEK) is **derived from the OS key material that backs the OS credential store — Keychain on macOS, DPAPI-protected storage on Windows — never from an application-config file**, using HKDF with the fixed `info` label `"em-os backup key v1"`; PBKDF2 with a 600000-iteration cost is the fallback for environments where that OS material is unreachable, and PBKDF2 salt or key material is never stored inside the backup file. If the KEK source is unavailable, the operation **fails closed** and produces no ciphertext. Every restore verifies the GCM tag before any plaintext exists outside memory.
+   `cipher` is fixed to `AES-256-GCM`; decryptors must fail closed on any other value. The key-encryption key (KEK, 256-bit) is **derived from the OS key material that backs the OS credential store — Keychain on macOS, DPAPI-protected storage on Windows — never from an application-config file**, using HKDF-SHA-256 with the fixed `info` label `"em-os backup key v1"` and the per-envelope `salt_b64`. For environments where that OS material is unreachable, the fallback sets `kdf.alg` to `"PBKDF2-HMAC-SHA256"` with `"iterations": 600000` and `"source": "operator-passphrase"`; PBKDF2 salt or key material is never stored inside the backup file. If the KEK source is unavailable, the operation **fails closed** and produces no ciphertext. Every restore verifies the GCM tag before any plaintext exists outside memory. The single-key form is deliberate: it keeps the envelope auditable and leaves real key rotation/DEK-splitting to the G-DB-01 driver-encryption evaluation rather than promising a multi-key format no current code implements.
 
 4. **Restore drill.** Closing G-SEC-02 requires a scripted, repeatable **synthetic** drill: create a synthetic populated DB → `backupTo()` → verify the file on disk carries no readable schema markers or strings → restore into a fresh DB → assert the record set is complete, hashes match, GCM tamper-rejection fails the restore (corrupt-1-byte test), and deletion tombstones round-trip. The drill is automated and recorded as gate evidence; it never operates on real work data.
 
@@ -71,6 +72,6 @@ Implementers must add the envelope around `backupTo()`/`writeExport()` (coder; a
 
 ## Test implications
 
-- Envelope unit tests on synthetic data: round-trip, wrong-key rejection, tamper (1-byte flip) rejection, nonce uniqueness, fail-closed KEK-unavailable, no plaintext-schema strings on disk, and deterministic manifest fields (`format`, `version`, `kdf`, `cipher`, `schema_version`).
-- Drill script (`scripts/backup-restore-drill.mjs`): populated-to-restore record equality, FTS and deletion-state equivalence, and pass/fail exit code suitable for CI and gate evidence capture.
+- Envelope unit tests on synthetic data: round-trip, wrong-key rejection, tamper (1-byte flip) rejection, fail-closed KEK-unavailable, no plaintext-schema strings on disk, and deterministic manifest fields (`format`, `version`, `artifact`, `kdf` alg/source, `cipher`, `schema_version`); nonce-uniqueness is enforced by construction (fresh 96-bit CSPRNG nonce per envelope) and asserted by the tamper/round-trip tests.
+- Drill script (`scripts/backup-restore-drill.mjs`): populated-to-restore record equality for **both** artifacts (SQLite backup copy and `em-os-storage` export), FTS and deletion-state equivalence added when those tables ship into the drill, and pass/fail exit code suitable for CI and gate evidence capture. Deletion-tombstone round-trip is asserted by the storage tests the drill references (ADR 0007 backup/restore tests) until the drill grows a tombstone fixture.
 - Migration/backup tests already required by ADR 0003/0007 gain the envelope contract; restore refuses unencrypted exports when the envelope is enabled.
