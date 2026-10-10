@@ -8,8 +8,16 @@ Node.js 22 LTS and npm are the portable runtime/toolchain. TypeScript compiles t
 
 ## Fresh install
 
+The executable release checklist is:
+
 ```text
 npm ci
+npm run release:check
+```
+
+It runs build/typecheck, unit tests, the deterministic demo, the synthetic encrypted-backup drill, release-manifest validation, and the public-repository scan. See `SYNTHETIC_RUNBOOK.md` for expected evidence and the manual extension smoke. Individual development commands remain available:
+
+```text
 npm run build
 npm test
 npm run demo
