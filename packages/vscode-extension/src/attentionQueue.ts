@@ -46,6 +46,11 @@ export function effectiveItemFreshness(snapshot: QueueSnapshot, item: QueueItem,
   return isSnapshotStale(snapshot, now) || item.freshness === "stale" ? "stale" : "fresh";
 }
 
+export function queueItemQuickPickLabel(snapshot: QueueSnapshot, item: QueueItem, now: Date): string {
+  const stalePrefix = effectiveItemFreshness(snapshot, item, now) === "stale" ? "$(warning) STALE: " : "";
+  return `${stalePrefix}${item.title}`;
+}
+
 export function mergeQueueSnapshot(previous: QueueSnapshot, refreshed: QueueSnapshot): QueueSnapshot {
   const previousById = new Map(previous.items.map((item) => [item.id, item]));
   const refreshedIds = new Set(refreshed.items.map((item) => item.id));

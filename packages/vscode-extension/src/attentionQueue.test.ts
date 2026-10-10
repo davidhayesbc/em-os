@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AttentionQueue, effectiveItemFreshness, isSnapshotStale, mergeQueueSnapshot, syntheticOfflineSnapshot } from "./attentionQueue";
+import { AttentionQueue, effectiveItemFreshness, isSnapshotStale, mergeQueueSnapshot, queueItemQuickPickLabel, syntheticOfflineSnapshot } from "./attentionQueue";
 
 const now = new Date("2026-10-09T09:00:00.000Z");
 
@@ -24,6 +24,27 @@ test("a previously fresh snapshot expires instead of being presented as current"
   assert.equal(isSnapshotStale(fresh, now), true);
   assert.equal(effectiveItemFreshness(fresh, fresh.items[0]!, now), "stale");
   assert.equal(isSnapshotStale({ ...fresh, generatedAt: "2026-10-09T08:30:00.000Z" }, now), false);
+});
+
+test("command-palette labels mark stored-fresh items stale when their snapshot is stale", () => {
+  const fixture = syntheticOfflineSnapshot(now);
+  const item = { ...fixture.items[0]!, freshness: "fresh" as const };
+  const current = {
+    ...fixture,
+    offline: false,
+    syncError: undefined,
+    generatedAt: "2026-10-09T08:30:00.000Z",
+    items: [item],
+  };
+
+  assert.equal(queueItemQuickPickLabel(current, item, now), item.title);
+  for (const snapshot of [
+    { ...current, generatedAt: "2026-10-09T07:00:00.000Z" },
+    { ...current, offline: true },
+    { ...current, syncError: "Connector unavailable" },
+  ]) {
+    assert.equal(queueItemQuickPickLabel(snapshot, item, now), `$(warning) STALE: ${item.title}`);
+  }
 });
 
 test("refresh preserves confirmed, completed, and snoozed action state", () => {

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { AttentionQueue, effectiveItemFreshness, isSnapshotStale, mergeQueueSnapshot, type QueueChange, type QueueItem, type QueueSnapshot, syntheticOfflineSnapshot } from "./attentionQueue";
+import { AttentionQueue, effectiveItemFreshness, isSnapshotStale, mergeQueueSnapshot, queueItemQuickPickLabel, type QueueChange, type QueueItem, type QueueSnapshot, syntheticOfflineSnapshot } from "./attentionQueue";
 
 const STATE_KEY = "em-os.attentionQueue.v1";
 
@@ -92,8 +92,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const chooseItem = async (value: unknown, title: string): Promise<QueueItem | undefined> => {
     if (isQueueNode(value)) return value.item;
-    const picked = await vscode.window.showQuickPick(provider.getQueue().visible(new Date()).map((item) => ({
-      label: `${item.freshness === "stale" ? "$(warning) STALE: " : ""}${item.title}`,
+    const queue = provider.getQueue();
+    const now = new Date();
+    const picked = await vscode.window.showQuickPick(queue.visible(now).map((item) => ({
+      label: queueItemQuickPickLabel(queue.snapshot, item, now),
       description: item.status,
       detail: `${item.rationale} · ${item.provenance}`,
       item,
@@ -115,9 +117,11 @@ export function activate(context: vscode.ExtensionContext): void {
       if (first) await view.reveal(first, { focus: true, select: true });
     }),
     vscode.commands.registerCommand("em-os.whatNext", async () => {
-      const items = provider.getQueue().visible(new Date());
+      const queue = provider.getQueue();
+      const now = new Date();
+      const items = queue.visible(now);
       const selected = await vscode.window.showQuickPick(items.map((item) => ({
-        label: `${item.freshness === "stale" ? "$(warning) STALE: " : ""}${item.title}`,
+        label: queueItemQuickPickLabel(queue.snapshot, item, now),
         description: item.dueAt ? `Due ${item.dueAt}` : "No due date",
         detail: `${item.rationale} · ${item.provenance}`,
         item,
