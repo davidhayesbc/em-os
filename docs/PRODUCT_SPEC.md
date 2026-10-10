@@ -166,7 +166,7 @@ and record the remaining scope.
 - [ ] Spec 4 — Build the deterministic attention engine and accessible UI with suppression and freshness handling.
 - [ ] Spec 5 — Implement the approved drafting/model adapter with citation validation, offline fallback, and prompt-injection tests.
 - [ ] Spec 6 — Add separately scoped meeting, Slack, Calendar, and Jira adapters that feed a human review queue.
-- [ ] Spec 7 — Build the approved-evidence and rubric-based review-packet workflow with deletion, export, and human sign-off controls.
+- [x] Spec 7 — Build the approved-evidence and rubric-based review-packet workflow with deletion, export, and human sign-off controls.
 
 | Order | Suggested card / owner | Acceptance evidence | Dependencies |
 |---|---|---|---|
