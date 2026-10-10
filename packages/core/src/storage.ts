@@ -133,9 +133,13 @@ DROP TRIGGER draft_review_guard;
 DROP TRIGGER action_items_initial_review_guard;
 DROP TRIGGER evidence_initial_review_guard;
 DROP TRIGGER drafts_initial_review_guard;
+DROP TRIGGER review_audit_no_update;
+DROP TRIGGER review_audit_no_delete;
 CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
 CREATE TRIGGER review_audit_no_insert BEFORE INSERT ON review_audit WHEN em_review_write_mode() NOT IN ('transition','import') BEGIN SELECT RAISE(ABORT,'review audit may only be written by storage API'); END;
 CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state BEGIN
  SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
@@ -224,12 +228,16 @@ export class SqliteStorage implements Storage {
   const when=utc(observedAt);
   this.transaction(()=>{ for(const record of records) {
    const sourceId=`${record.repository}:${record.id}`; const id=`${record.provider}:pr:${sourceId}`;
-   this.db.prepare(`INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,content_hash,classification,last_seen_at) VALUES(?,?,?,?,?,?,?,?)
-    ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,observed_at=excluded.observed_at,last_seen_at=excluded.last_seen_at,updated_at=${ISO_UTC}`)
-    .run(id,record.provider,sourceId,record.url,when,sourceId,"work",when);
+   this.db.prepare(`INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,content_hash,classification,last_seen_at)
+    SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
+    ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,observed_at=excluded.observed_at,last_seen_at=excluded.last_seen_at,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`)
+    .run(id,record.provider,sourceId,record.url,when,sourceId,"work",when,record.provider,sourceId);
    this.db.prepare(`INSERT INTO prs(id,source_record_id,provider,repository,source_id,author,title,url,updated_at,is_draft,ci_status,review_requested,last_relevant_activity_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,repository,source_id) DO UPDATE SET author=excluded.author,title=excluded.title,url=excluded.url,updated_at=excluded.updated_at,is_draft=excluded.is_draft,ci_status=excluded.ci_status,review_requested=excluded.review_requested,last_relevant_activity_at=excluded.last_relevant_activity_at`)
-    .run(id,id,record.provider,record.repository,record.id,record.author,record.title,record.url,utc(record.updatedAt),Number(record.isDraft),record.ciStatus,Number(record.reviewRequestedOfViewer),utc(record.updatedAt));
+    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
+      AND EXISTS(SELECT 1 FROM source_records WHERE id=? AND deleted_at IS NULL)
+    ON CONFLICT(provider,repository,source_id) DO UPDATE SET author=excluded.author,title=excluded.title,url=excluded.url,updated_at=excluded.updated_at,is_draft=excluded.is_draft,ci_status=excluded.ci_status,review_requested=excluded.review_requested,last_relevant_activity_at=excluded.last_relevant_activity_at
+      WHERE EXISTS(SELECT 1 FROM source_records WHERE id=excluded.source_record_id AND deleted_at IS NULL)`)
+    .run(id,id,record.provider,record.repository,record.id,record.author,record.title,record.url,utc(record.updatedAt),Number(record.isDraft),record.ciStatus,Number(record.reviewRequestedOfViewer),utc(record.updatedAt),record.provider,sourceId,id);
   }});
  }
  async listPullRequests(): Promise<readonly PullRequestRecord[]> {
@@ -266,6 +274,8 @@ export class SqliteStorage implements Storage {
  }
  importData(data:StorageExport): void {
   if(data.format!=="em-os-storage"||data.version!==STORAGE_EXPORT_VERSION) throw new Error("unsupported storage export");
+  // Imports are trusted full restores. Import mode deliberately bypasses review
+  // transition and append-only guards so an existing profile can be replaced.
   this.transaction(()=>{ this.db.exec("PRAGMA defer_foreign_keys=ON"); this.#reviewWrite={mode:"import"};
    try {
    for(const table of [...clearTables].reverse()) this.db.exec(`DELETE FROM ${table}`);
