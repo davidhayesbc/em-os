@@ -24,7 +24,14 @@ expect(fixture.probe.prohibitedOperations.includes('delete'), 'delete operations
 expect(fixture.probe.prohibitedOperations.includes('merge'), 'merge operations must be prohibited');
 expect(fixture.probe.requestLogPolicy.includes('Never log'), 'probe must prohibit raw sensitive logging');
 
-const tool = fixture.syntheticToolListResponse.tools[0];
+const advertisedTools = fixture.syntheticToolListResponse.tools;
+expect(Array.isArray(advertisedTools), 'syntheticToolListResponse.tools must be an array');
+expect(advertisedTools.length === 1, 'fixture must advertise exactly one synthetic tool (fail-closed)');
+for (const tool of advertisedTools) {
+  expect(typeof tool.name === 'string', 'every advertised tool must have a string name');
+  expect(fixture.expectedAdapterBehavior.allowlist.includes(tool.name), `advertised tool "${tool.name}" must be in expectedAdapterBehavior.allowlist`);
+}
+const tool = advertisedTools[0];
 expect(tool.name === 'pull_requests.list', 'fixture must use the approved synthetic read tool');
 expect(tool.inputSchema.additionalProperties === false, 'tool input must reject unknown properties');
 expect(tool.inputSchema.properties.limit.maximum <= 50, 'page size must remain bounded at 50 or fewer');
