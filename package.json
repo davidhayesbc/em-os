@@ -1,0 +1,22 @@
+{
+  "name": "em-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first engineering manager workbench prototype",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "tsc -b",
+    "check": "tsc -b --pretty false",
+    "test": "npm run build && node --test packages/core/dist/**/*.test.js packages/vscode-extension/dist/**/*.test.js",
+    "demo": "npm run build && node packages/cli/dist/main.js attention --fixture fixtures/prs.synthetic.json --now 2026-10-09T09:00:00.000Z",
+    "ci": "npm run check && npm test && npm run demo"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.0",
+    "@types/vscode": "^1.105.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {"node": ">=22"},
+  "license": "UNLICENSED"
+}
