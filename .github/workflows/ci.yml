@@ -33,3 +33,16 @@ jobs:
         run: node -e "if(process.arch !== '${{ matrix.expected_arch }}') { throw new Error('Expected ${{ matrix.expected_arch }}, got '+process.arch) }"
       - run: npm ci
       - run: npm run ci
+
+  repo-safety:
+    name: repo-safety (secrets/PII/work-content)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scan working tree and full history for secrets, PII or work content
+        run: node scripts/scan-repo-safety.mjs --history
