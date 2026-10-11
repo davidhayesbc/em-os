@@ -10,12 +10,28 @@ const expect = (condition, message) => {
 expect(fixture.classification === 'synthetic', 'fixture must be classified synthetic');
 expect(fixture.probe.transport === 'UNVERIFIED', 'fixture must not claim a verified MCP transport');
 expect(fixture.probe.authentication === 'UNVERIFIED', 'fixture must not claim verified authentication');
+expect(
+  fixture.probe.requestedCapabilities.length === 1
+    && fixture.probe.requestedCapabilities[0] === 'tools/list',
+  'unapproved synthetic discovery must request only tools/list',
+);
+expect(
+  !fixture.probe.requestedCapabilities.includes('resources/list'),
+  'resources/list must remain absent until an explicit approval condition is modeled',
+);
 expect(fixture.probe.prohibitedOperations.includes('update'), 'write operations must be prohibited');
 expect(fixture.probe.prohibitedOperations.includes('delete'), 'delete operations must be prohibited');
 expect(fixture.probe.prohibitedOperations.includes('merge'), 'merge operations must be prohibited');
 expect(fixture.probe.requestLogPolicy.includes('Never log'), 'probe must prohibit raw sensitive logging');
 
-const tool = fixture.syntheticToolListResponse.tools[0];
+const advertisedTools = fixture.syntheticToolListResponse.tools;
+expect(Array.isArray(advertisedTools), 'syntheticToolListResponse.tools must be an array');
+expect(advertisedTools.length === 1, 'fixture must advertise exactly one synthetic tool (fail-closed)');
+for (const tool of advertisedTools) {
+  expect(typeof tool.name === 'string', 'every advertised tool must have a string name');
+  expect(fixture.expectedAdapterBehavior.allowlist.includes(tool.name), `advertised tool "${tool.name}" must be in expectedAdapterBehavior.allowlist`);
+}
+const tool = advertisedTools[0];
 expect(tool.name === 'pull_requests.list', 'fixture must use the approved synthetic read tool');
 expect(tool.inputSchema.additionalProperties === false, 'tool input must reject unknown properties');
 expect(tool.inputSchema.properties.limit.maximum <= 50, 'page size must remain bounded at 50 or fewer');
