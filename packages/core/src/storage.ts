@@ -6,19 +6,15 @@ import type { PullRequestRecord, Storage } from "./contracts.js";
 
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
-const UTC_GLOB = "GLOB '????-??-??T??:??:??.???Z'";
-const UTC_CHECK = (column: string) => `CHECK(${column} IS NULL OR ${column} ${UTC_GLOB})`;
 
-export const migrations = [
-  {
-    version: 1,
-    sql: `
+// Byte-for-byte schema shipped by commit 89c24b8d. Never edit this fixture;
+// append a forward migration instead so stamped databases are not stranded.
+export const HISTORICAL_V1_SCHEMA_SQL = `
 CREATE TABLE people (
  id TEXT PRIMARY KEY, display_name TEXT NOT NULL, role TEXT,
  identities_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(identities_json)),
  identity_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(identity_confirmed IN (0,1)),
- created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC}),
- ${UTC_CHECK("created_at")}, ${UTC_CHECK("updated_at")}
+ created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC})
 ) STRICT;
 CREATE TABLE source_records (
  id TEXT PRIMARY KEY, provider TEXT NOT NULL, source_id TEXT NOT NULL, stable_url TEXT,
@@ -27,8 +23,9 @@ CREATE TABLE source_records (
  deleted_at TEXT, deletion_reason TEXT,
  created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC}),
  UNIQUE(provider, source_id),
- ${UTC_CHECK("occurred_at")}, ${UTC_CHECK("observed_at")}, ${UTC_CHECK("last_seen_at")},
- ${UTC_CHECK("created_at")}, ${UTC_CHECK("updated_at")}, ${UTC_CHECK("retention_until")}, ${UTC_CHECK("deleted_at")}
+ CHECK(occurred_at IS NULL OR occurred_at GLOB '????-??-??T??:??:??*Z'),
+ CHECK(observed_at GLOB '????-??-??T??:??:??*Z'),
+ CHECK(last_seen_at GLOB '????-??-??T??:??:??*Z')
 ) STRICT;
 CREATE INDEX source_records_seen_idx ON source_records(provider, last_seen_at);
 CREATE INDEX source_records_retention_idx ON source_records(retention_until) WHERE deleted_at IS NULL;
@@ -36,7 +33,7 @@ CREATE VIRTUAL TABLE source_records_fts USING fts5(excerpt, content='source_reco
 CREATE TRIGGER source_records_ai AFTER INSERT ON source_records WHEN new.deleted_at IS NULL BEGIN
  INSERT INTO source_records_fts(rowid,excerpt) VALUES(new.rowid,new.excerpt);
 END;
-CREATE TRIGGER source_records_ad AFTER DELETE ON source_records WHEN old.deleted_at IS NULL BEGIN
+CREATE TRIGGER source_records_ad AFTER DELETE ON source_records BEGIN
  INSERT INTO source_records_fts(source_records_fts,rowid,excerpt) VALUES('delete',old.rowid,old.excerpt);
 END;
 CREATE TRIGGER source_records_au AFTER UPDATE OF excerpt,deleted_at ON source_records BEGIN
@@ -46,9 +43,7 @@ END;
 CREATE TABLE sync_cursors (
  connector TEXT NOT NULL, scope TEXT NOT NULL, cursor TEXT, watermark TEXT,
  last_success_at TEXT, last_error TEXT, fetched_count INTEGER NOT NULL DEFAULT 0 CHECK(fetched_count >= 0),
- updated_at TEXT NOT NULL DEFAULT (${ISO_UTC}),
- ${UTC_CHECK("last_success_at")}, ${UTC_CHECK("updated_at")},
- PRIMARY KEY(connector, scope)
+ updated_at TEXT NOT NULL DEFAULT (${ISO_UTC}), PRIMARY KEY(connector, scope)
 ) STRICT;
 CREATE TABLE prs (
  id TEXT PRIMARY KEY, source_record_id TEXT NOT NULL REFERENCES source_records(id) ON DELETE RESTRICT,
@@ -57,96 +52,81 @@ CREATE TABLE prs (
  title TEXT NOT NULL, url TEXT NOT NULL, created_at TEXT, updated_at TEXT NOT NULL, merged_at TEXT,
  is_draft INTEGER NOT NULL CHECK(is_draft IN (0,1)), ci_status TEXT NOT NULL,
  review_requested INTEGER NOT NULL CHECK(review_requested IN (0,1)), last_relevant_activity_at TEXT,
- state TEXT NOT NULL DEFAULT 'open',
- ${UTC_CHECK("created_at")}, ${UTC_CHECK("updated_at")}, ${UTC_CHECK("merged_at")}, ${UTC_CHECK("last_relevant_activity_at")},
- UNIQUE(provider, repository, source_id)
+ state TEXT NOT NULL DEFAULT 'open', UNIQUE(provider, repository, source_id)
 ) STRICT;
-CREATE INDEX prs_source_record_idx ON prs(source_record_id);
 CREATE INDEX prs_attention_idx ON prs(state,is_draft,review_requested,updated_at);
 CREATE TABLE initiatives (
  id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT, deadline TEXT, dependencies_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(dependencies_json)),
- status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC}),
- ${UTC_CHECK("deadline")}, ${UTC_CHECK("created_at")}, ${UTC_CHECK("updated_at")}
+ status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC})
 ) STRICT;
 CREATE TABLE action_items (
  id TEXT PRIMARY KEY, owner_person_id TEXT REFERENCES people(id) ON DELETE SET NULL, description TEXT NOT NULL,
  due_at TEXT, due_timezone TEXT, status TEXT NOT NULL DEFAULT 'open', review_state TEXT NOT NULL DEFAULT 'proposed' CHECK(review_state IN ('proposed','approved','rejected','superseded')),
  snoozed_until TEXT, suppressed INTEGER NOT NULL DEFAULT 0 CHECK(suppressed IN (0,1)),
- created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC}),
- ${UTC_CHECK("due_at")}, ${UTC_CHECK("snoozed_until")}, ${UTC_CHECK("created_at")}, ${UTC_CHECK("updated_at")}
+ created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC})
 ) STRICT;
-CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE INDEX action_items_due_idx ON action_items(status,due_at);
-CREATE INDEX action_items_owner_idx ON action_items(owner_person_id);
 CREATE TABLE action_item_sources (
  action_item_id TEXT NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
  source_record_id TEXT NOT NULL REFERENCES source_records(id) ON DELETE RESTRICT,
  anchor TEXT, PRIMARY KEY(action_item_id,source_record_id)
 ) STRICT;
-CREATE INDEX action_item_sources_source_idx ON action_item_sources(source_record_id);
 CREATE TABLE evidence (
  id TEXT PRIMARY KEY, subject_person_id TEXT NOT NULL REFERENCES people(id) ON DELETE RESTRICT,
  observation TEXT NOT NULL, impact TEXT, competency_tags_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(competency_tags_json)),
  author TEXT NOT NULL, approver TEXT, observed_at TEXT NOT NULL, interpretation TEXT, sensitivity TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed','approved','rejected','superseded')),
  supersedes_id TEXT REFERENCES evidence(id) ON DELETE RESTRICT,
- created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC}),
- ${UTC_CHECK("observed_at")}, ${UTC_CHECK("created_at")}, ${UTC_CHECK("updated_at")}
+ created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC})
 ) STRICT;
-CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
-CREATE INDEX evidence_subject_idx ON evidence(subject_person_id);
-CREATE INDEX evidence_supersedes_idx ON evidence(supersedes_id);
+CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE TABLE evidence_sources (
  evidence_id TEXT NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
  source_record_id TEXT NOT NULL REFERENCES source_records(id) ON DELETE RESTRICT,
  anchor TEXT, PRIMARY KEY(evidence_id,source_record_id)
 ) STRICT;
-CREATE INDEX evidence_sources_source_idx ON evidence_sources(source_record_id);
 CREATE TABLE drafts (
  id TEXT PRIMARY KEY, type TEXT NOT NULL, period TEXT NOT NULL, audience TEXT NOT NULL,
  input_record_ids_json TEXT NOT NULL CHECK(json_valid(input_record_ids_json)), model_route TEXT, model_version TEXT,
  file_path TEXT, generated_at TEXT NOT NULL, reviewer_state TEXT NOT NULL DEFAULT 'proposed' CHECK(reviewer_state IN ('proposed','approved','rejected','superseded')),
- cached_markdown TEXT, created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC}),
- ${UTC_CHECK("generated_at")}, ${UTC_CHECK("created_at")}, ${UTC_CHECK("updated_at")}
+ cached_markdown TEXT, created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC})
 ) STRICT;
-CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE TABLE draft_sources (
  draft_id TEXT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
  source_record_id TEXT NOT NULL REFERENCES source_records(id) ON DELETE RESTRICT,
  anchor TEXT, PRIMARY KEY(draft_id,source_record_id)
 ) STRICT;
-CREATE INDEX draft_sources_source_idx ON draft_sources(source_record_id);
 CREATE TABLE review_audit (
  id INTEGER PRIMARY KEY, entity_type TEXT NOT NULL CHECK(entity_type IN ('action_item','evidence','draft')),
  entity_id TEXT NOT NULL, from_state TEXT NOT NULL, to_state TEXT NOT NULL, actor TEXT NOT NULL,
- reason TEXT NOT NULL, changed_at TEXT NOT NULL,
- ${UTC_CHECK("changed_at")}
+ reason TEXT NOT NULL, changed_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX review_audit_entity_idx ON review_audit(entity_type,entity_id,changed_at);
-CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
-CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
 CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state BEGIN
-SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
-SELECT CASE WHEN old.review_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+ SELECT CASE WHEN old.review_state <> 'proposed' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+ SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM review_audit WHERE entity_type='action_item' AND entity_id=old.id AND from_state=old.review_state AND to_state=new.review_state) THEN RAISE(ABORT,'review transition requires audit') END;
 END;
 CREATE TRIGGER evidence_review_guard BEFORE UPDATE OF status ON evidence WHEN old.status <> new.status BEGIN
-SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
-SELECT CASE WHEN old.status <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+ SELECT CASE WHEN old.status <> 'proposed' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+ SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM review_audit WHERE entity_type='evidence' AND entity_id=old.id AND from_state=old.status AND to_state=new.status) THEN RAISE(ABORT,'review transition requires audit') END;
 END;
 CREATE TRIGGER draft_review_guard BEFORE UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state BEGIN
-SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
-SELECT CASE WHEN old.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+ SELECT CASE WHEN old.reviewer_state <> 'proposed' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+ SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM review_audit WHERE entity_type='draft' AND entity_id=old.id AND from_state=old.reviewer_state AND to_state=new.reviewer_state) THEN RAISE(ABORT,'review transition requires audit') END;
 END;
-CREATE TABLE cache_entries (cache_key TEXT PRIMARY KEY, source_record_id TEXT REFERENCES source_records(id) ON DELETE CASCADE, value TEXT NOT NULL, expires_at TEXT,
-${UTC_CHECK("expires_at")}
-) STRICT;
-CREATE INDEX cache_entries_source_idx ON cache_entries(source_record_id);
+CREATE TABLE cache_entries (cache_key TEXT PRIMARY KEY, source_record_id TEXT REFERENCES source_records(id) ON DELETE CASCADE, value TEXT NOT NULL, expires_at TEXT) STRICT;
 CREATE TABLE deletion_tombstones (
-provider TEXT NOT NULL, source_id TEXT NOT NULL, deleted_at TEXT NOT NULL, reason TEXT NOT NULL,
-content_hash TEXT, PRIMARY KEY(provider,source_id),
-${UTC_CHECK("deleted_at")}
+ provider TEXT NOT NULL, source_id TEXT NOT NULL, deleted_at TEXT NOT NULL, reason TEXT NOT NULL,
+ content_hash TEXT NOT NULL, PRIMARY KEY(provider,source_id)
 ) STRICT;
-`},
+`;
+
+export const migrations = [
+  { version: 1, sql: HISTORICAL_V1_SCHEMA_SQL },
   {
     version: 2,
     sql: `
@@ -185,6 +165,42 @@ END;
 CREATE TRIGGER draft_review_audit AFTER UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state AND em_review_write_mode()='transition' BEGIN
  INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('draft',old.id,old.reviewer_state,new.reviewer_state,em_review_actor(),em_review_reason(),em_review_changed_at());
 END;
+`},
+  {
+    version: 3,
+    sql: `
+-- Upgrade objects added after the immutable v1/v2 migrations shipped.
+DROP TRIGGER IF EXISTS source_records_ad;
+DROP TRIGGER IF EXISTS source_records_au;
+DROP TRIGGER IF EXISTS review_audit_no_update;
+DROP TRIGGER IF EXISTS review_audit_no_delete;
+DROP TRIGGER IF EXISTS review_audit_no_insert;
+CREATE TRIGGER source_records_ad AFTER DELETE ON source_records WHEN old.deleted_at IS NULL BEGIN
+ INSERT INTO source_records_fts(source_records_fts,rowid,excerpt) VALUES('delete',old.rowid,old.excerpt);
+END;
+CREATE TRIGGER source_records_au AFTER UPDATE OF excerpt,deleted_at ON source_records BEGIN
+ INSERT INTO source_records_fts(source_records_fts,rowid,excerpt) SELECT 'delete',old.rowid,old.excerpt WHERE old.deleted_at IS NULL;
+ INSERT INTO source_records_fts(rowid,excerpt) SELECT new.rowid,new.excerpt WHERE new.deleted_at IS NULL;
+END;
+CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_insert BEFORE INSERT ON review_audit WHEN em_review_write_mode() NOT IN ('transition','import') BEGIN SELECT RAISE(ABORT,'review audit may only be written by storage API'); END;
+CREATE INDEX IF NOT EXISTS prs_source_record_idx ON prs(source_record_id);
+CREATE INDEX IF NOT EXISTS action_items_owner_idx ON action_items(owner_person_id);
+CREATE INDEX IF NOT EXISTS action_item_sources_source_idx ON action_item_sources(source_record_id);
+CREATE INDEX IF NOT EXISTS evidence_subject_idx ON evidence(subject_person_id);
+CREATE INDEX IF NOT EXISTS evidence_supersedes_idx ON evidence(supersedes_id);
+CREATE INDEX IF NOT EXISTS evidence_sources_source_idx ON evidence_sources(source_record_id);
+CREATE INDEX IF NOT EXISTS draft_sources_source_idx ON draft_sources(source_record_id);
+CREATE INDEX IF NOT EXISTS cache_entries_source_idx ON cache_entries(source_record_id);
+ALTER TABLE deletion_tombstones RENAME TO deletion_tombstones_pre_v3;
+CREATE TABLE deletion_tombstones (
+ provider TEXT NOT NULL, source_id TEXT NOT NULL, deleted_at TEXT NOT NULL, reason TEXT NOT NULL,
+ content_hash TEXT, PRIMARY KEY(provider,source_id)
+) STRICT;
+INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash)
+ SELECT provider,source_id,deleted_at,reason,content_hash FROM deletion_tombstones_pre_v3;
+DROP TABLE deletion_tombstones_pre_v3;
 `},
 ] as const;
 

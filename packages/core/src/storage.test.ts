@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { SqliteStorage, migrations } from "./storage.js";
+import { HISTORICAL_V1_SCHEMA_SQL, SqliteStorage } from "./storage.js";
 
 async function fixture() {
  const dir=await mkdtemp(join(tmpdir(),"em-os-storage-"));
@@ -14,9 +14,9 @@ async function fixture() {
 const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z"};
 
 test("empty database migrates with foreign keys and FTS5",async()=>{const x=await fixture();try{
- assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2}]);
+ assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2},{version:3}]);
  assert.equal((x.store.db.prepare("PRAGMA foreign_keys").get() as {foreign_keys:number}).foreign_keys,1);
- assert.equal((x.store.db.prepare("PRAGMA user_version").get() as {user_version:number}).user_version,2);
+ assert.equal((x.store.db.prepare("PRAGMA user_version").get() as {user_version:number}).user_version,3);
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records_fts WHERE source_records_fts MATCH 'review'").get() as {n:number}).n,1);
 }finally{await x.cleanup();}});
@@ -81,7 +81,7 @@ test("versioned export/import and SQLite backup restore data, including encrypte
  const envelope=await x.store.writeEncryptedBackup(encryptedPath,key);
  assert.equal(envelope.manifest.format,"em-os-encrypted-backup");
  assert.equal(envelope.manifest.version,1);
- assert.equal(envelope.manifest.schemaVersion,2);
+ assert.equal(envelope.manifest.schemaVersion,3);
  assert.equal(typeof envelope.manifest.integrity,"string");
  assert.equal(typeof envelope.iv,"string");
  assert.equal(typeof envelope.ciphertext,"string");
@@ -209,30 +209,76 @@ test("import over audited DB round-trips review_audit and preserves append-only 
  assert.throws(()=>x.store.db.prepare("UPDATE review_audit SET reason='tampered' WHERE entity_id='a1'").run(),/append-only/);
 }finally{await x.cleanup();}});
 
-test("migration from v1 upgrades cleanly and previously shipped v2 databases are not stranded",async()=>{
- const dir=await mkdtemp(join(tmpdir(),"em-os-storage-migrate-"));
- const v1path=join(dir,"v1.sqlite");
- // build a real v1 database using only the version-1 schema, with a stub em_review_write_mode for v1 guards
- const db=new DatabaseSync(v1path);
- db.function("em_review_write_mode",()=>"none");
+const HISTORICAL_V2_SCHEMA_SQL = `
+DROP TRIGGER action_review_guard;
+DROP TRIGGER evidence_review_guard;
+DROP TRIGGER draft_review_guard;
+DROP TRIGGER action_items_initial_review_guard;
+DROP TRIGGER evidence_initial_review_guard;
+DROP TRIGGER drafts_initial_review_guard;
+CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER review_audit_no_insert BEFORE INSERT ON review_audit WHEN em_review_write_mode() NOT IN ('transition','import') BEGIN SELECT RAISE(ABORT,'review audit may only be written by storage API'); END;
+CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.review_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER evidence_review_guard BEFORE UPDATE OF status ON evidence WHEN old.status <> new.status BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.status <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER draft_review_guard BEFORE UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER action_review_audit AFTER UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item',old.id,old.review_state,new.review_state,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+CREATE TRIGGER evidence_review_audit AFTER UPDATE OF status ON evidence WHEN old.status <> new.status AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('evidence',old.id,old.status,new.status,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+CREATE TRIGGER draft_review_audit AFTER UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('draft',old.id,old.reviewer_state,new.reviewer_state,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+ALTER TABLE deletion_tombstones RENAME TO deletion_tombstones_v1;
+CREATE TABLE deletion_tombstones (provider TEXT NOT NULL,source_id TEXT NOT NULL,deleted_at TEXT NOT NULL,reason TEXT NOT NULL,content_hash TEXT,PRIMARY KEY(provider,source_id)) STRICT;
+INSERT INTO deletion_tombstones SELECT * FROM deletion_tombstones_v1;
+DROP TABLE deletion_tombstones_v1;
+`;
+
+async function assertHistoricalUpgrade(version:1|2):Promise<void> {
+ const dir=await mkdtemp(join(tmpdir(),`em-os-storage-v${version}-`)); const path=join(dir,"store.sqlite");
+ const db=new DatabaseSync(path); db.function("em_review_write_mode",()=>"none"); db.function("em_review_actor",()=>""); db.function("em_review_reason",()=>""); db.function("em_review_changed_at",()=>"");
  try {
-  db.exec(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
-INSERT INTO schema_migrations(version,applied_at) VALUES(1,'2026-10-09T09:00:00.000Z');
-${migrations.find((m:{version:number})=>m.version===1)?.sql || ''}`);
+  db.exec(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL); ${HISTORICAL_V1_SCHEMA_SQL}`);
+  db.prepare("INSERT INTO schema_migrations VALUES(1,?)").run("2026-10-09T09:00:00.000Z");
+  if(version===2){db.exec(HISTORICAL_V2_SCHEMA_SQL);db.prepare("INSERT INTO schema_migrations VALUES(2,?)").run("2026-10-09T10:00:00.000Z");}
   db.prepare("INSERT INTO action_items(id,description) VALUES('a1','migrate me')").run();
+  db.prepare("INSERT INTO source_records(id,provider,source_id,observed_at,excerpt,content_hash,classification,last_seen_at,deleted_at,deletion_reason) VALUES('s1','github','acme/1',?,'old text','h','work',?,?,'deleted')").run("2026-10-09T09:00:00.000Z","2026-10-09T09:00:00.000Z","2026-10-10T00:00:00.000Z");
+  db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES('github','acme/1',?,'deleted','h')").run("2026-10-10T00:00:00.000Z");
  } finally { db.close(); }
- const s=new SqliteStorage(v1path);
+ const store=new SqliteStorage(path);
  try {
-  await s.initialize();
-  assert.deepEqual(Array.from(s.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),row=>({...row})),[{version:1},{version:2}]);
-  assert.equal((s.db.prepare("SELECT review_state FROM action_items WHERE id='a1'").get() as {review_state:string}).review_state,"proposed");
- } finally { s.close(); }
- // a DB stamped with the branch's previously shipped version (v2) must not be rejected
- const v2path=join(dir,"v2.sqlite"); const db2=new DatabaseSync(v2path);
- try { db2.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(2,'2026-10-09T09:00:00.000Z');"); } finally { db2.close(); }
- const s2=new SqliteStorage(v2path);
- try { await assert.doesNotReject(()=>s2.initialize()); } finally { s2.close(); await rm(dir,{recursive:true,force:true}); }
-});
+  await store.initialize();
+  assert.deepEqual(Array.from(store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),r=>({...r})),[{version:1},{version:2},{version:3}]);
+  const trigger=(store.db.prepare("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='source_records_ad'").get() as {sql:string}).sql;
+  assert.match(trigger,/WHEN old\.deleted_at IS NULL/);
+  for(const index of ["prs_source_record_idx","action_items_owner_idx","action_item_sources_source_idx","evidence_subject_idx","evidence_supersedes_idx","evidence_sources_source_idx","draft_sources_source_idx","cache_entries_source_idx"])
+   assert.ok(store.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='index' AND name=?").get(index),`missing ${index}`);
+  const tombstoneInfo=store.db.prepare("PRAGMA table_info(deletion_tombstones)").all() as {name:string;notnull:number}[];
+  assert.equal(tombstoneInfo.find(c=>c.name==="content_hash")?.notnull,0);
+  assert.throws(()=>store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','a1','proposed','approved','x','x','2026-10-09T11:00:00.000Z')").run(),/may only be written by storage API/);
+  assert.throws(()=>store.db.prepare("UPDATE action_items SET review_state='approved' WHERE id='a1'").run(),/requires storage API/);
+  store.transition("action_item","a1","approved","manager","verified","2026-10-09T11:00:00.000Z");
+  const exported=store.exportData("2026-10-09T12:00:00.000Z"); store.importData(exported); store.importData(exported);
+  store.db.exec("INSERT INTO source_records_fts(source_records_fts) VALUES('integrity-check')");
+  assert.equal((store.db.prepare("SELECT count(*) n FROM review_audit").get() as {n:number}).n,1);
+ } finally {store.close();await rm(dir,{recursive:true,force:true});}
+}
+
+test("literal historical v1 upgrades through every forward migration",()=>assertHistoricalUpgrade(1));
+test("literal historical v2 tombstone schema upgrades through current",()=>assertHistoricalUpgrade(2));
 
 function equalize(rows:Record<string,unknown>[]) {
  return rows.map(r=>Object.fromEntries(Object.entries(r).sort(([a],[b])=>a.localeCompare(b))));
