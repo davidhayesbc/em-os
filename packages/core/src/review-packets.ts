@@ -62,8 +62,8 @@ export interface SensitiveExport {
   auditId: string;
 }
 
-function requireText(value: string, name: string): string {
-  if (!value.trim()) throw new Error(`${name} is required`);
+function requireText(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} is required`);
   return value;
 }
 
@@ -88,9 +88,11 @@ export class EvidenceReviewService {
     requireText(input.impact, "impact");
     requireText(input.context, "context");
     requireText(input.author, "author");
+    if (!input.source || typeof input.source !== "object") throw new Error("source is required");
     requireText(input.source.recordId, "source record id");
     requireText(input.source.anchor, "source anchor");
-    const record: EvidenceRecord = { ...input, observedAt: utc(input.observedAt), status: "proposed" };
+    const source: EvidenceSource = { ...input.source as EvidenceSource };
+    const record: EvidenceRecord = { ...input, source, observedAt: utc(input.observedAt), status: "proposed" };
     if (this.evidence.has(record.id)) throw new Error("evidence id already exists");
     this.evidence.set(record.id, record);
     this.audit("create", record.id, record.author, "proposed evidence");
@@ -109,11 +111,13 @@ export class EvidenceReviewService {
   correctEvidence(id: string, correction: Omit<EvidenceRecord, "id" | "status" | "supersedesId">, actor: string): EvidenceRecord {
     const old = this.getLive(id);
     requireText(actor, "actor");
-    const corrected = this.addEvidence({ ...correction, id: `${id}:correction:${this.auditLog.length}`, status: "proposed", supersedesId: id });
+    const discriminator = this.nextCorrectionDiscriminator(id);
+    const corrected = this.addEvidence({ ...correction, id: `${id}:correction:${discriminator}`, status: "proposed", supersedesId: id });
     this.audit("correction", id, actor, `corrected by ${corrected.id}`);
     old.status = "superseded";
+    this.invalidatePacketsReferencing(id, `superseded evidence: ${id}`);
     this.audit("transition:superseded", id, actor, `superseded by ${corrected.id}`);
-    return corrected;
+    return { ...corrected, competency: [...corrected.competency], source: { ...corrected.source } };
   }
 
   buildPacket(id: string, subjectId: string, rubric: ReviewRubric | undefined, claims: readonly PacketClaim[], counterEvidence: readonly string[] = []): ReviewPacket {
@@ -132,11 +136,13 @@ export class EvidenceReviewService {
         if (!citation.anchor.trim()) throw new Error("citation anchor is required");
       }
     }
-    const gaps = rubric.competencies.filter((competency) => !claims.some((claim) => claim.evidenceIds.some((id) => this.getLive(id).competency.includes(competency))));
-    const packet: ReviewPacket = { id, subjectId, rubric, claims: claims.map((claim) => ({ ...claim, evidenceIds: [...claim.evidenceIds], citations: claim.citations.map((citation) => ({ ...citation, url: citation.available ? citation.url : undefined })) })), gaps, counterEvidence: [...counterEvidence], signed: false };
+    const competencies = rubric.competencies ? [...rubric.competencies] : [];
+    const storedRubric: ReviewRubric = { ...rubric, competencies };
+    const gaps = competencies.filter((competency) => !claims.some((claim) => claim.evidenceIds.some((id) => this.getLive(id).competency.includes(competency))));
+    const packet: ReviewPacket = { id, subjectId, rubric: storedRubric, claims: claims.map((claim) => ({ ...claim, evidenceIds: [...claim.evidenceIds], citations: claim.citations.map((citation) => ({ ...citation, url: citation.available ? citation.url : undefined })) })), gaps, counterEvidence: [...counterEvidence], signed: false };
     this.packets.set(id, packet);
     this.audit("packet:create", id, "system", gaps.length ? "rubric gaps present" : "complete rubric coverage");
-    return packet;
+    return this.copyPacket(packet);
   }
 
   signPacket(id: string, reviewer: string, signedAt: string): ReviewPacket {
@@ -144,7 +150,7 @@ export class EvidenceReviewService {
     requireText(reviewer, "reviewer");
     packet.reviewer = reviewer; packet.signedAt = utc(signedAt); packet.signed = true;
     this.audit("packet:sign", id, reviewer, "explicit reviewer sign-off", signedAt);
-    return packet;
+    return this.copyPacket(packet);
   }
 
   deleteEvidence(id: string, actor: string, at: string): void {
@@ -152,26 +158,7 @@ export class EvidenceReviewService {
     requireText(actor, "actor");
     this.deleted.add(id);
     record.status = "superseded";
-    for (const packet of this.packets.values()) {
-      let referenced = false;
-      packet.claims = packet.claims.map((claim) => ({
-        ...claim,
-        evidenceIds: claim.evidenceIds.filter((evidenceId) => {
-          if (evidenceId === id) referenced = true;
-          return evidenceId !== id;
-        }),
-        citations: claim.citations.filter((citation) => {
-          if (citation.recordId === id) referenced = true;
-          return citation.recordId !== id;
-        }),
-      }));
-      if (referenced && !packet.gaps.includes(`deleted evidence: ${id}`)) {
-        packet.gaps = [...packet.gaps, `deleted evidence: ${id}`];
-        packet.signed = false;
-        packet.reviewer = undefined;
-        packet.signedAt = undefined;
-      }
-    }
+    this.invalidatePacketsReferencing(id, `deleted evidence: ${id}`);
     this.audit("delete:tombstone", id, actor, "content removed; packet references and caches propagated", at);
   }
 
@@ -179,9 +166,15 @@ export class EvidenceReviewService {
     if (!authorized) throw new Error("sensitive export authorization required");
     const packet = this.getPacket(packetId);
     if (!packet.signed) throw new Error("packet requires reviewer sign-off before export");
+    for (const claim of packet.claims) {
+      for (const evidenceId of claim.evidenceIds) {
+        const record = this.getLive(evidenceId);
+        if (record.status !== "approved") throw new Error(`claim requires approved evidence: ${evidenceId}`);
+      }
+    }
     const auditId = `export:${this.auditLog.length}`;
     this.audit("export:sensitive", packetId, actor, auditId, at);
-    return { packet: JSON.parse(JSON.stringify(packet)) as ReviewPacket, exportedAt: utc(at), auditId };
+    return { packet: this.copyPacket(packet), exportedAt: utc(at), auditId };
   }
 
   getAudit(): readonly AuditEvent[] { return this.auditLog.map((event) => ({ ...event })); }
@@ -195,4 +188,44 @@ export class EvidenceReviewService {
   }
   private getPacket(id: string): ReviewPacket { const packet = this.packets.get(id); if (!packet) throw new Error(`packet not found: ${id}`); return packet; }
   private audit(action: string, entityId: string, actor: string, detail: string, at = new Date().toISOString()): void { this.auditLog.push({ action, entityId, actor, detail, at: utc(at) }); }
+  private copyPacket(packet: ReviewPacket): ReviewPacket {
+    return {
+      ...packet,
+      rubric: { ...packet.rubric, competencies: [...packet.rubric.competencies] },
+      claims: packet.claims.map((claim) => ({
+        ...claim,
+        evidenceIds: [...claim.evidenceIds],
+        citations: claim.citations.map((citation) => ({ ...citation })),
+      })),
+      gaps: [...packet.gaps],
+      counterEvidence: [...packet.counterEvidence],
+    };
+  }
+  private nextCorrectionDiscriminator(id: string): number {
+    let n = 0;
+    while (this.evidence.has(`${id}:correction:${n}`)) n += 1;
+    return n;
+  }
+  private invalidatePacketsReferencing(evidenceId: string, gap: string): void {
+    for (const packet of this.packets.values()) {
+      let referenced = false;
+      packet.claims = packet.claims.map((claim) => ({
+        ...claim,
+        evidenceIds: claim.evidenceIds.filter((candidateId) => {
+          if (candidateId === evidenceId) referenced = true;
+          return candidateId !== evidenceId;
+        }),
+        citations: claim.citations.filter((citation) => {
+          if (citation.recordId === evidenceId) referenced = true;
+          return citation.recordId !== evidenceId;
+        }),
+      }));
+      if (referenced && !packet.gaps.includes(gap)) {
+        packet.gaps = [...packet.gaps, gap];
+        packet.signed = false;
+        packet.reviewer = undefined;
+        packet.signedAt = undefined;
+      }
+    }
+  }
 }

@@ -74,16 +74,9 @@ test("deletion invalidates only packets that referenced the evidence", () => {
 
   service.deleteEvidence("referenced", "manager", "2026-10-09T12:00:00.000Z");
 
-  assert.deepEqual(referenced.claims[0].evidenceIds, []);
-  assert.deepEqual(referenced.claims[0].citations, []);
-  assert.equal(referenced.signed, false);
-  assert.equal(referenced.reviewer, undefined);
-  assert.equal(referenced.signedAt, undefined);
-  assert.equal(referenced.gaps.includes("deleted evidence: referenced"), true);
-  assert.equal(unrelated.signed, true);
-  assert.equal(unrelated.reviewer, "reviewer");
-  assert.equal(unrelated.signedAt, "2026-10-09T11:30:00.000Z");
-  assert.equal(unrelated.gaps.includes("deleted evidence: referenced"), false);
+  assert.throws(() => service.exportSensitive("p-referenced", "reviewer", true, "2026-10-09T12:01:00.000Z"), /sign-off/);
+  const reexported = service.exportSensitive("p-unrelated", "reviewer", true, "2026-10-09T12:01:00.000Z");
+  assert.deepEqual(reexported.packet.claims[0].evidenceIds, ["unrelated"]);
 });
 
 test("buildPacket does not mutate caller citation objects", () => {
@@ -94,6 +87,80 @@ test("buildPacket does not mutate caller citation objects", () => {
   const packet = service.buildPacket("p1", "person-1", { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" }, claims);
   assert.equal(citation.url, "https://example.invalid/stale");
   assert.equal(packet.claims[0].citations[0].url, undefined);
+});
+
+test("mutating the object returned by buildPacket cannot bypass sign-off or alter exports", () => {
+  const service = new EvidenceReviewService();
+  approved(service);
+  const packet = service.buildPacket("p1", "person-1", { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" }, [{ text: "claim", evidenceIds: ["e1"], citations: [{ ...base.source, recordId: "e1" }] }]);
+  packet.signed = true;
+  packet.reviewer = "attacker";
+  packet.signedAt = "2026-10-09T11:30:00.000Z";
+  (packet.claims[0].evidenceIds as unknown as string[]) = [];
+  (packet.claims[0].citations as unknown as unknown[]) = [];
+  assert.throws(() => service.exportSensitive("p1", "attacker", true, "2026-10-09T11:31:00.000Z"), /sign-off/);
+  service.signPacket("p1", "reviewer", "2026-10-09T11:30:00.000Z");
+  const exported = service.exportSensitive("p1", "reviewer", true, "2026-10-09T11:31:00.000Z");
+  assert.deepEqual(exported.packet.claims[0].evidenceIds, ["e1"]);
+  assert.equal(exported.packet.claims[0].citations.length, 1);
+});
+
+test("injecting a rejected evidence id into a returned packet must not reach export", () => {
+  const service = new EvidenceReviewService();
+  approved(service, "e1");
+  service.addEvidence({ ...base, id: "e2" });
+  service.transitionEvidence("e2", "rejected", "manager", "insufficient", "2026-10-09T10:01:00.000Z");
+  const packet = service.buildPacket("p1", "person-1", { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" }, [{ text: "claim", evidenceIds: ["e1"], citations: [{ ...base.source, recordId: "e1" }] }]);
+  const mutateableIds = packet.claims[0].evidenceIds as unknown as string[];
+  mutateableIds.push("e2");
+  // The returned copy is decoupled, so internal state is intact and export gates on sign-off.
+  assert.throws(() => service.exportSensitive("p1", "reviewer", true, "2026-10-09T11:31:00.000Z"), /sign-off/);
+  service.signPacket("p1", "reviewer", "2026-10-09T11:30:00.000Z");
+  // Internal packet still has only approved evidence; export succeeds with the originally approved set.
+  const exported = service.exportSensitive("p1", "reviewer", true, "2026-10-09T11:31:00.000Z");
+  assert.deepEqual(exported.packet.claims[0].evidenceIds, ["e1"]);
+});
+
+test("export re-validates all evidence is still approved and rejects if a referenced record is superseded", () => {
+  const service = new EvidenceReviewService();
+  approved(service);
+  service.buildPacket("p1", "person-1", { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" }, [{ text: "claim", evidenceIds: ["e1"], citations: [{ ...base.source, recordId: "e1" }] }]);
+  service.signPacket("p1", "reviewer", "2026-10-09T11:30:00.000Z");
+  service.correctEvidence("e1", { ...base, observation: "Led a reviewed migration", source: { ...base.source, anchor: "lines 20-22" } }, "manager");
+  assert.throws(() => service.exportSensitive("p1", "reviewer", true, "2026-10-09T12:01:00.000Z"), /sign-off/);
+});
+
+test("caller mutation of the rubric object after buildPacket does not change the stored packet", () => {
+  const service = new EvidenceReviewService();
+  approved(service);
+  const competencies: string[] = ["technical-leadership"];
+  const rubric = { id: "r1", targetLevel: "L5", competencies: competencies as unknown as readonly string[], suppliedBy: "manager" };
+  const packet = service.buildPacket("p1", "person-1", rubric, [{ text: "claim", evidenceIds: ["e1"], citations: [{ ...base.source, recordId: "e1" }] }]);
+  competencies.push("people-development");
+  rubric.targetLevel = "L9";
+  assert.deepEqual(packet.rubric.competencies, ["technical-leadership"]);
+  assert.equal(packet.rubric.targetLevel, "L5");
+  service.signPacket("p1", "reviewer", "2026-10-09T11:30:00.000Z");
+  const exported = service.exportSensitive("p1", "reviewer", true, "2026-10-09T11:31:00.000Z");
+  assert.deepEqual(exported.packet.rubric.competencies, ["technical-leadership"]);
+  assert.equal(exported.packet.rubric.targetLevel, "L5");
+});
+
+test("addEvidence without a source throws a domain error mentioning source", () => {
+  const service = new EvidenceReviewService();
+  const input = { ...base, id: "e1" } as unknown as Omit<typeof base & { id: string }, "source" >;
+  assert.throws(() => service.addEvidence({ ...input, source: undefined as unknown as typeof base.source }), /source/);
+});
+
+test("supersession invalidates packets that cite the superseded record", () => {
+  const service = new EvidenceReviewService();
+  approved(service);
+  service.buildPacket("p1", "person-1", { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" }, [{ text: "claim", evidenceIds: ["e1"], citations: [{ ...base.source, recordId: "e1" }] }]);
+  service.signPacket("p1", "reviewer", "2026-10-09T11:30:00.000Z");
+  service.correctEvidence("e1", { ...base, observation: "Led a reviewed migration", source: { ...base.source, anchor: "lines 20-22" } }, "manager");
+  assert.throws(() => service.exportSensitive("p1", "reviewer", true, "2026-10-09T12:01:00.000Z"), /sign-off/);
+  const afterSign = service.buildPacket("p1-refresh", "person-1", { id: "r1-refresh", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" }, [{ text: "claim", evidenceIds: [], citations: [] }]);
+  assert.equal(afterSign.signed, false);
 });
 
 test("a citation cannot use evidence owned by another claim", () => {
