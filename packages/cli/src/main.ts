@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { DEFAULT_SETTINGS, findPrAttention, localPaths, parsePullRequestFixture } from "@em-os/core";
+import { DEFAULT_SETTINGS, escapeTerminalControls, findPrAttention, localPaths, parsePullRequestFixture } from "@em-os/core";
+
+const safe = escapeTerminalControls;
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -11,7 +13,9 @@ function argument(name: string): string | undefined {
 async function main(): Promise<void> {
   const command = process.argv[2];
   if (command === "paths") {
-    console.log(JSON.stringify(localPaths(), null, 2));
+    const paths = localPaths();
+    console.log(JSON.stringify({ ...paths, database: "REDACTED" }, null, 2));
+    console.log(`Database path: ${paths.database}`);
     return;
   }
   if (command !== "attention") {
@@ -28,18 +32,18 @@ async function main(): Promise<void> {
   const fixture = parsePullRequestFixture(JSON.parse(await readFile(fixturePath, "utf8")) as unknown);
   const candidates = findPrAttention(fixture.prs, { now, ...DEFAULT_SETTINGS });
   const fetchedAge = Math.max(0, Math.floor((now.getTime() - Date.parse(fixture.fetchedAt)) / 60_000));
-  console.log(`EM OS synthetic PR attention — fetched ${fixture.fetchedAt} (${fetchedAge}m ago)`);
-  console.log(`Source: ${fixturePath} (local fixture; no network)`);
+  console.log(`EM OS synthetic PR attention — fetched ${safe(fixture.fetchedAt)} (${fetchedAge}m ago)`);
+  console.log(`Source: ${safe(fixturePath)} (local fixture; no network)`);
   if (candidates.length === 0) console.log("No candidates.");
   for (const item of candidates) {
-    console.log(`\n[${item.kind}] ${item.title}`);
-    console.log(`Reason: ${item.reason}`);
-    console.log(`Freshness: ${item.freshness}; observed ${item.observedAt} (${item.ageMinutes}m ago)`);
-    console.log(`Source: ${item.source.label} ${item.source.url}`);
+    console.log(`\n[${safe(item.kind)}] ${safe(item.title)}`);
+    console.log(`Reason: ${safe(item.reason)}`);
+    console.log(`Freshness: ${safe(item.freshness)}; observed ${safe(item.observedAt)} (${item.ageMinutes}m ago)`);
+    console.log(`Source: ${safe(item.source.label)} ${safe(item.source.url)}`);
   }
 }
 
 main().catch((error: unknown) => {
-  console.error(`em-os: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`em-os: ${safe(error instanceof Error ? error.message : error)}`);
   process.exitCode = 1;
 });
