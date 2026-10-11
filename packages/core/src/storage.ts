@@ -1,7 +1,9 @@
 import { backup, DatabaseSync } from "node:sqlite";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import type { PullRequestRecord, Storage } from "./contracts.js";
+import { encryptBackupArtifact, decryptBackupArtifact, BackupEnvelopeError, BackupKeyUnavailableError, type BackupArtifact, type BackupKeySource, type EncryptedBackupEnvelope, recomputeHeaderAAD } from "./backup-envelope.js";
 
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
@@ -273,7 +275,60 @@ export class SqliteStorage implements Storage {
    } finally { this.#reviewWrite=undefined; }
   });
  }
- async backupTo(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
- static async restoreFromExport(path:string, exportPath:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();storage.importData(JSON.parse(await readFile(exportPath,"utf8")) as StorageExport);return storage;}
- async writeExport(path:string):Promise<void>{await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(this.exportData(),null,2),{encoding:"utf8",mode:0o600});}
+
+ // Plaintext paths are dev-only and explicitly named insecure.
+ async backupToDevInsecure(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
+ async writeExportDevInsecure(path:string):Promise<void>{await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(this.exportData(),null,2),{encoding:"utf8",mode:0o600});}
+
+ async backupToEncrypted(destination:string, kekSource:BackupKeySource):Promise<void>{
+  await mkdir(dirname(destination),{recursive:true});
+  const tmp=await mkdtemp(join(tmpdir(),"em-os-backup-"));
+  try {
+   const plain=join(tmp,"plain.sqlite");
+   await backup(this.db,plain);
+   const bytes=await readFile(plain);
+   const envelope=encryptBackupArtifact(bytes,"sqlite-backup",kekSource);
+   await writeFile(destination,JSON.stringify(envelope,null,2),{encoding:"utf8",mode:0o600});
+  } finally { await rm(tmp,{recursive:true,force:true}); }
+ }
+
+ async writeExport(path:string, kekSource:BackupKeySource):Promise<void>{
+  await mkdir(dirname(path),{recursive:true});
+  const bytes=Buffer.from(JSON.stringify(this.exportData(),null,2),"utf8");
+  const envelope=encryptBackupArtifact(bytes,"em-os-storage",kekSource);
+  await writeFile(path,JSON.stringify(envelope,null,2),{encoding:"utf8",mode:0o600});
+ }
+
+ static async restoreFromEncryptedBackup(path:string, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
+  const envelope=JSON.parse(await readFile(path,"utf8")) as EncryptedBackupEnvelope;
+  if(envelope.artifact!=="sqlite-backup") throw new BackupEnvelopeError(`expected sqlite-backup artifact, got ${envelope.artifact}`);
+  const decrypted=decryptBackupArtifact(envelope,kekSource);
+  const tmp=await mkdtemp(join(tmpdir(),"em-os-restore-"));
+  try {
+   const plain=join(tmp,"restored.sqlite");
+   await writeFile(plain,decrypted);
+   // Ensure destinationDb file exists as an empty SQLite database so backup() accepts it.
+   const destDb=new DatabaseSync(destinationDb);
+   try { destDb.close(); } catch { destDb.close(); }
+   const plainDb=new DatabaseSync(plain);
+   try { await backup(plainDb,destinationDb); } finally { plainDb.close(); }
+   const storage=new SqliteStorage(destinationDb); await storage.initialize(); return storage;
+  } finally { await rm(tmp,{recursive:true,force:true}); }
+ }
+
+ static async restoreFromExport(pathOrEnvelope:string|EncryptedBackupEnvelope, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
+   const envelope = typeof pathOrEnvelope === "string" ? JSON.parse(await readFile(pathOrEnvelope,"utf8")) as EncryptedBackupEnvelope : pathOrEnvelope;
+   if(envelope.artifact!=="em-os-storage") throw new BackupEnvelopeError(`expected em-os-storage artifact, got ${envelope.artifact}`);
+   const decrypted=decryptBackupArtifact(envelope,kekSource);
+   const data=JSON.parse(decrypted.toString("utf8")) as StorageExport;
+   const storage=new SqliteStorage(destinationDb); await storage.initialize(); storage.importData(data); return storage;
+ }
+
+ static async restoreFromExportDevInsecure(path:string, destinationDb:string):Promise<SqliteStorage>{
+  const storage=new SqliteStorage(destinationDb);await storage.initialize();storage.importData(JSON.parse(await readFile(path,"utf8")) as StorageExport);return storage;
+ }
 }
+
+export type { BackupArtifact, EncryptedBackupEnvelope };
+export { BackupEnvelopeError, BackupKeyUnavailableError, recomputeHeaderAAD };
+export type { BackupKeySource } from "./backup-envelope.js";
