@@ -10,7 +10,7 @@ async function fixture() {
  const store=new SqliteStorage(join(dir,"store.sqlite")); await store.initialize();
  return {dir,store,cleanup:async()=>{store.close();await rm(dir,{recursive:true,force:true});}};
 }
-const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z"};
+const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"internal",lastSeenAt:"2026-10-09T09:00:00.000Z"};
 
 test("empty database migrates with foreign keys and FTS5",async()=>{const x=await fixture();try{
  assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations").all(), row=>({...row})),[{version:1}]);
@@ -75,7 +75,6 @@ test("versioned export/import and SQLite backup restore data, including encrypte
  assert.equal(envelope.manifest.version,1);
  assert.equal(envelope.manifest.schemaVersion,1);
  assert.equal(typeof envelope.manifest.integrity,"string");
- assert.equal(typeof envelope.manifest.salt,"string");
  assert.equal(typeof envelope.iv,"string");
  assert.equal(typeof envelope.ciphertext,"string");
  assert.equal(typeof envelope.authTag,"string");

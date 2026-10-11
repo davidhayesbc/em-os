@@ -1,3 +1,4 @@
+import { posix, win32 } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { appDataDirectory, localPaths } from "./settings";
@@ -17,5 +18,6 @@ test("uses platform app-data directories outside a checkout", () => {
 test("explicit data-directory override wins and preserves subdirectories", () => {
   assert.equal(appDataDirectory("darwin", { EM_OS_DATA_DIR: "/controlled/em-os" }, "/Users/test"), "/controlled/em-os");
   assert.equal(appDataDirectory("win32", { EM_OS_DATA_DIR: "C:\\controlled\\em-os" }, "C:\\Users\\test"), "C:\\controlled\\em-os");
-  assert.equal(localPaths("/controlled/em-os").database, "/controlled/em-os/db/em-os.sqlite3");
+  assert.equal(localPaths("/controlled/em-os", "posix").database, posix.join("/controlled/em-os", "db", "em-os.sqlite3"));
+  assert.equal(localPaths("C:\\controlled\\em-os", "win32").database, win32.join("C:\\controlled\\em-os", "db", "em-os.sqlite3"));
 });
