@@ -36,6 +36,7 @@ test("corrections preserve the original and produce an audited superseding recor
   assert.equal(corrected.status, "proposed");
   assert.equal(corrected.supersedesId, "e1");
   assert.equal(service.getAudit().some((event) => event.action === "correction"), true);
+  assert.equal(service.getAudit().some((event) => event.action === "transition:superseded" && event.entityId === "e1"), true);
 });
 
 test("sensitive export requires authorization and explicit sign-off", () => {
@@ -59,4 +60,57 @@ test("deletion propagates to packet references and leaves a tombstone audit", ()
   assert.throws(() => service.getEvidence("e1"), /deleted/);
   assert.throws(() => service.exportSensitive("p1", "reviewer", true, "2026-10-09T12:01:00.000Z"), /sign-off/);
   assert.equal(service.getAudit().some((event) => event.action === "delete:tombstone"), true);
+});
+
+test("deletion invalidates only packets that referenced the evidence", () => {
+  const service = new EvidenceReviewService();
+  approved(service, "referenced");
+  approved(service, "unrelated");
+  const rubric = { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" };
+  const referenced = service.buildPacket("p-referenced", "person-1", rubric, [{ text: "claim", evidenceIds: ["referenced"], citations: [{ ...base.source, recordId: "referenced" }] }]);
+  const unrelated = service.buildPacket("p-unrelated", "person-1", rubric, [{ text: "claim", evidenceIds: ["unrelated"], citations: [{ ...base.source, recordId: "unrelated" }] }]);
+  service.signPacket("p-referenced", "reviewer", "2026-10-09T11:30:00.000Z");
+  service.signPacket("p-unrelated", "reviewer", "2026-10-09T11:30:00.000Z");
+
+  service.deleteEvidence("referenced", "manager", "2026-10-09T12:00:00.000Z");
+
+  assert.deepEqual(referenced.claims[0].evidenceIds, []);
+  assert.deepEqual(referenced.claims[0].citations, []);
+  assert.equal(referenced.signed, false);
+  assert.equal(referenced.reviewer, undefined);
+  assert.equal(referenced.signedAt, undefined);
+  assert.equal(referenced.gaps.includes("deleted evidence: referenced"), true);
+  assert.equal(unrelated.signed, true);
+  assert.equal(unrelated.reviewer, "reviewer");
+  assert.equal(unrelated.signedAt, "2026-10-09T11:30:00.000Z");
+  assert.equal(unrelated.gaps.includes("deleted evidence: referenced"), false);
+});
+
+test("buildPacket does not mutate caller citation objects", () => {
+  const service = new EvidenceReviewService();
+  approved(service);
+  const citation = { ...base.source, recordId: "e1", available: false, url: "https://example.invalid/stale" };
+  const claims = [{ text: "claim", evidenceIds: ["e1"], citations: [citation] }];
+  const packet = service.buildPacket("p1", "person-1", { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" }, claims);
+  assert.equal(citation.url, "https://example.invalid/stale");
+  assert.equal(packet.claims[0].citations[0].url, undefined);
+});
+
+test("a citation cannot use evidence owned by another claim", () => {
+  const service = new EvidenceReviewService();
+  approved(service, "e1");
+  approved(service, "e2");
+  assert.throws(() => service.buildPacket("p1", "person-1", { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" }, [
+    { text: "first", evidenceIds: ["e1"], citations: [{ ...base.source, recordId: "e1" }] },
+    { text: "second", evidenceIds: ["e2"], citations: [{ ...base.source, recordId: "e1" }] },
+  ]), /citation is outside claim evidence/);
+});
+
+test("building a packet with an existing id is rejected", () => {
+  const service = new EvidenceReviewService();
+  approved(service);
+  const rubric = { id: "r1", targetLevel: "L5", competencies: ["technical-leadership"], suppliedBy: "manager" };
+  const claims = [{ text: "claim", evidenceIds: ["e1"], citations: [{ ...base.source, recordId: "e1" }] }];
+  service.buildPacket("p1", "person-1", rubric, claims);
+  assert.throws(() => service.buildPacket("p1", "person-1", rubric, claims), /packet id already exists/);
 });

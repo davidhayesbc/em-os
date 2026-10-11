@@ -112,29 +112,28 @@ export class EvidenceReviewService {
     const corrected = this.addEvidence({ ...correction, id: `${id}:correction:${this.auditLog.length}`, status: "proposed", supersedesId: id });
     this.audit("correction", id, actor, `corrected by ${corrected.id}`);
     old.status = "superseded";
+    this.audit("transition:superseded", id, actor, `superseded by ${corrected.id}`);
     return corrected;
   }
 
   buildPacket(id: string, subjectId: string, rubric: ReviewRubric | undefined, claims: readonly PacketClaim[], counterEvidence: readonly string[] = []): ReviewPacket {
     if (!rubric) throw new Error("rubric required; request a target-level rubric");
+    if (this.packets.has(id)) throw new Error("packet id already exists");
     requireText(rubric.id, "rubric id"); requireText(rubric.targetLevel, "rubric target level");
-    const selected = new Set<string>();
     for (const claim of claims) {
       if (!claim.text.trim()) throw new Error("claim text is required");
       for (const id of claim.evidenceIds) {
         const record = this.getLive(id);
         if (record.subjectId !== subjectId) throw new Error("evidence subject mismatch");
         if (record.status !== "approved") throw new Error(`claim requires approved evidence: ${id}`);
-        selected.add(id);
       }
       for (const citation of claim.citations) {
-        if (!selected.has(citation.recordId) && !claim.evidenceIds.includes(citation.recordId)) throw new Error("citation is outside claim evidence");
+        if (!claim.evidenceIds.includes(citation.recordId)) throw new Error("citation is outside claim evidence");
         if (!citation.anchor.trim()) throw new Error("citation anchor is required");
-        if (!citation.available) citation.url = undefined;
       }
     }
     const gaps = rubric.competencies.filter((competency) => !claims.some((claim) => claim.evidenceIds.some((id) => this.getLive(id).competency.includes(competency))));
-    const packet: ReviewPacket = { id, subjectId, rubric, claims: claims.map((claim) => ({ ...claim, evidenceIds: [...claim.evidenceIds], citations: claim.citations.map((citation) => ({ ...citation })) })), gaps, counterEvidence: [...counterEvidence], signed: false };
+    const packet: ReviewPacket = { id, subjectId, rubric, claims: claims.map((claim) => ({ ...claim, evidenceIds: [...claim.evidenceIds], citations: claim.citations.map((citation) => ({ ...citation, url: citation.available ? citation.url : undefined })) })), gaps, counterEvidence: [...counterEvidence], signed: false };
     this.packets.set(id, packet);
     this.audit("packet:create", id, "system", gaps.length ? "rubric gaps present" : "complete rubric coverage");
     return packet;
@@ -154,12 +153,19 @@ export class EvidenceReviewService {
     this.deleted.add(id);
     record.status = "superseded";
     for (const packet of this.packets.values()) {
+      let referenced = false;
       packet.claims = packet.claims.map((claim) => ({
         ...claim,
-        evidenceIds: claim.evidenceIds.filter((evidenceId) => evidenceId !== id),
-        citations: claim.citations.filter((citation) => citation.recordId !== id),
+        evidenceIds: claim.evidenceIds.filter((evidenceId) => {
+          if (evidenceId === id) referenced = true;
+          return evidenceId !== id;
+        }),
+        citations: claim.citations.filter((citation) => {
+          if (citation.recordId === id) referenced = true;
+          return citation.recordId !== id;
+        }),
       }));
-      if (packet.claims.some((claim) => claim.text.length > 0) && !packet.gaps.includes(`deleted evidence: ${id}`)) {
+      if (referenced && !packet.gaps.includes(`deleted evidence: ${id}`)) {
         packet.gaps = [...packet.gaps, `deleted evidence: ${id}`];
         packet.signed = false;
         packet.reviewer = undefined;
