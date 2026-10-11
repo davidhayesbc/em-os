@@ -117,7 +117,7 @@ test("versioned export/import and SQLite backup restore data, including encrypte
  const envelope=await x.store.writeEncryptedBackup(encryptedPath,key);
  assert.equal(envelope.manifest.format,"em-os-encrypted-backup");
  assert.equal(envelope.manifest.version,1);
- assert.equal(envelope.manifest.schemaVersion,1);
+ assert.equal(envelope.manifest.schemaVersion,3);
  assert.equal(typeof envelope.manifest.integrity,"string");
  assert.equal(typeof envelope.iv,"string");
  assert.equal(typeof envelope.ciphertext,"string");
@@ -181,7 +181,7 @@ test("import replaces existing audited data and can be repeated",async()=>{const
  assert.throws(()=>x.store.db.prepare("DELETE FROM review_audit").run(),/append-only/);
 }finally{await x.cleanup();}});
 
-test("v1 database with data and audit upgrades to guarded v2",async()=>{
+test("v1 database with data and audit upgrades through guarded v2 and review-queue v3",async()=>{
  const dir=await mkdtemp(join(tmpdir(),"em-os-storage-v1-")); const path=join(dir,"store.sqlite"); const v1=new DatabaseSync(path);
  try { v1.exec(`
   CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'2026-10-09T09:00:00.000Z');
@@ -203,7 +203,7 @@ test("v1 database with data and audit upgrades to guarded v2",async()=>{
  `); } finally { v1.close(); }
  const upgraded=new SqliteStorage(path); try {
   await upgraded.initialize();
-  assert.deepEqual(Array.from(upgraded.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),row=>({...row})),[{version:1},{version:2}]);
+  assert.deepEqual(Array.from(upgraded.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),row=>({...row})),[{version:1},{version:2},{version:3}]);
   assert.equal((upgraded.db.prepare("SELECT reason FROM deletion_tombstones WHERE provider='github' AND source_id='acme/api:42'").get() as {reason:string}).reason,"deleted");
   assert.equal((upgraded.db.prepare("SELECT actor FROM review_audit WHERE entity_id='a1'").get() as {actor:string}).actor,"manager");
   assert.throws(()=>upgraded.db.prepare("UPDATE action_items SET review_state='rejected' WHERE id='a1'").run(),/requires storage API/);
