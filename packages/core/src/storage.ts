@@ -1,11 +1,21 @@
 import { backup, DatabaseSync } from "node:sqlite";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { chmod, mkdir, readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import type { PullRequestRecord, Storage } from "./contracts.js";
+import type { SlackPersistencePage } from "./slack-connector.js";
+import { encryptBackupArtifact, decryptBackupArtifact, BackupEnvelopeError, BackupKeyUnavailableError, type BackupArtifact, type BackupKeySource, type EncryptedBackupEnvelope, recomputeHeaderAAD } from "./backup-envelope.js";
 
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+
+function parseEncryptedBackupEnvelope(serialized:string):EncryptedBackupEnvelope{
+ try { return JSON.parse(serialized) as EncryptedBackupEnvelope; }
+ catch(error){
+  if(error instanceof SyntaxError||error instanceof TypeError) throw new BackupEnvelopeError("EnvelopeValidationError: envelope is not valid JSON");
+  throw error;
+ }
+}
 
 function normalizeReviewTitle(value: string): string {
  return value.toLowerCase().replace(/^[A-Z][A-Z0-9]+-\d+:\s*/i, "").replace(/\W+/g, " ").trim();
@@ -293,6 +303,60 @@ export class SqliteStorage implements Storage {
     .run(batch.connector,batch.scope,batch.cursor??null,batch.watermark??null,utc(batch.observedAt),batch.records.length);
   });
  }
+ getCursor(connector:string, scope:string):string|undefined {
+  const row=this.db.prepare("SELECT cursor FROM sync_cursors WHERE connector=? AND scope=?").get(connector,scope) as {cursor:string|null}|undefined;
+  return row?.cursor??undefined;
+ }
+ recordSlackError(connector:string, scope:string, message:string):void {
+  this.db.prepare(`INSERT INTO sync_cursors(connector,scope,last_error) VALUES(?,?,?) ON CONFLICT(connector,scope) DO UPDATE SET last_error=excluded.last_error,updated_at=${ISO_UTC}`).run(connector,scope,message.slice(0,300));
+ }
+ persistSlackPage(page:SlackPersistencePage):void {
+   const isTombstoned = this.db.prepare("SELECT 1 tombstoned FROM deletion_tombstones WHERE provider='slack' AND source_id=?");
+   const isDeleted = this.db.prepare("SELECT deleted_at FROM source_records WHERE provider='slack' AND source_id=?");
+   const sourceSql=`INSERT INTO source_records(id,provider,source_id,stable_url,occurred_at,observed_at,excerpt,content_hash,classification,last_seen_at,retention_until)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,occurred_at=excluded.occurred_at,observed_at=excluded.observed_at,excerpt=excluded.excerpt,content_hash=excluded.content_hash,classification=excluded.classification,last_seen_at=excluded.last_seen_at,retention_until=excluded.retention_until,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`;
+   this.transaction(()=>{
+    const sourceStatement=this.db.prepare(sourceSql);
+    const tombstoneStatement=this.db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES('slack',?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET deleted_at=excluded.deleted_at,reason=excluded.reason,content_hash=excluded.content_hash");
+    const deletedSourceIds = new Set(page.deletedSourceIds);
+    for(const r of page.records) {
+     if ((isTombstoned.get(r.sourceId) as {tombstoned?:number}|undefined)?.tombstoned) continue;
+     sourceStatement.run(r.id,r.provider,r.sourceId,r.stableUrl??null,utc(r.occurredAt),utc(r.observedAt),r.excerpt,r.contentHash,r.classification,utc(r.lastSeenAt),utc(r.retentionUntil));
+    }
+    for(const sourceId of page.deletedSourceIds){
+     const row=this.db.prepare("SELECT id,content_hash FROM source_records WHERE provider='slack' AND source_id=?").get(sourceId) as {id:string;content_hash:string}|undefined;
+     const at=utc(page.observedAt);
+     if(!row){
+      tombstoneStatement.run(sourceId,at,"source_deleted","");
+      continue;
+     }
+     this.db.prepare("DELETE FROM review_queue_proposals WHERE source_record_id=? AND review_state='proposed'").run(row.id);
+     this.db.prepare("DELETE FROM cache_entries WHERE source_record_id=?").run(row.id);
+     this.db.prepare("UPDATE source_records SET excerpt=NULL,deleted_at=?,deletion_reason='source_deleted',updated_at=? WHERE id=?").run(at,at,row.id);
+     tombstoneStatement.run(sourceId,at,"source_deleted",row.content_hash);
+    }
+    const proposalInsert = this.db.prepare(`INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES(?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,description=excluded.description,updated_at=${ISO_UTC} WHERE review_queue_proposals.review_state='proposed'`);
+    for(const proposal of page.proposals) {
+     const sourceId = proposal.sourceRecordId.slice("slack:message:".length);
+     if (deletedSourceIds.has(sourceId)) continue;
+     if ((isTombstoned.get(sourceId) as {tombstoned?:number}|undefined)?.tombstoned) continue;
+     if ((isDeleted.get(sourceId) as {deleted_at:string|null}|undefined)?.deleted_at) continue;
+     proposalInsert.run(proposal.id,proposal.kind,proposal.description,proposal.sourceRecordId);
+    }
+    this.db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,last_success_at,last_error,fetched_count) VALUES(?,?,?,?,NULL,?)
+     ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO_UTC}`)
+     .run(page.connector,page.scope,page.cursor??null,utc(page.observedAt),page.records.length+page.deletedSourceIds.length);
+   });
+ }
+ transitionSlackProposal(proposalId:string,toState:"approved"|"rejected",actor:string,reason:string,changedAt:string):void {
+  if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
+  this.transaction(()=>{const row=this.db.prepare("SELECT review_state state FROM review_queue_proposals WHERE id=?").get(proposalId) as {state:string}|undefined;
+   if(!row)throw new Error("proposal not found"); if(row.state!=="proposed")throw new Error(`terminal review state cannot transition: ${row.state}`);
+   const at=utc(changedAt); this.db.prepare("INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,?,?,?,?)").run(proposalId,row.state,toState,actor,reason,at);
+   this.db.prepare("UPDATE review_queue_proposals SET review_state=?,updated_at=? WHERE id=?").run(toState,at,proposalId);
+  });
+ }
  async savePullRequests(records: readonly PullRequestRecord[], observedAt: string): Promise<void> {
   const when=utc(observedAt);
   this.transaction(()=>{ for(const record of records) {
@@ -300,7 +364,7 @@ export class SqliteStorage implements Storage {
    this.db.prepare(`INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,content_hash,classification,last_seen_at)
     SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
     ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,observed_at=excluded.observed_at,last_seen_at=excluded.last_seen_at,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`)
-    .run(id,record.provider,sourceId,record.url,when,sourceId,"work",when,record.provider,sourceId);
+     .run(id,record.provider,sourceId,record.url,when,sourceId,"work",when,record.provider,sourceId);
    this.db.prepare(`INSERT INTO prs(id,source_record_id,provider,repository,source_id,author,title,url,updated_at,is_draft,ci_status,review_requested,last_relevant_activity_at)
     SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
       AND EXISTS(SELECT 1 FROM source_records WHERE id=? AND deleted_at IS NULL)
@@ -474,65 +538,64 @@ export class SqliteStorage implements Storage {
  }
  async backupToRawSQLite(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
  static async restoreFromRawSQLite(path:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();return storage;}
- /** Plaintext JSON export; not encrypted. */
- async writeExport(path:string):Promise<void>{await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(this.exportData(),null,2),{encoding:"utf8",mode:0o600});}
- static async restoreFromExport(path:string, exportPath:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();storage.importData(JSON.parse(await readFile(exportPath,"utf8")) as StorageExport);return storage;}
 
- async writeEncryptedBackup(path:string,key:string):Promise<EncryptedBackupEnvelope>{
-  if(!key) throw new Error("encryption key is required");
-  const plaintext=JSON.stringify(this.exportData());
-  const integrity=sha256Hex(plaintext);
-  const schemaRow=this.db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as {version:number}|undefined;
-  const iv=randomBytes(12);
-  const derived=deriveKey(key);
-  const cipher=createCipheriv("aes-256-gcm",derived,iv);
-  const ciphertext=Buffer.concat([cipher.update(plaintext,"utf8"),cipher.final()]);
-  const authTag=cipher.getAuthTag();
-  const manifest:EncryptedBackupManifest={format:"em-os-encrypted-backup",version:1,exportedAt:utc(new Date().toISOString()),schemaVersion:schemaRow?.version??0,integrity};
-  const envelope:EncryptedBackupEnvelope={manifest,iv:b64(iv),ciphertext:b64(ciphertext),authTag:b64(authTag)};
+ // Plaintext paths are dev-only and explicitly named insecure.
+ async backupToDevInsecure(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
+ async writeExportDevInsecure(path:string):Promise<void>{await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(this.exportData(),null,2),{encoding:"utf8",mode:0o600});}
+
+ async backupToEncrypted(destination:string, kekSource:BackupKeySource):Promise<void>{
+  await mkdir(dirname(destination),{recursive:true});
+  const tmp=await mkdtemp(join(tmpdir(),"em-os-backup-"));
+  try {
+   const plain=join(tmp,"plain.sqlite");
+   await backup(this.db,plain);
+   const bytes=await readFile(plain);
+   const envelope=encryptBackupArtifact(bytes,"sqlite-backup",kekSource);
+   await writeFile(destination,JSON.stringify(envelope,null,2),{encoding:"utf8",mode:0o600});
+  } finally { await rm(tmp,{recursive:true,force:true}); }
+ }
+
+ async writeExport(path:string, kekSource:BackupKeySource):Promise<void>{
   await mkdir(dirname(path),{recursive:true});
+  const bytes=Buffer.from(JSON.stringify(this.exportData(),null,2),"utf8");
+  const envelope=encryptBackupArtifact(bytes,"em-os-storage",kekSource);
   await writeFile(path,JSON.stringify(envelope,null,2),{encoding:"utf8",mode:0o600});
-  return envelope;
  }
- static async restoreFromEncryptedBackup(path:string, key:string, destinationDbPath:string):Promise<SqliteStorage>{
-  if(!key) throw new Error("encryption key is required");
-  const envelope=JSON.parse(await readFile(path,"utf8")) as EncryptedBackupEnvelope;
-  if(envelope.manifest?.format!=="em-os-encrypted-backup"||envelope.manifest.version!==1) throw new Error("unsupported encrypted backup format");
-  const derived=deriveKey(key);
-  const decipher=createDecipheriv("aes-256-gcm",derived,fromB64(envelope.iv));
-  decipher.setAuthTag(fromB64(envelope.authTag));
-  let plaintext:string;
-  try { plaintext=Buffer.concat([decipher.update(fromB64(envelope.ciphertext)),decipher.final()]).toString("utf8"); }
-  catch(cause){ throw new Error("backup decryption failed: wrong key or tampered payload",{cause}); }
-  const digest=sha256Hex(plaintext);
-  const expected=envelope.manifest.integrity;
-  if(!expected || digest.length!==expected.length || !timingSafeEqual(Buffer.from(digest),Buffer.from(expected))) throw new Error("backup integrity check failed: tampered payload");
-  const data=JSON.parse(plaintext) as StorageExport;
-  const storage=new SqliteStorage(destinationDbPath); await storage.initialize();
-  const dbVersion=(storage.db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as {version:number}|undefined)?.version??0;
-  if(envelope.manifest.schemaVersion !== dbVersion) throw new Error(`schema version mismatch: backup=${envelope.manifest.schemaVersion}, db=${dbVersion}`);
-  storage.importData(data); return storage;
+
+ static async restoreFromEncryptedBackup(path:string, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
+  const envelope=parseEncryptedBackupEnvelope(await readFile(path,"utf8"));
+  const decrypted=decryptBackupArtifact(envelope,kekSource,"sqlite-backup");
+  const tmp=await mkdtemp(join(tmpdir(),"em-os-restore-"));
+  try {
+   const plain=join(tmp,"restored.sqlite");
+   await writeFile(plain,decrypted);
+   await mkdir(dirname(destinationDb),{recursive:true});
+   // Ensure destinationDb file exists as an empty SQLite database so backup() accepts it, with 0o600 per ADR 0008 restored-material handling.
+   await writeFile(destinationDb, Buffer.alloc(0), { mode: 0o600 });
+   const destDb=new DatabaseSync(destinationDb);
+   try { destDb.close(); } catch { destDb.close(); }
+   const plainDb=new DatabaseSync(plain);
+   try { await backup(plainDb,destinationDb); } finally { plainDb.close(); }
+   await chmod(destinationDb,0o600);
+   const storage=new SqliteStorage(destinationDb); await storage.initialize(); return storage;
+  } finally { await rm(tmp,{recursive:true,force:true}); }
  }
- /** Raw SQLite copy; not encrypted. */
- async backupTo(destination:string):Promise<void>{await this.backupToRawSQLite(destination);}
+
+ static async restoreFromExport(pathOrEnvelope:string|EncryptedBackupEnvelope, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
+   const envelope = typeof pathOrEnvelope === "string" ? parseEncryptedBackupEnvelope(await readFile(pathOrEnvelope,"utf8")) : pathOrEnvelope;
+   const decrypted=decryptBackupArtifact(envelope,kekSource,"em-os-storage");
+   const data=JSON.parse(decrypted.toString("utf8")) as StorageExport;
+   // Pre-create the restored DB file with 0o600 before SqliteStorage opens it.
+   await mkdir(dirname(destinationDb),{recursive:true});
+   await writeFile(destinationDb, Buffer.alloc(0), { mode: 0o600 });
+   const storage=new SqliteStorage(destinationDb); await storage.initialize(); storage.importData(data); await chmod(destinationDb,0o600); return storage;
+ }
+
+ static async restoreFromExportDevInsecure(path:string, destinationDb:string):Promise<SqliteStorage>{
+  const storage=new SqliteStorage(destinationDb);await storage.initialize();storage.importData(JSON.parse(await readFile(path,"utf8")) as StorageExport);return storage;
+ }
 }
 
-export interface EncryptedBackupManifest {
-  format: "em-os-encrypted-backup";
-  version: 1;
-  exportedAt: string;
-  schemaVersion: number;
-  integrity: string; // sha256 over the plaintext export JSON
-}
-
-export interface EncryptedBackupEnvelope {
-  manifest: EncryptedBackupManifest;
-  iv: string;     // base64 AES-GCM IV
-  ciphertext: string; // base64 encrypted payload
-  authTag: string;  // base64 AES-GCM auth tag
-}
-
-function sha256Hex(input:string):string { return createHash("sha256").update(input).digest("hex"); }
-function deriveKey(key:string):Buffer { return createHash("sha256").update(key).digest(); }
-function b64(data:Buffer):string { return data.toString("base64url"); }
-function fromB64(data:string):Buffer { return Buffer.from(data,"base64url"); }
+export type { BackupArtifact, EncryptedBackupEnvelope };
+export { BackupEnvelopeError, BackupKeyUnavailableError, recomputeHeaderAAD };
+export type { BackupKeySource } from "./backup-envelope.js";
