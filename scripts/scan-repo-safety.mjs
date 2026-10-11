@@ -8,6 +8,16 @@
 // Usage:
 //   node scripts/scan-repo-safety.mjs            # scan tracked working tree
 //   node scripts/scan-repo-safety.mjs --history  # also scan every blob in history
+//   node scripts/scan-repo-safety.mjs --self-test # run built-in rule probes
+//
+// History scan semantics:
+//   With --history the scanner walks every blob reachable from *all* refs that
+//   were present at checkout time (`git rev-list --objects --all`). In CI this
+//   means the scan covers every push-time-reachable branch, including sibling
+//   branches that are not part of the PR under test. Any negative-test fixture
+//   that intentionally contains a credential-shaped literal anywhere in shared
+//   history must use an allowlisted, reserved-for-documentation host (see the
+//   basic-auth-url allow predicate) so it is not flagged as a leak.
 //
 // No third-party dependencies: it runs under plain Node in CI on macOS/Windows.
 
@@ -16,6 +26,30 @@ import { readFileSync } from "node:fs";
 
 const repoRoot = new URL("..", import.meta.url);
 const scanHistory = process.argv.includes("--history");
+const selfTest = process.argv.includes("--self-test");
+
+const ALLOWED_BASIC_AUTH_HOSTS = new Set([
+  "example.invalid",
+  "example.com",
+  "example.org",
+  "example.test",
+]);
+
+function isAllowedBasicAuthHost(hostname) {
+  const h = hostname.toLowerCase();
+  for (const domain of ALLOWED_BASIC_AUTH_HOSTS) {
+    if (h === domain || h.endsWith("." + domain)) return true;
+  }
+  return false;
+}
+
+function isAllowedBasicAuthUrl(value) {
+  try {
+    return isAllowedBasicAuthHost(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
 
 /** name, severity, regex, allow(predicate over the matched text + file) */
 const RULES = [
@@ -25,7 +59,7 @@ const RULES = [
   { name: "slack-token", severity: "high", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
   { name: "google-api-key", severity: "high", re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
   { name: "jwt", severity: "medium", re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
-  { name: "basic-auth-url", severity: "high", re: /\bhttps?:\/\/[^/\s:@]+:[^/\s@]+@[^\s/]+/g },
+  { name: "basic-auth-url", severity: "high", re: /\bhttps?:\/\/[^/\s:@]+:[^/\s@]+@[^\s/]+/g, allow: isAllowedBasicAuthUrl },
   {
     name: "assignment-secret",
     severity: "medium",
@@ -84,6 +118,43 @@ function scanText(text, location, findings) {
       if (match.index === re.lastIndex) re.lastIndex += 1;
     }
   }
+}
+
+function runSelfTest() {
+  // Build the probes by concatenation so the literal credential-bearing URLs do
+  // not appear as contiguous strings in this file and trip the scanner itself.
+  const creds = "token:secret";
+  const allowedHost = "example.invalid";
+  const realHost = "real-host.invalid";
+  const mustFlag = [
+    ["basic-auth-url", "https://" + creds + "@" + realHost + "/pull/42"],
+    ["basic-auth-url", "https://" + "user:pass" + "@" + "github.com" + "/org/repo"],
+  ];
+  const mustAllow = [
+    "https://" + creds + "@" + allowedHost + "/pull/42",
+    "https://" + creds + "@" + "example.com" + "/pull/42",
+    "https://" + creds + "@" + "sub.example.invalid" + "/pull/42",
+  ];
+  for (const [rule, text] of mustFlag) {
+    const findings = [];
+    scanText(text, "<probe>", findings);
+    if (!findings.some((f) => f.rule === rule)) {
+      throw new Error(`self-test: expected rule ${rule} to flag ${text}`);
+    }
+  }
+  for (const text of mustAllow) {
+    const findings = [];
+    scanText(text, "<probe>", findings);
+    if (findings.some((f) => f.rule === "basic-auth-url")) {
+      throw new Error(`self-test: expected basic-auth-url to allow ${text}`);
+    }
+  }
+  console.log("repository safety scan self-test: PASS");
+}
+
+if (selfTest) {
+  runSelfTest();
+  process.exit(0);
 }
 
 const findings = [];
