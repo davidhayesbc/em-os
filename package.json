@@ -10,7 +10,10 @@
     "check": "tsc -b --pretty false",
     "test": "npm run build && node --test packages/core/dist/**/*.test.js",
     "demo": "npm run build && node packages/cli/dist/main.js attention --fixture fixtures/prs.synthetic.json --now 2026-10-09T09:00:00.000Z",
-    "ci": "npm run check && npm test && npm run demo"
+    "security:discovery": "node scripts/validate-security-discovery.mjs",
+    "security:repository": "node scripts/validate-repository-safety.mjs",
+    "security:repository:test": "node scripts/validate-repository-safety.mjs --self-test",
+    "ci": "npm run check && npm test && npm run security:discovery && npm run security:repository:test && npm run security:repository && npm run demo"
   },
   "devDependencies": {
     "@types/node": "^24.7.0",
