@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AttentionQueue, effectiveItemFreshness, isSnapshotStale, mergeQueueSnapshot, queueItemQuickPickLabel, syntheticOfflineSnapshot } from "./attentionQueue";
+import { AttentionQueue, effectiveItemFreshness, effectiveItemStatus, isSnapshotStale, mergeQueueSnapshot, queueItemContextValue, queueItemQuickPickLabel, syntheticOfflineSnapshot } from "./attentionQueue";
 
 const now = new Date("2026-10-09T09:00:00.000Z");
 
@@ -85,4 +85,34 @@ test("source-link smoke opens the exact validated URL", async () => {
   const opened: string[] = [];
   await queue.openSource("synthetic-ci-27", { open: async (url) => { opened.push(url); } });
   assert.deepEqual(opened, ["https://example.invalid/synthetic/widgets/pull/27"]);
+});
+
+test("expired snoozes are presented as proposed with the inline confirm context", () => {
+  const item = {
+    ...syntheticOfflineSnapshot(now).items[0]!,
+    status: "snoozed" as const,
+    snoozedUntil: "2026-10-09T08:00:00.000Z",
+  };
+  assert.equal(effectiveItemStatus(item, now), "proposed");
+  assert.equal(queueItemContextValue(item, now), "em-os.queueItem.proposed");
+
+  const futureSnooze = { ...item, snoozedUntil: "2026-10-09T10:00:00.000Z" };
+  assert.equal(effectiveItemStatus(futureSnooze, now), "snoozed");
+  assert.equal(queueItemContextValue(futureSnooze, now), "em-os.queueItem.snoozed");
+});
+
+test("source-link guard rejects unsafe and malformed URLs before opening", async () => {
+  const base = syntheticOfflineSnapshot(now);
+  for (const [sourceUrl, expected] of [
+    ...["javascript:alert(1)", "file:///etc/passwd", "data:text/html,x", "vscode://x"].map((url) => [url, /Source links must use HTTP\(S\)/] as const),
+    ...["not a url", "http://", "//example.invalid/x"].map((url) => [url, /Invalid URL/] as const),
+  ]) {
+    let calls = 0;
+    const queue = new AttentionQueue({ ...base, items: [{ ...base.items[0]!, sourceUrl }] });
+    await assert.rejects(
+      queue.openSource(base.items[0]!.id, { open: async () => { calls += 1; } }),
+      expected,
+    );
+    assert.equal(calls, 0, `opener must not be called for ${sourceUrl}`);
+  }
 });

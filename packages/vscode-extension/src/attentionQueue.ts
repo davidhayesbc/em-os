@@ -46,6 +46,17 @@ export function effectiveItemFreshness(snapshot: QueueSnapshot, item: QueueItem,
   return isSnapshotStale(snapshot, now) || item.freshness === "stale" ? "stale" : "fresh";
 }
 
+export function effectiveItemStatus(item: QueueItem, now: Date): ActionStatus {
+  if (item.status === "snoozed" && item.snoozedUntil && Date.parse(item.snoozedUntil) <= now.getTime()) {
+    return "proposed";
+  }
+  return item.status;
+}
+
+export function queueItemContextValue(item: QueueItem, now: Date): string {
+  return `em-os.queueItem.${effectiveItemStatus(item, now)}`;
+}
+
 export function queueItemQuickPickLabel(snapshot: QueueSnapshot, item: QueueItem, now: Date): string {
   const stalePrefix = effectiveItemFreshness(snapshot, item, now) === "stale" ? "$(warning) STALE: " : "";
   return `${stalePrefix}${item.title}`;
