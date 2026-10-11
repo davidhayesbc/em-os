@@ -3,13 +3,21 @@
 - **Task:** `t_245cb8f4` (security) — "Run MVP security and privacy release review"
 - **Repository:** `/workspace/em-os` (`https://github.com/davidhayesbc/em-os`)
 - **Source spec:** `docs/PRODUCT_SPEC.md` §§2, 7, 9, 10, 13
-- **Reviewed revision:** union of the open implementation PRs at the time of review
+- **Original review scope (historical, as of 2026-10-11 before PR #14 integration):**
+  union of the open implementation PRs at the time of review
   (t_2061357a PR#4, t_bea4f2f7 PR#5, t_e9a918f2 PR#6, t_f0183985 PR#7,
   t_5f8c72ad PR#8, t_11a5a84e PR#9, t_d6afa4cf PR#10, t_cd31e21f PR#11,
   t_1e58aa93 PR#12, t_b9f42019 PR#3, t_5d5ad6ce PR#2, t_8bbd8d90 PR#1).
   Latest `origin/*` heads were used (see per-finding commit refs).
-- **Result:** the synthetic MVP is **not release-ready** until the two blocking
-  findings below are fixed. Everything else is tracked as scheduled remediation.
+- **Current disposition (PR #14, based on revision
+  `0da6a3f7fe392f3e02678e1cc3178253cee92ede` plus this documentation update):**
+  SEC-01 and SEC-02 are remediated and are no longer open blockers. The
+  repository-safety scan runs in `npm run ci` and a dedicated full-history CI
+  job, while storage has one migration each at versions 1, 2 and 3 with
+  collision/guard coverage. The synthetic prototype may proceed through its
+  release checks, but this is **not** production approval or approval to process
+  real work data. The fail-closed gates in `docs/architecture/GATES.md` and the
+  remaining findings below still apply.
 
 > Scope note: the MVP is a *synthetic prototype*. No real work data, credential
 > path, MCP route or approved model route is present, and all of those remain
@@ -21,37 +29,43 @@
 
 | | |
 |---|---|
-| Blocking issues | **2** (SEC-01, SEC-02) |
-| High / Medium / Low findings | 0 / 4 / 3 (excl. the two blocking) |
+| Current blocking issues from this review | **0** (SEC-01 and SEC-02 remediated) |
+| Remaining High / Medium / Low findings | 0 / 4 / 3 |
 | Verified positive controls | 9 |
 | Real work data, credentials or secrets in the public repo | **none found** (see §4) |
 | Approved-route / read-only-scope definition | explicit and consistent (see §5) |
 
 Release rule applied (from `docs/architecture/GATES.md`): an open gate is a hard
-blocker for the capability it names but not for the synthetic core. SEC-01 and
-SEC-02 are code/integration blockers independent of the open gates.
+blocker for the capability it names but not for the synthetic core. In the
+original review SEC-01 and SEC-02 were code/integration blockers independent of
+those gates; both have now been remediated. Open gates continue to prohibit
+production use and real-data ingestion.
 
-## 2. Blocking findings
+## 2. Remediated blocking findings (historical findings, current controls)
 
-### SEC-01 — No CI secret / PII / work-content scan (High, blocking)
+### SEC-01 — CI secret / PII / work-content scan (High, remediated)
 
-- **Evidence:** every branch's `.github/workflows/ci.yml` runs only
-  `npm ci` + `npm run ci` (typecheck, tests, synthetic demo). There is **no**
-  secret/PII scan step, and `package.json` has no scan script. The Spec-0 record
+- **Original evidence (historical, as of 2026-10-11 before PR #14):** every
+  implementation branch's `.github/workflows/ci.yml` ran only
+  `npm ci` + `npm run ci` (typecheck, tests, synthetic demo). There was **no**
+  secret/PII scan step, and `package.json` had no scan script. The Spec-0 record
   (`docs/SECURITY_CONNECTOR_DISCOVERY.md`) itself states that "CI secret/PII
   scanning was absent … this change adds local exclusion rules but does not
   establish CI."
-- **Impact:** acceptance requires "a synthetic CI scan demonstrates no
+- **Original impact:** acceptance requires "a synthetic CI scan demonstrates no
   secrets/PII/work content." Without it, a future commit that adds a real note,
   token or fixture would not be caught before it lands in the public repo.
-- **Remediation (included in this PR):** add `scripts/scan-repo-safety.mjs`
-  (dependency-free Node scanner), run it from `npm run ci`, and add a dedicated
-  `repo-safety` CI job that scans full history (`fetch-depth: 0`).
+- **Current control:** PR #14 includes `scripts/scan-repo-safety.mjs` (a
+  dependency-free Node scanner), invokes it from `npm run ci`, and defines a
+  dedicated `repo-safety` CI job that scans full history (`fetch-depth: 0`).
+  The current verification evidence is recorded in §4.
+- **Status:** remediated; no longer an open release blocker.
 - **Owner:** security (fix in this PR) → coder to keep it green.
 
-### SEC-02 — Duplicate migration `version: 2` across stacked branches (High, blocking for release integration)
+### SEC-02 — Duplicate migration `version: 2` across stacked branches (High, remediated)
 
-- **Evidence:** `packages/core/src/storage.ts` defines two *different* `version: 2`
+- **Original evidence (historical, as of 2026-10-11 before PR #14 integration):**
+  `packages/core/src/storage.ts` defined two *different* `version: 2`
   migrations on sibling branches:
   - `origin/feat/t_f0183985-sqlite` (head `93636d9`) and
     `origin/feat/t_1e58aa93-evidence`: `version: 2` = the review-write hardening
@@ -59,21 +73,22 @@ SEC-02 are code/integration blockers independent of the open gates.
     API-only transition triggers).
   - `origin/feat/t_cd31e21f-slack` (head `bcaf924`): `version: 2` = creation of
     `review_queue_proposals` / `proposal_review_audit`.
-- **Verification:**
+- **Original verification:**
   `git merge-tree --write-tree origin/feat/t_f0183985-sqlite origin/feat/t_cd31e21f-slack`
   reports conflicts in `packages/core/src/storage.ts` and
   `packages/core/src/storage.test.ts`. `SqliteStorage.initialize()` records each
   applied `version` once, so at merge time **one of the two `version: 2` bodies
   is silently skipped**.
-- **Impact:** either the review-audit hardening is lost (direct SQL could again
+- **Original impact:** either the review-audit hardening would be lost (direct SQL could again
   pre-seed audit rows / transition review entities — the very defect a prior
   repair fixed) or the Slack review-queue tables never exist. Both are release
   blockers for the storage/connector integration.
-- **Remediation:** renumber the review-queue migration to `version: 3` (or fold
-  the hardening into `version: 1` before any real release), rebase the Slack
-  branch onto the hardened `feat/t_f0183985-sqlite`, and add a migration-collision
-  test that asserts the final version chain is `1,2,3` and that
-  `em_review_write_mode` guards and `review_queue_proposals` both exist.
+- **Current control:** PR #14's `packages/core/src/storage.ts` has a unique
+  migration chain `1,2,3`; version 2 retains the review-write hardening and
+  version 3 creates `review_queue_proposals` / `proposal_review_audit`.
+  Migration-chain tests assert uniqueness and verify both the
+  `em_review_write_mode` guards and review-queue schema.
+- **Status:** remediated; no longer an open release-integration blocker.
 - **Owner:** coder (storage/integration). Repair task: `t_7abfbd35`.
 
 ## 3. Remediation findings (non-blocking for the synthetic prototype)
@@ -170,11 +185,18 @@ Command (this PR; runs in CI as `repo-safety` and inside `npm run ci`):
 node scripts/scan-repo-safety.mjs --history
 ```
 
-Result at review time:
+Historical exact-head evidence for
+`0da6a3f7fe392f3e02678e1cc3178253cee92ede` (2026-10-11, before this
+documentation-only commit):
 
 ```text
-repository safety scan: PASS (no secrets, PII or work content in 39 tracked files or 227 history blobs)
+repository safety scan: PASS (no secrets, PII or work content in 65 tracked files or 460 history blobs)
 ```
+
+The command was re-run successfully after this documentation update. History
+blob totals depend on the refs available to the checkout, so the reproducible
+PASS result—not a self-referential count embedded in the new commit—is the
+current disposition.
 
 The scanner checks the working tree and, with `--history`, every blob reachable
 from every ref. It fails the build on private keys, AWS/GitHub/Slack/Google
@@ -230,8 +252,8 @@ redaction inputs and are asserted to be removed from stored output.
 
 | Finding | Owner | Blocking |
 |---|---|---|
-| SEC-01 CI repo-safety scan | security (this PR) → coder | yes |
-| SEC-02 migration version collision | coder (task `t_7abfbd35`) | yes |
+| SEC-01 CI repo-safety scan | security (this PR) → coder | remediated |
+| SEC-02 migration version collision | coder (task `t_7abfbd35`) | remediated |
 | SEC-03 importData key injection | coder (storage) | no |
 | SEC-04 encrypted backup/at-rest | security + product-owner | no (open gate G-SEC-02) |
 | SEC-05 connector redaction | coder (connectors) | no |
