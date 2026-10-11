@@ -146,8 +146,11 @@ function deriveKekForDecrypt(envelope: EncryptedBackupEnvelope, kekSource: Backu
   return Buffer.from(hkdfSync("sha256", material, salt, HKDF_INFO, envelope.kdf.dkLen ?? 32));
 }
 
-export function decryptBackupArtifact(envelope: EncryptedBackupEnvelope, kekSource: BackupKeySource): Buffer {
+export function decryptBackupArtifact(envelope: EncryptedBackupEnvelope, kekSource: BackupKeySource, expectedArtifact?: BackupArtifact): Buffer {
   validateEnvelope(envelope); // throws BEFORE any KDF/decryption work
+  if (expectedArtifact !== undefined && envelope.artifact !== expectedArtifact) {
+    throw new BackupEnvelopeError(`expected ${expectedArtifact} artifact, got ${envelope.artifact}`);
+  }
   const kek = deriveKekForDecrypt(envelope, kekSource);
   const decipher = createDecipheriv("aes-256-gcm", kek, Buffer.from(envelope.nonce_b64, "base64"));
   decipher.setAAD(headerAAD(envelope)); // AAD from received header, never trust producer's aad_b64

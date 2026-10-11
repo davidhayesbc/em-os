@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,11 +8,15 @@ import { SqliteStorage, BackupKeyUnavailableError, type BackupKeySource } from "
 async function fixture() {
  const dir=await mkdtemp(join(tmpdir(),"em-os-storage-"));
  const store=new SqliteStorage(join(dir,"store.sqlite")); await store.initialize();
- return {dir,store,cleanup:async()=>{store.close();await rm(dir,{recursive:true,force:true});}};
+ return {dir,store,cleanup:async()=>{store.close();await rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});}};
 }
 const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z"};
 const keyMaterial=Buffer.from("synthetic os key material 32b!!","utf8");
 const keySource:BackupKeySource={getKeyMaterial:()=>keyMaterial};
+
+async function assertOwnerOnlyModeOnPosix(path:string,message:string):Promise<void>{
+ if(process.platform!=="win32") assert.equal((await stat(path)).mode & 0o777,0o600,message);
+}
 
 function isBase64(str:string):boolean{
  return /^[A-Za-z0-9+/]*={0,2}$/.test(str) && Buffer.from(str,"base64").toString("base64")===str;
@@ -88,9 +92,9 @@ test("versioned encrypted export/import round-trips",async()=>{const x=await fix
  assert.ok(!parsed.inner.includes("source_records"));
  const destPath=join(x.dir,"restored.sqlite");
  const restored=await SqliteStorage.restoreFromExport(exportPath,destPath,keySource);
- assert.equal((restored.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,1);
- assert.equal((await stat(destPath)).mode & 0o777,0o600,"restored DB from export must be 0o600");
- restored.close();
+ try { assert.equal((restored.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,1); }
+ finally { restored.close(); }
+ await assertOwnerOnlyModeOnPosix(destPath,"restored DB from export must be 0o600");
 }finally{await x.cleanup();}});
 
 test("versioned encrypted SQLite backup round-trips with integrity",async()=>{const x=await fixture();try{
@@ -99,12 +103,36 @@ test("versioned encrypted SQLite backup round-trips with integrity",async()=>{co
  const parsed=JSON.parse(await readFile(backupPath,"utf8"));
  assert.equal(parsed.format,"em-os-enc-backup"); assert.equal(parsed.artifact,"sqlite-backup");
  assert.ok(!parsed.inner.includes("source_records"));
- const destPath=join(x.dir,"restored.sqlite");
+ const destPath=join(x.dir,"nested","restore","restored.sqlite");
  const restored=await SqliteStorage.restoreFromEncryptedBackup(backupPath,destPath,keySource);
- assert.equal((restored.db.prepare("SELECT cursor FROM sync_cursors").get() as {cursor:string}).cursor,"c1");
- assert.equal((restored.db.prepare("PRAGMA integrity_check").get() as {integrity_check:string}).integrity_check,"ok");
- assert.equal((await stat(destPath)).mode & 0o777,0o600,"restored DB from encrypted backup must be 0o600");
- restored.close();
+ try {
+  assert.equal((restored.db.prepare("SELECT cursor FROM sync_cursors").get() as {cursor:string}).cursor,"c1");
+  assert.equal((restored.db.prepare("PRAGMA integrity_check").get() as {integrity_check:string}).integrity_check,"ok");
+ } finally { restored.close(); }
+ await assertOwnerOnlyModeOnPosix(destPath,"restored DB from encrypted backup must be 0o600");
+}finally{await x.cleanup();}});
+
+test("both public encrypted restore APIs reject malformed envelopes before KDF or destination writes",async()=>{const x=await fixture();try{
+ const exportPath=join(x.dir,"export.enc.json"); await x.store.writeExport(exportPath,keySource);
+ const backupPath=join(x.dir,"backup.enc.json"); await x.store.backupToEncrypted(backupPath,keySource);
+ const validExport=JSON.parse(await readFile(exportPath,"utf8"));
+ const validBackup=JSON.parse(await readFile(backupPath,"utf8"));
+ for(const [api,valid] of [["export",validExport],["backup",validBackup]] as const){
+  const cases:(null|number|Record<string,unknown>)[]=[null,42];
+  for(const field of ["kdf","nonce_b64","tag_b64"] as const){
+   const missing=structuredClone(valid); delete missing[field]; cases.push(missing);
+   const nil=structuredClone(valid); nil[field]=null; cases.push(nil);
+  }
+  for(let i=0;i<cases.length;i++){
+   const input=join(x.dir,`${api}-malformed-${i}.json`); await writeFile(input,JSON.stringify(cases[i]));
+   const destination=join(x.dir,"must-not-exist",`${api}-${i}.sqlite`); let kdfCalls=0;
+   const countingKey:BackupKeySource={getKeyMaterial:()=>{kdfCalls++;return keyMaterial;}};
+   const operation=api==="export"?SqliteStorage.restoreFromExport(input,destination,countingKey):SqliteStorage.restoreFromEncryptedBackup(input,destination,countingKey);
+   await assert.rejects(operation,(error:unknown)=>error instanceof Error&&error.name==="BackupEnvelopeError");
+   assert.equal(kdfCalls,0,"malformed envelope must fail before KDF");
+   await assert.rejects(stat(destination),{code:"ENOENT"});
+  }
+ }
 }finally{await x.cleanup();}});
 
 test("writeExport and backupTo default paths require a key source",async()=>{const x=await fixture();try{
@@ -126,7 +154,7 @@ test("dev-only insecure plaintext paths still exist for diagnostics",async()=>{c
 
 test("encrypted restore rejects unencrypted export artifact",async()=>{const x=await fixture();try{
  const exportPath=join(x.dir,"backup","export.json"); await x.store.writeExportDevInsecure(exportPath);
- await assert.rejects(SqliteStorage.restoreFromExport(exportPath,join(x.dir,"restored.sqlite"),keySource),/expected em-os-storage artifact/);
+ await assert.rejects(SqliteStorage.restoreFromExport(exportPath,join(x.dir,"restored.sqlite"),keySource),(error:unknown)=>error instanceof Error&&error.name==="BackupEnvelopeError"&&/format must be em-os-enc-backup/.test(error.message));
 }finally{await x.cleanup();}});
 
 test("timestamps reject local offsets and normalize UTC fixtures",async()=>{const x=await fixture();try{

@@ -5,7 +5,8 @@
 //   (B) writeExport(): em-os-storage JSON export -> AES-256-GCM header-AAD envelope -> importData()-equivalent restore
 // Plus on-disk plaintext controls, tamper/wrong-key/absent-key rejection,
 // M1/M2 header-AAD negative checks, and the documented PBKDF2 operator-passphrase fallback. No network; reserved.test fixtures only.
-import { mkdtemp, readFile, writeFile, rm, mkdir, stat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, mkdtemp, readFile, writeFile, rm, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteStorage, BackupEnvelopeError, recomputeHeaderAAD } from "../packages/core/dist/storage.js";
@@ -26,9 +27,17 @@ async function rejects(name, fn, strictBackupEnvelopeError = false) {
   }
 }
 
-async function mode600(path) {
-  const s = await stat(path);
-  return (s.mode & 0o777) === 0o600;
+async function permissionEvidence(path) {
+  if (process.platform === "win32") {
+    await access(path, fsConstants.R_OK | fsConstants.W_OK);
+    return { pass: true, detail: "Windows current-user read/write access verified; POSIX mode bits not asserted" };
+  }
+  const mode = (await stat(path)).mode;
+  return { pass: (mode & 0o777) === 0o600, detail: `mode ${mode.toString(8)}` };
+}
+async function checkPermissions(name, path) {
+  const evidence = await permissionEvidence(path);
+  check(name, evidence.pass, evidence.detail);
 }
 
 const dir = await mkdtemp(join(tmpdir(), "em-os-drill-"));
@@ -55,7 +64,7 @@ try {
   const backupPath = join(dir, "backups", "drill-backup.enc.json");
   await source.backupToEncrypted(backupPath, keySource);
   const envA = JSON.parse(await readFile(backupPath, "utf8"));
-  check("(A) envelope written to disk (0o600)", await mode600(backupPath), `mode ${(await stat(backupPath)).mode.toString(8)}`);
+  await checkPermissions("(A) envelope file permissions", backupPath);
   check("(A) envelope schema fields deterministic", envA.version === 1 && envA.schema_version === 1 && envA.cipher === "AES-256-GCM" && envA.kdf.alg === "HKDF-SHA-256" && envA.kdf.info === "em-os backup key v1" && envA.kdf.dkLen === 32 && envA.kdf.source === "os-keystore" && typeof envA.aad_b64 === "string" && envA.aad_b64.length > 0);
 
   const markers = ["CREATE TABLE", "source_records", "Reserved Person"];
@@ -74,14 +83,14 @@ try {
   check("(A) restored DB opens and counts match source", restCountsA.people === srcCounts.people && restCountsA.records === srcCounts.records, JSON.stringify(restCountsA));
   check("(A) restored PRAGMA integrity_check ok", integrityA === "ok", integrityA);
   check("(A) restored record content equals source", JSON.stringify(restPeopleA) === JSON.stringify([{ id: "p1", display_name: "Reserved Person" }, { id: "p2", display_name: "Example User" }]));
-  check("(A) restored DB file mode is 0o600", await mode600(join(dir, "restored-a.sqlite")), `mode ${(await stat(join(dir, "restored-a.sqlite"))).mode.toString(8)}`);
   restoredA.close();
+  await checkPermissions("(A) restored DB file permissions", join(dir, "restored-a.sqlite"));
 
   // ---- (B) writeExport(): em-os-storage JSON export -> envelope -> import ------------
   const exportPath = join(dir, "backups", "drill-export.enc.json");
   await source.writeExport(exportPath, keySource);
   const envB = JSON.parse(await readFile(exportPath, "utf8"));
-  check("(B) envelope written to disk (0o600)", await mode600(exportPath), `mode ${(await stat(exportPath)).mode.toString(8)}`);
+  await checkPermissions("(B) envelope file permissions", exportPath);
   check("(B) aad_b64 equals recomputed canonical header AAD", envB.aad_b64 === recomputeHeaderAAD(envB).toString("base64"));
   const restoredB = await SqliteStorage.restoreFromExport(exportPath, join(dir, "restored-b.sqlite"), keySource);
   const restCountsB = {
@@ -89,8 +98,8 @@ try {
     records: restoredB.db.prepare("SELECT COUNT(*) AS n FROM source_records").get().n,
   };
   check("(B) restored DB counts match source", restCountsB.people === srcCounts.people && restCountsB.records === srcCounts.records, JSON.stringify(restCountsB));
-  check("(B) restored DB file mode is 0o600", await mode600(join(dir, "restored-b.sqlite")), `mode ${(await stat(join(dir, "restored-b.sqlite"))).mode.toString(8)}`);
   restoredB.close();
+  await checkPermissions("(B) restored DB file permissions", join(dir, "restored-b.sqlite"));
 
   // ---- Fail-closed: tamper, wrong key, absent key -----------------------------
   let tamperRejected = false;
@@ -131,8 +140,8 @@ try {
   check("(F) fallback envelope recorded with PBKDF2 + iterations", envF.kdf.alg === "PBKDF2-HMAC-SHA256" && envF.kdf.iterations === 600000 && envF.kdf.source === "operator-passphrase");
   const restoredF = await SqliteStorage.restoreFromExport(fallbackExportPath, join(dir, "restored-f.sqlite"), fallbackSource);
   check("(F) fallback envelope round-trip restores tables", restoredF.db.prepare("SELECT COUNT(*) AS n FROM people").get().n === 2);
-  check("(F) restored DB file mode is 0o600", await mode600(join(dir, "restored-f.sqlite")), `mode ${(await stat(join(dir, "restored-f.sqlite"))).mode.toString(8)}`);
   restoredF.close();
+  await checkPermissions("(F) restored DB file permissions", join(dir, "restored-f.sqlite"));
   let wrongPassRejected = false;
   try { await SqliteStorage.restoreFromExport(fallbackExportPath, join(dir, "ignored.sqlite"), { kind: "pbkdf2", passphrase: "wrong passphrase" }); } catch { wrongPassRejected = true; }
   check("(F) wrong passphrase rejected", wrongPassRejected);

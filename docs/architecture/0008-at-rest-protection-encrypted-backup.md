@@ -7,7 +7,7 @@
 
 ## Context
 
-`docs/SECURITY_REVIEW.md` finding SEC-04 (Medium) records that backups and exports are unencrypted: `packages/core/src/storage.ts` `backupTo()` produces a plaintext `sqlite` backup copy, `writeExport()` writes plaintext JSON (mode `0o600`, which is weak on Windows), and the SQLite database is opened without application-level encryption. Gate `G-SEC-02` (at-rest and backup protection: threat model; FileVault/BitLocker state; DB-encryption decision; encrypted backup destination and restore drill) was open at the time of this decision, and the DoD (§13) requires restoring "the local data from an encrypted backup".
+`docs/SECURITY_REVIEW.md` finding SEC-04 (Medium) records that backups and exports were unencrypted: `packages/core/src/storage.ts` previously produced plaintext backup/export artifacts, and the SQLite database is opened without application-level encryption. POSIX mode `0o600` is not a portable Windows ACL assertion. Gate `G-SEC-02` (at-rest and backup protection: threat model; FileVault/BitLocker state; DB-encryption decision; encrypted backup destination and restore drill) was open at the time of this decision, and the DoD (§13) requires restoring "the local data from an encrypted backup".
 
 The review's scope note applies: the MVP is a synthetic prototype with no real work data, credential path or approved ingestion route. The gate therefore has to be decided so that the synthetic prototype and future implementations share one enforceable envelope, and so the release label cannot overstate recovery-readiness.
 
@@ -65,7 +65,7 @@ Decryption does not remove handling obligations: decrypted material inherits the
 
 - Decrypted material may be materialized **only** into the ADR 0007 approved storage roots (the restored DB / export destinations), including the temporary restore scratch paths the drill uses.
 - It must not be written to removable media, an ad-hoc/network share, or an email/compose/clipboard/hand-off channel; those remain the unapproved destinations ADR 0007 names.
-- `restoreFromExport()`/tooling writes restored files with mode `0o600` into the approved root, and the same rule applies during the drill's temporary scratch directories.
+- `restoreFromExport()`/tooling writes restored files with mode `0o600` on POSIX into the approved root. On Windows, access control comes from the approved per-user ACL root; the drill verifies current-user access but does not misreport emulated POSIX mode bits as measured ACL exclusivity.
 
 ## Policy conditions (must hold while G-SEC-02 is Passed)
 

@@ -301,12 +301,12 @@ export class SqliteStorage implements Storage {
 
  static async restoreFromEncryptedBackup(path:string, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
   const envelope=JSON.parse(await readFile(path,"utf8")) as EncryptedBackupEnvelope;
-  if(envelope.artifact!=="sqlite-backup") throw new BackupEnvelopeError(`expected sqlite-backup artifact, got ${envelope.artifact}`);
-  const decrypted=decryptBackupArtifact(envelope,kekSource);
+  const decrypted=decryptBackupArtifact(envelope,kekSource,"sqlite-backup");
   const tmp=await mkdtemp(join(tmpdir(),"em-os-restore-"));
   try {
    const plain=join(tmp,"restored.sqlite");
    await writeFile(plain,decrypted);
+   await mkdir(dirname(destinationDb),{recursive:true});
    // Ensure destinationDb file exists as an empty SQLite database so backup() accepts it, with 0o600 per ADR 0008 restored-material handling.
    await writeFile(destinationDb, Buffer.alloc(0), { mode: 0o600 });
    const destDb=new DatabaseSync(destinationDb);
@@ -320,8 +320,7 @@ export class SqliteStorage implements Storage {
 
  static async restoreFromExport(pathOrEnvelope:string|EncryptedBackupEnvelope, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
    const envelope = typeof pathOrEnvelope === "string" ? JSON.parse(await readFile(pathOrEnvelope,"utf8")) as EncryptedBackupEnvelope : pathOrEnvelope;
-   if(envelope.artifact!=="em-os-storage") throw new BackupEnvelopeError(`expected em-os-storage artifact, got ${envelope.artifact}`);
-   const decrypted=decryptBackupArtifact(envelope,kekSource);
+   const decrypted=decryptBackupArtifact(envelope,kekSource,"em-os-storage");
    const data=JSON.parse(decrypted.toString("utf8")) as StorageExport;
    // Pre-create the restored DB file with 0o600 before SqliteStorage opens it.
    await mkdir(dirname(destinationDb),{recursive:true});
