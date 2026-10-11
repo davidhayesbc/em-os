@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, writeFile, mkdtemp, rm } from "node:fs/promises
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PullRequestRecord, Storage } from "./contracts.js";
+import type { SlackPersistencePage } from "./slack-connector.js";
 import { encryptBackupArtifact, decryptBackupArtifact, BackupEnvelopeError, BackupKeyUnavailableError, type BackupArtifact, type BackupKeySource, type EncryptedBackupEnvelope, recomputeHeaderAAD } from "./backup-envelope.js";
 
 export const STORAGE_EXPORT_VERSION = 1 as const;
@@ -135,9 +136,13 @@ DROP TRIGGER draft_review_guard;
 DROP TRIGGER action_items_initial_review_guard;
 DROP TRIGGER evidence_initial_review_guard;
 DROP TRIGGER drafts_initial_review_guard;
+DROP TRIGGER review_audit_no_update;
+DROP TRIGGER review_audit_no_delete;
 CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
 CREATE TRIGGER review_audit_no_insert BEFORE INSERT ON review_audit WHEN em_review_write_mode() NOT IN ('transition','import') BEGIN SELECT RAISE(ABORT,'review audit may only be written by storage API'); END;
 CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state BEGIN
  SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
@@ -168,6 +173,28 @@ CREATE TABLE deletion_tombstones (
 INSERT INTO deletion_tombstones SELECT * FROM deletion_tombstones_v1;
 DROP TABLE deletion_tombstones_v1;
 `},
+  {
+    version: 3,
+    sql: `
+CREATE TABLE review_queue_proposals (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('action','decision')),
+ description TEXT NOT NULL, source_record_id TEXT NOT NULL REFERENCES source_records(id) ON DELETE RESTRICT,
+ review_state TEXT NOT NULL DEFAULT 'proposed' CHECK(review_state IN ('proposed','approved','rejected')),
+ created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC})
+) STRICT;
+CREATE INDEX review_queue_proposals_state_idx ON review_queue_proposals(review_state,kind,updated_at);
+CREATE TRIGGER review_queue_proposals_initial_guard BEFORE INSERT ON review_queue_proposals WHEN new.review_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'review queue proposals must start proposed'); END;
+CREATE TRIGGER review_queue_proposals_terminal_guard BEFORE UPDATE OF review_state ON review_queue_proposals WHEN old.review_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'terminal review state cannot transition'); END;
+CREATE TABLE proposal_review_audit (
+ id INTEGER PRIMARY KEY, proposal_id TEXT NOT NULL REFERENCES review_queue_proposals(id) ON DELETE RESTRICT,
+ from_state TEXT NOT NULL, to_state TEXT NOT NULL, actor TEXT NOT NULL, reason TEXT NOT NULL, changed_at TEXT NOT NULL
+) STRICT;
+CREATE TRIGGER proposal_review_audit_no_update BEFORE UPDATE ON proposal_review_audit BEGIN SELECT RAISE(ABORT,'proposal review audit is append-only'); END;
+CREATE TRIGGER proposal_review_audit_no_delete BEFORE DELETE ON proposal_review_audit BEGIN SELECT RAISE(ABORT,'proposal review audit is append-only'); END;
+CREATE TRIGGER review_queue_proposals_audit_guard BEFORE UPDATE OF review_state ON review_queue_proposals WHEN old.review_state <> new.review_state BEGIN
+ SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM proposal_review_audit WHERE proposal_id=old.id AND from_state=old.review_state AND to_state=new.review_state) THEN RAISE(ABORT,'review transition requires audit') END;
+END;
+`},
 ] as const;
 
 export interface SourceInput {
@@ -176,7 +203,7 @@ export interface SourceInput {
 }
 export interface SyncBatch { connector: string; scope: string; cursor?: string; watermark?: string; observedAt: string; records: readonly SourceInput[]; }
 export interface StorageExport { format: "em-os-storage"; version: 1; exportedAt: string; tables: Record<string, Record<string, unknown>[]>; }
-const exportTables = ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","deletion_tombstones"] as const;
+const exportTables = ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","review_queue_proposals","proposal_review_audit","deletion_tombstones"] as const;
 const clearTables = [...exportTables, "cache_entries"] as const;
 
 function utc(value: string): string {
@@ -222,20 +249,78 @@ export class SqliteStorage implements Storage {
     .run(batch.connector,batch.scope,batch.cursor??null,batch.watermark??null,utc(batch.observedAt),batch.records.length);
   });
  }
+ getCursor(connector:string, scope:string):string|undefined {
+  const row=this.db.prepare("SELECT cursor FROM sync_cursors WHERE connector=? AND scope=?").get(connector,scope) as {cursor:string|null}|undefined;
+  return row?.cursor??undefined;
+ }
+ recordSlackError(connector:string, scope:string, message:string):void {
+  this.db.prepare(`INSERT INTO sync_cursors(connector,scope,last_error) VALUES(?,?,?) ON CONFLICT(connector,scope) DO UPDATE SET last_error=excluded.last_error,updated_at=${ISO_UTC}`).run(connector,scope,message.slice(0,300));
+ }
+ persistSlackPage(page:SlackPersistencePage):void {
+   const isTombstoned = this.db.prepare("SELECT 1 tombstoned FROM deletion_tombstones WHERE provider='slack' AND source_id=?");
+   const isDeleted = this.db.prepare("SELECT deleted_at FROM source_records WHERE provider='slack' AND source_id=?");
+   const sourceSql=`INSERT INTO source_records(id,provider,source_id,stable_url,occurred_at,observed_at,excerpt,content_hash,classification,last_seen_at,retention_until)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,occurred_at=excluded.occurred_at,observed_at=excluded.observed_at,excerpt=excluded.excerpt,content_hash=excluded.content_hash,classification=excluded.classification,last_seen_at=excluded.last_seen_at,retention_until=excluded.retention_until,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`;
+   this.transaction(()=>{
+    const sourceStatement=this.db.prepare(sourceSql);
+    const tombstoneStatement=this.db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES('slack',?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET deleted_at=excluded.deleted_at,reason=excluded.reason,content_hash=excluded.content_hash");
+    const deletedSourceIds = new Set(page.deletedSourceIds);
+    for(const r of page.records) {
+     if ((isTombstoned.get(r.sourceId) as {tombstoned?:number}|undefined)?.tombstoned) continue;
+     sourceStatement.run(r.id,r.provider,r.sourceId,r.stableUrl??null,utc(r.occurredAt),utc(r.observedAt),r.excerpt,r.contentHash,r.classification,utc(r.lastSeenAt),utc(r.retentionUntil));
+    }
+    for(const sourceId of page.deletedSourceIds){
+     const row=this.db.prepare("SELECT id,content_hash FROM source_records WHERE provider='slack' AND source_id=?").get(sourceId) as {id:string;content_hash:string}|undefined;
+     const at=utc(page.observedAt);
+     if(!row){
+      tombstoneStatement.run(sourceId,at,"source_deleted","");
+      continue;
+     }
+     this.db.prepare("DELETE FROM review_queue_proposals WHERE source_record_id=? AND review_state='proposed'").run(row.id);
+     this.db.prepare("DELETE FROM cache_entries WHERE source_record_id=?").run(row.id);
+     this.db.prepare("UPDATE source_records SET excerpt=NULL,deleted_at=?,deletion_reason='source_deleted',updated_at=? WHERE id=?").run(at,at,row.id);
+     tombstoneStatement.run(sourceId,at,"source_deleted",row.content_hash);
+    }
+    const proposalInsert = this.db.prepare(`INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES(?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,description=excluded.description,updated_at=${ISO_UTC} WHERE review_queue_proposals.review_state='proposed'`);
+    for(const proposal of page.proposals) {
+     const sourceId = proposal.sourceRecordId.slice("slack:message:".length);
+     if (deletedSourceIds.has(sourceId)) continue;
+     if ((isTombstoned.get(sourceId) as {tombstoned?:number}|undefined)?.tombstoned) continue;
+     if ((isDeleted.get(sourceId) as {deleted_at:string|null}|undefined)?.deleted_at) continue;
+     proposalInsert.run(proposal.id,proposal.kind,proposal.description,proposal.sourceRecordId);
+    }
+    this.db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,last_success_at,last_error,fetched_count) VALUES(?,?,?,?,NULL,?)
+     ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO_UTC}`)
+     .run(page.connector,page.scope,page.cursor??null,utc(page.observedAt),page.records.length+page.deletedSourceIds.length);
+   });
+ }
+ transitionSlackProposal(proposalId:string,toState:"approved"|"rejected",actor:string,reason:string,changedAt:string):void {
+  if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
+  this.transaction(()=>{const row=this.db.prepare("SELECT review_state state FROM review_queue_proposals WHERE id=?").get(proposalId) as {state:string}|undefined;
+   if(!row)throw new Error("proposal not found"); if(row.state!=="proposed")throw new Error(`terminal review state cannot transition: ${row.state}`);
+   const at=utc(changedAt); this.db.prepare("INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,?,?,?,?)").run(proposalId,row.state,toState,actor,reason,at);
+   this.db.prepare("UPDATE review_queue_proposals SET review_state=?,updated_at=? WHERE id=?").run(toState,at,proposalId);
+  });
+ }
  async savePullRequests(records: readonly PullRequestRecord[], observedAt: string): Promise<void> {
   const when=utc(observedAt);
   this.transaction(()=>{ for(const record of records) {
    const sourceId=`${record.repository}:${record.id}`; const id=`${record.provider}:pr:${sourceId}`;
-   this.db.prepare(`INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,content_hash,classification,last_seen_at) VALUES(?,?,?,?,?,?,?,?)
-    ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,observed_at=excluded.observed_at,last_seen_at=excluded.last_seen_at,updated_at=${ISO_UTC}`)
-    .run(id,record.provider,sourceId,record.url,when,sourceId,"work",when);
+   this.db.prepare(`INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,content_hash,classification,last_seen_at)
+    SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
+    ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,observed_at=excluded.observed_at,last_seen_at=excluded.last_seen_at,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`)
+    .run(id,record.provider,sourceId,record.url,when,sourceId,"internal",when,record.provider,sourceId);
    this.db.prepare(`INSERT INTO prs(id,source_record_id,provider,repository,source_id,author,title,url,updated_at,is_draft,ci_status,review_requested,last_relevant_activity_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,repository,source_id) DO UPDATE SET author=excluded.author,title=excluded.title,url=excluded.url,updated_at=excluded.updated_at,is_draft=excluded.is_draft,ci_status=excluded.ci_status,review_requested=excluded.review_requested,last_relevant_activity_at=excluded.last_relevant_activity_at`)
-    .run(id,id,record.provider,record.repository,record.id,record.author,record.title,record.url,utc(record.updatedAt),Number(record.isDraft),record.ciStatus,Number(record.reviewRequestedOfViewer),utc(record.updatedAt));
+    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
+      AND EXISTS(SELECT 1 FROM source_records WHERE id=? AND deleted_at IS NULL)
+    ON CONFLICT(provider,repository,source_id) DO UPDATE SET author=excluded.author,title=excluded.title,url=excluded.url,updated_at=excluded.updated_at,is_draft=excluded.is_draft,ci_status=excluded.ci_status,review_requested=excluded.review_requested,last_relevant_activity_at=excluded.last_relevant_activity_at
+      WHERE EXISTS(SELECT 1 FROM source_records WHERE id=excluded.source_record_id AND deleted_at IS NULL)`)
+    .run(id,id,record.provider,record.repository,record.id,record.author,record.title,record.url,utc(record.updatedAt),Number(record.isDraft),record.ciStatus,Number(record.reviewRequestedOfViewer),utc(record.updatedAt),record.provider,sourceId,id);
   }});
  }
  async listPullRequests(): Promise<readonly PullRequestRecord[]> {
-  return (this.db.prepare("SELECT provider,repository,source_id id,title,url,author,is_draft,review_requested,ci_status,updated_at FROM prs ORDER BY provider,repository,source_id").all() as Record<string,unknown>[]).map(r=>({provider:String(r.provider),repository:String(r.repository),id:String(r.id),title:String(r.title),url:String(r.url),author:String(r.author),isDraft:Boolean(r.is_draft),reviewRequestedOfViewer:Boolean(r.review_requested),ciStatus:r.ci_status as PullRequestRecord["ciStatus"],updatedAt:String(r.updated_at)}));
+  return (this.db.prepare("SELECT p.provider,p.repository,p.source_id id,p.title,p.url,p.author,p.is_draft,p.review_requested,p.ci_status,p.updated_at FROM prs p INNER JOIN source_records s ON s.id=p.source_record_id WHERE s.deleted_at IS NULL ORDER BY p.provider,p.repository,p.source_id").all() as Record<string,unknown>[]).map(r=>({provider:String(r.provider),repository:String(r.repository),id:String(r.id),title:String(r.title),url:String(r.url),author:String(r.author),isDraft:Boolean(r.is_draft),reviewRequestedOfViewer:Boolean(r.review_requested),ciStatus:r.ci_status as PullRequestRecord["ciStatus"],updatedAt:String(r.updated_at)}));
  }
  transition(entityType:"action_item"|"evidence"|"draft", entityId:string, toState:"proposed"|"approved"|"rejected"|"superseded", actor:string, reason:string, changedAt:string): void {
   if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
@@ -268,6 +353,8 @@ export class SqliteStorage implements Storage {
  }
  importData(data:StorageExport): void {
   if(data.format!=="em-os-storage"||data.version!==STORAGE_EXPORT_VERSION) throw new Error("unsupported storage export");
+  // Imports are trusted full restores. Import mode deliberately bypasses review
+  // transition and append-only guards so an existing profile can be replaced.
   this.transaction(()=>{ this.db.exec("PRAGMA defer_foreign_keys=ON"); this.#reviewWrite={mode:"import"};
    try {
    for(const table of [...clearTables].reverse()) this.db.exec(`DELETE FROM ${table}`);
