@@ -57,6 +57,26 @@ test("a deletion tombstone prevents stale sync from restoring excerpts",async()=
  const row=x.store.db.prepare("SELECT excerpt,deleted_at FROM source_records").get() as {excerpt:null;deleted_at:string};
  assert.equal(row.excerpt,null); assert.equal(row.deleted_at,"2026-10-10T00:00:00.000Z");
 }finally{await x.cleanup();}});
+test("deletion before first live copy creates a tombstone that suppresses later live copy",async()=>{const x=await fixture();try{
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:00:00.000Z", records:[], deletedSourceIds:["CPUBLIC1:1700000000.003"], proposals:[] });
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:01:00.000Z", records:[{id:"slack:message:CPUBLIC1:1700000000.003",provider:"slack",sourceId:"CPUBLIC1:1700000000.003",stableUrl:"https://example.invalid/archives/CPUBLIC1/p1700000000003",occurredAt:"2026-10-08T12:00:00.000Z",observedAt:"2026-10-09T09:01:00.000Z",excerpt:"Late live copy",contentHash:"sha256:late",classification:"work",lastSeenAt:"2026-10-09T09:01:00.000Z",retentionUntil:"2026-11-08T09:01:00.000Z"}], deletedSourceIds:[], proposals:[] });
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,0);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM deletion_tombstones WHERE source_id='CPUBLIC1:1700000000.003'").get() as {n:number}).n,1);
+}finally{await x.cleanup();}});
+test("slack deletion removes a proposal and later live replay cannot resurrect it",async()=>{const x=await fixture();try{
+ const sourceRecordId="slack:message:CPUBLIC1:1700000000.004";
+ const proposalId="slack:proposal:CPUBLIC1:1700000000.004";
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:00:00.000Z", records:[{id:sourceRecordId,provider:"slack",sourceId:"CPUBLIC1:1700000000.004",stableUrl:"https://example.invalid/archives/CPUBLIC1/p1700000000004",occurredAt:"2026-10-08T12:00:00.000Z",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Action needed",contentHash:"sha256:live",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z",retentionUntil:"2026-11-08T09:00:00.000Z"}], deletedSourceIds:[], proposals:[{id:proposalId,kind:"action",description:"Action needed",sourceRecordId}]});
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_queue_proposals").get() as {n:number}).n,1);
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:02:00.000Z", records:[], deletedSourceIds:["CPUBLIC1:1700000000.004"], proposals:[] });
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_queue_proposals").get() as {n:number}).n,0);
+ assert.equal((x.store.db.prepare("SELECT excerpt FROM source_records WHERE source_id='CPUBLIC1:1700000000.004'").get() as {excerpt:null}).excerpt,null);
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:03:00.000Z", records:[{id:sourceRecordId,provider:"slack",sourceId:"CPUBLIC1:1700000000.004",stableUrl:"https://example.invalid/archives/CPUBLIC1/p1700000000004",occurredAt:"2026-10-08T12:00:00.000Z",observedAt:"2026-10-09T09:03:00.000Z",excerpt:"Replay action needed",contentHash:"sha256:replay",classification:"work",lastSeenAt:"2026-10-09T09:03:00.000Z",retentionUntil:"2026-11-08T09:03:00.000Z"}], deletedSourceIds:[], proposals:[{id:proposalId,kind:"action",description:"Replay action needed",sourceRecordId}]});
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_queue_proposals").get() as {n:number}).n,0);
+ const row=x.store.db.prepare("SELECT excerpt,deleted_at FROM source_records WHERE source_id='CPUBLIC1:1700000000.004'").get() as {excerpt:null;deleted_at:string};
+ assert.equal(row.excerpt,null);
+ assert.equal(row.deleted_at,"2026-10-09T09:02:00.000Z");
+}finally{await x.cleanup();}});
 
 test("versioned export/import and SQLite backup restore data",async()=>{const x=await fixture();try{
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});

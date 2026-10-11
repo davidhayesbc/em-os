@@ -2,6 +2,7 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { PullRequestRecord, Storage } from "./contracts.js";
+import type { SlackPersistencePage } from "./slack-connector.js";
 
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
@@ -196,6 +197,60 @@ export class SqliteStorage implements Storage {
    this.db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,watermark,last_success_at,fetched_count) VALUES(?,?,?,?,?,?)
     ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,watermark=excluded.watermark,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO_UTC}`)
     .run(batch.connector,batch.scope,batch.cursor??null,batch.watermark??null,utc(batch.observedAt),batch.records.length);
+  });
+ }
+ getCursor(connector:string, scope:string):string|undefined {
+  const row=this.db.prepare("SELECT cursor FROM sync_cursors WHERE connector=? AND scope=?").get(connector,scope) as {cursor:string|null}|undefined;
+  return row?.cursor??undefined;
+ }
+ recordSlackError(connector:string, scope:string, message:string):void {
+  this.db.prepare(`INSERT INTO sync_cursors(connector,scope,last_error) VALUES(?,?,?) ON CONFLICT(connector,scope) DO UPDATE SET last_error=excluded.last_error,updated_at=${ISO_UTC}`).run(connector,scope,message.slice(0,300));
+ }
+ persistSlackPage(page:SlackPersistencePage):void {
+   const isTombstoned = this.db.prepare("SELECT 1 tombstoned FROM deletion_tombstones WHERE provider='slack' AND source_id=?");
+   const isDeleted = this.db.prepare("SELECT deleted_at FROM source_records WHERE provider='slack' AND source_id=?");
+   const sourceSql=`INSERT INTO source_records(id,provider,source_id,stable_url,occurred_at,observed_at,excerpt,content_hash,classification,last_seen_at,retention_until)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,occurred_at=excluded.occurred_at,observed_at=excluded.observed_at,excerpt=excluded.excerpt,content_hash=excluded.content_hash,classification=excluded.classification,last_seen_at=excluded.last_seen_at,retention_until=excluded.retention_until,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`;
+   this.transaction(()=>{
+    const sourceStatement=this.db.prepare(sourceSql);
+    const tombstoneStatement=this.db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES('slack',?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET deleted_at=excluded.deleted_at,reason=excluded.reason,content_hash=excluded.content_hash");
+    const deletedSourceIds = new Set(page.deletedSourceIds);
+    for(const r of page.records) {
+     if ((isTombstoned.get(r.sourceId) as {tombstoned?:number}|undefined)?.tombstoned) continue;
+     sourceStatement.run(r.id,r.provider,r.sourceId,r.stableUrl??null,utc(r.occurredAt),utc(r.observedAt),r.excerpt,r.contentHash,r.classification,utc(r.lastSeenAt),utc(r.retentionUntil));
+    }
+    for(const sourceId of page.deletedSourceIds){
+     const row=this.db.prepare("SELECT id,content_hash FROM source_records WHERE provider='slack' AND source_id=?").get(sourceId) as {id:string;content_hash:string}|undefined;
+     const at=utc(page.observedAt);
+     if(!row){
+      tombstoneStatement.run(sourceId,at,"source_deleted","");
+      continue;
+     }
+     this.db.prepare("DELETE FROM review_queue_proposals WHERE source_record_id=? AND review_state='proposed'").run(row.id);
+     this.db.prepare("DELETE FROM cache_entries WHERE source_record_id=?").run(row.id);
+     this.db.prepare("UPDATE source_records SET excerpt=NULL,deleted_at=?,deletion_reason='source_deleted',updated_at=? WHERE id=?").run(at,at,row.id);
+     tombstoneStatement.run(sourceId,at,"source_deleted",row.content_hash);
+    }
+    const proposalInsert = this.db.prepare(`INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES(?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,description=excluded.description,updated_at=${ISO_UTC} WHERE review_queue_proposals.review_state='proposed'`);
+    for(const proposal of page.proposals) {
+     const sourceId = proposal.sourceRecordId.slice("slack:message:".length);
+     if (deletedSourceIds.has(sourceId)) continue;
+     if ((isTombstoned.get(sourceId) as {tombstoned?:number}|undefined)?.tombstoned) continue;
+     if ((isDeleted.get(sourceId) as {deleted_at:string|null}|undefined)?.deleted_at) continue;
+     proposalInsert.run(proposal.id,proposal.kind,proposal.description,proposal.sourceRecordId);
+    }
+    this.db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,last_success_at,last_error,fetched_count) VALUES(?,?,?,?,NULL,?)
+     ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO_UTC}`)
+     .run(page.connector,page.scope,page.cursor??null,utc(page.observedAt),page.records.length+page.deletedSourceIds.length);
+   });
+ }
+ transitionSlackProposal(proposalId:string,toState:"approved"|"rejected",actor:string,reason:string,changedAt:string):void {
+  if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
+  this.transaction(()=>{const row=this.db.prepare("SELECT review_state state FROM review_queue_proposals WHERE id=?").get(proposalId) as {state:string}|undefined;
+   if(!row)throw new Error("proposal not found"); if(row.state!=="proposed")throw new Error(`terminal review state cannot transition: ${row.state}`);
+   const at=utc(changedAt); this.db.prepare("INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,?,?,?,?)").run(proposalId,row.state,toState,actor,reason,at);
+   this.db.prepare("UPDATE review_queue_proposals SET review_state=?,updated_at=? WHERE id=?").run(toState,at,proposalId);
   });
  }
  async savePullRequests(records: readonly PullRequestRecord[], observedAt: string): Promise<void> {
