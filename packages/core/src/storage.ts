@@ -9,7 +9,7 @@ const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 const UTC_GLOB = "GLOB '????-??-??T??:??:??.???Z'";
 const UTC_CHECK = (column: string) => `CHECK(${column} IS NULL OR ${column} ${UTC_GLOB})`;
 
-const migrations = [
+export const migrations = [
   {
     version: 1,
     sql: `
@@ -123,29 +123,68 @@ CREATE TABLE review_audit (
  ${UTC_CHECK("changed_at")}
 ) STRICT;
 CREATE INDEX review_audit_entity_idx ON review_audit(entity_type,entity_id,changed_at);
-CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
-CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
-CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state AND em_review_write_mode() <> 'import' BEGIN
-SELECT CASE WHEN old.review_state <> 'proposed' THEN RAISE(ABORT,'terminal review state cannot transition') END;
-SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM review_audit WHERE entity_type='action_item' AND entity_id=old.id AND from_state=old.review_state AND to_state=new.review_state) THEN RAISE(ABORT,'review transition requires audit') END;
+CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state BEGIN
+SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+SELECT CASE WHEN old.review_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
 END;
-CREATE TRIGGER evidence_review_guard BEFORE UPDATE OF status ON evidence WHEN old.status <> new.status AND em_review_write_mode() <> 'import' BEGIN
-SELECT CASE WHEN old.status <> 'proposed' THEN RAISE(ABORT,'terminal review state cannot transition') END;
-SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM review_audit WHERE entity_type='evidence' AND entity_id=old.id AND from_state=old.status AND to_state=new.status) THEN RAISE(ABORT,'review transition requires audit') END;
+CREATE TRIGGER evidence_review_guard BEFORE UPDATE OF status ON evidence WHEN old.status <> new.status BEGIN
+SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+SELECT CASE WHEN old.status <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
 END;
-CREATE TRIGGER draft_review_guard BEFORE UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state AND em_review_write_mode() <> 'import' BEGIN
-SELECT CASE WHEN old.reviewer_state <> 'proposed' THEN RAISE(ABORT,'terminal review state cannot transition') END;
-SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM review_audit WHERE entity_type='draft' AND entity_id=old.id AND from_state=old.reviewer_state AND to_state=new.reviewer_state) THEN RAISE(ABORT,'review transition requires audit') END;
+CREATE TRIGGER draft_review_guard BEFORE UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state BEGIN
+SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+SELECT CASE WHEN old.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
 END;
 CREATE TABLE cache_entries (cache_key TEXT PRIMARY KEY, source_record_id TEXT REFERENCES source_records(id) ON DELETE CASCADE, value TEXT NOT NULL, expires_at TEXT,
- ${UTC_CHECK("expires_at")}
+${UTC_CHECK("expires_at")}
 ) STRICT;
 CREATE INDEX cache_entries_source_idx ON cache_entries(source_record_id);
 CREATE TABLE deletion_tombstones (
- provider TEXT NOT NULL, source_id TEXT NOT NULL, deleted_at TEXT NOT NULL, reason TEXT NOT NULL,
- content_hash TEXT, PRIMARY KEY(provider,source_id),
- ${UTC_CHECK("deleted_at")}
+provider TEXT NOT NULL, source_id TEXT NOT NULL, deleted_at TEXT NOT NULL, reason TEXT NOT NULL,
+content_hash TEXT, PRIMARY KEY(provider,source_id),
+${UTC_CHECK("deleted_at")}
 ) STRICT;
+`},
+  {
+    version: 2,
+    sql: `
+DROP TRIGGER IF EXISTS action_review_guard;
+DROP TRIGGER IF EXISTS evidence_review_guard;
+DROP TRIGGER IF EXISTS draft_review_guard;
+DROP TRIGGER IF EXISTS action_items_initial_review_guard;
+DROP TRIGGER IF EXISTS evidence_initial_review_guard;
+DROP TRIGGER IF EXISTS drafts_initial_review_guard;
+DROP TRIGGER IF EXISTS review_audit_no_update;
+DROP TRIGGER IF EXISTS review_audit_no_delete;
+CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_insert BEFORE INSERT ON review_audit WHEN em_review_write_mode() NOT IN ('transition','import') BEGIN SELECT RAISE(ABORT,'review audit may only be written by storage API'); END;
+CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.review_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER evidence_review_guard BEFORE UPDATE OF status ON evidence WHEN old.status <> new.status BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.status <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER draft_review_guard BEFORE UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'review transition requires storage API') END;
+ SELECT CASE WHEN old.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER action_review_audit AFTER UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item',old.id,old.review_state,new.review_state,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+CREATE TRIGGER evidence_review_audit AFTER UPDATE OF status ON evidence WHEN old.status <> new.status AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('evidence',old.id,old.status,new.status,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+CREATE TRIGGER draft_review_audit AFTER UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('draft',old.id,old.reviewer_state,new.reviewer_state,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
 `},
 ] as const;
 
@@ -236,7 +275,6 @@ export class SqliteStorage implements Storage {
    if(row.state===toState) return;
    if(row.state!=="proposed") throw new Error(`terminal review state cannot transition: ${row.state}`);
    this.#reviewWrite={mode:"transition",actor,reason,changedAt:at};
-   this.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,?,?,?,?,?)").run(entityType,entityId,"proposed",toState,actor,reason,at);
    try { this.db.prepare(`UPDATE ${table} SET ${column}=?,updated_at=? WHERE id=?`).run(toState,at,entityId); }
    finally { this.#reviewWrite=undefined; }
   });

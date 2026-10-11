@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { SqliteStorage } from "./storage.js";
+import { SqliteStorage, migrations } from "./storage.js";
 
 async function fixture() {
  const dir=await mkdtemp(join(tmpdir(),"em-os-storage-"));
@@ -14,9 +14,9 @@ async function fixture() {
 const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z"};
 
 test("empty database migrates with foreign keys and FTS5",async()=>{const x=await fixture();try{
- assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1}]);
+ assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2}]);
  assert.equal((x.store.db.prepare("PRAGMA foreign_keys").get() as {foreign_keys:number}).foreign_keys,1);
- assert.equal((x.store.db.prepare("PRAGMA user_version").get() as {user_version:number}).user_version,1);
+ assert.equal((x.store.db.prepare("PRAGMA user_version").get() as {user_version:number}).user_version,2);
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records_fts WHERE source_records_fts MATCH 'review'").get() as {n:number}).n,1);
 }finally{await x.cleanup();}});
@@ -42,15 +42,19 @@ test("retention removes excerpts, FTS rows and caches but keeps tombstone",async
 test("review states require audited API transition and cannot leave terminal state",async()=>{const x=await fixture();try{
  assert.throws(()=>x.store.db.prepare("INSERT INTO action_items(id,description,review_state) VALUES('bad','bad','approved')").run(),/start proposed/);
  x.store.db.prepare("INSERT INTO action_items(id,description) VALUES(?,?)").run("a1","Review synthetic PR");
- assert.throws(()=>x.store.db.prepare("UPDATE action_items SET review_state='approved' WHERE id='a1'").run(),/requires audit/);
+ x.store.db.prepare("INSERT INTO people(id,display_name,identities_json,identity_confirmed) VALUES('p1','Person','[]',1)").run();
+ x.store.db.prepare("INSERT INTO evidence(id,subject_person_id,observation,author,observed_at,sensitivity) VALUES('e1','p1','obs','a',?,'private')").run("2026-10-09T09:00:00.000Z");
+ x.store.db.prepare("INSERT INTO drafts(id,type,period,audience,input_record_ids_json,generated_at) VALUES('d1','weekly','2026-W41','m','[]',?)").run("2026-10-09T09:00:00.000Z");
+ // R1: direct bypass attempts must fail
+ assert.throws(()=>x.store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','a1','proposed','approved','intruder','bypass','2026-10-09T10:00:00.000Z')").run(),/may only be written by storage API/);
+ assert.throws(()=>x.store.db.prepare("UPDATE action_items SET review_state='approved' WHERE id='a1'").run(),/requires storage API/);
+ assert.throws(()=>x.store.db.prepare("UPDATE evidence SET status='approved' WHERE id='e1'").run(),/requires storage API/);
+ assert.throws(()=>x.store.db.prepare("UPDATE drafts SET reviewer_state='approved' WHERE id='d1'").run(),/requires storage API/);
+ // API transition still succeeds, AFTER-UPDATE trigger writes the audit row exactly once
  x.store.transition("action_item","a1","approved","manager","verified source","2026-10-09T10:00:00.000Z");
  assert.equal((x.store.db.prepare("SELECT review_state FROM action_items WHERE id='a1'").get() as {review_state:string}).review_state,"approved");
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit WHERE entity_id='a1'").get() as {n:number}).n,1);
  assert.throws(()=>x.store.transition("action_item","a1","rejected","manager","changed mind","2026-10-09T11:00:00.000Z"),/terminal review state/);
- // audit rows can still be inserted directly; the update/delete guards on review_audit are append-only,
- // and the review update guards prevent the state change itself.
- x.store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','a1','approved','rejected','intruder','bypass','2026-10-09T11:00:00.000Z')").run();
- assert.throws(()=>x.store.db.prepare("UPDATE action_items SET review_state='rejected' WHERE id='a1'").run(),/terminal review state/);
- assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit WHERE entity_id='a1'").get() as {n:number}).n,2);
  assert.throws(()=>x.store.db.prepare("DELETE FROM review_audit WHERE entity_id='a1'").run(),/append-only/);
 }finally{await x.cleanup();}});
 
@@ -77,7 +81,7 @@ test("versioned export/import and SQLite backup restore data, including encrypte
  const envelope=await x.store.writeEncryptedBackup(encryptedPath,key);
  assert.equal(envelope.manifest.format,"em-os-encrypted-backup");
  assert.equal(envelope.manifest.version,1);
- assert.equal(envelope.manifest.schemaVersion,1);
+ assert.equal(envelope.manifest.schemaVersion,2);
  assert.equal(typeof envelope.manifest.integrity,"string");
  assert.equal(typeof envelope.iv,"string");
  assert.equal(typeof envelope.ciphertext,"string");
@@ -162,7 +166,6 @@ test("full export fixture round-trips every table and FTS is searchable after re
  x.store.db.prepare("INSERT INTO initiatives(id,title,deadline) VALUES('i1','Initiative','2026-10-31T00:00:00.000Z')").run();
  x.store.db.prepare("INSERT INTO action_items(id,description,owner_person_id) VALUES('ai1','Action','p1')").run();
  x.store.transition("action_item","ai1","approved","manager","verified",observed);
- x.store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','ai1','proposed','approved','manager','verified',?)").run(observed);
  x.store.db.prepare("INSERT INTO action_item_sources(action_item_id,source_record_id) VALUES('ai1','s1')").run();
  x.store.db.prepare("INSERT INTO evidence(id,subject_person_id,observation,author,observed_at,sensitivity) VALUES('e1','p1','Observation','manager',?,'private')").run(observed);
  x.store.db.prepare("INSERT INTO evidence_sources(evidence_id,source_record_id) VALUES('e1','s1')").run();
@@ -192,3 +195,45 @@ test("newer schema database is rejected and user_version is set",async()=>{
   await assert.rejects(()=>s.initialize(),/schema version 99 is newer than supported/);
  } finally { s.close(); await rm(dir,{recursive:true,force:true}); }
 });
+
+test("import over audited DB round-trips review_audit and preserves append-only guard outside import",async()=>{const x=await fixture();try{
+ x.store.db.prepare("INSERT INTO action_items(id,description) VALUES('a1','x')").run();
+ x.store.transition("action_item","a1","approved","manager","ok","2026-10-09T10:00:00.000Z");
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ const beforeAudit=equalize(x.store.db.prepare("SELECT * FROM review_audit").all() as Record<string,unknown>[]);
+ x.store.importData(exported);
+ const afterAudit=equalize(x.store.db.prepare("SELECT * FROM review_audit").all() as Record<string,unknown>[]);
+ assert.deepEqual(afterAudit,beforeAudit);
+ // outside import, audit rows remain append-only
+ assert.throws(()=>x.store.db.prepare("DELETE FROM review_audit WHERE entity_id='a1'").run(),/append-only/);
+ assert.throws(()=>x.store.db.prepare("UPDATE review_audit SET reason='tampered' WHERE entity_id='a1'").run(),/append-only/);
+}finally{await x.cleanup();}});
+
+test("migration from v1 upgrades cleanly and previously shipped v2 databases are not stranded",async()=>{
+ const dir=await mkdtemp(join(tmpdir(),"em-os-storage-migrate-"));
+ const v1path=join(dir,"v1.sqlite");
+ // build a real v1 database using only the version-1 schema, with a stub em_review_write_mode for v1 guards
+ const db=new DatabaseSync(v1path);
+ db.function("em_review_write_mode",()=>"none");
+ try {
+  db.exec(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+INSERT INTO schema_migrations(version,applied_at) VALUES(1,'2026-10-09T09:00:00.000Z');
+${migrations.find((m:{version:number})=>m.version===1)?.sql || ''}`);
+  db.prepare("INSERT INTO action_items(id,description) VALUES('a1','migrate me')").run();
+ } finally { db.close(); }
+ const s=new SqliteStorage(v1path);
+ try {
+  await s.initialize();
+  assert.deepEqual(Array.from(s.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),row=>({...row})),[{version:1},{version:2}]);
+  assert.equal((s.db.prepare("SELECT review_state FROM action_items WHERE id='a1'").get() as {review_state:string}).review_state,"proposed");
+ } finally { s.close(); }
+ // a DB stamped with the branch's previously shipped version (v2) must not be rejected
+ const v2path=join(dir,"v2.sqlite"); const db2=new DatabaseSync(v2path);
+ try { db2.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(2,'2026-10-09T09:00:00.000Z');"); } finally { db2.close(); }
+ const s2=new SqliteStorage(v2path);
+ try { await assert.doesNotReject(()=>s2.initialize()); } finally { s2.close(); await rm(dir,{recursive:true,force:true}); }
+});
+
+function equalize(rows:Record<string,unknown>[]) {
+ return rows.map(r=>Object.fromEntries(Object.entries(r).sort(([a],[b])=>a.localeCompare(b))));
+}
