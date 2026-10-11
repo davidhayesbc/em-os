@@ -7,7 +7,7 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "build": "tsc -b",
-    "check": "tsc -b --pretty false",
+    "check": "tsc -b --pretty false && node scripts/check-architecture-docs.mjs && node scripts/validate-security-discovery.mjs",
     "test": "npm run build && node --test packages/core/dist/**/*.test.js packages/vscode-extension/dist/**/*.test.js",
     "demo": "npm run build && node packages/cli/dist/main.js attention --fixture fixtures/prs.synthetic.json --now 2026-10-09T09:00:00.000Z",
     "ci": "npm run check && npm test && npm run demo"

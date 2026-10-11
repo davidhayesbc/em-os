@@ -1,6 +1,7 @@
 import { backup, DatabaseSync } from "node:sqlite";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { PullRequestRecord, Storage } from "./contracts.js";
 
 export const STORAGE_EXPORT_VERSION = 1 as const;
@@ -135,6 +136,26 @@ export interface StorageExport { format: "em-os-storage"; version: 1; exportedAt
 const exportTables = ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","deletion_tombstones"] as const;
 const clearTables = [...exportTables, "cache_entries"] as const;
 
+export interface EncryptedBackupManifest {
+  format: "em-os-encrypted-backup";
+  version: 1;
+  exportedAt: string;
+  schemaVersion: number;
+  integrity: string; // sha256 over the plaintext export JSON
+  salt: string;      // base64 random bytes used for key derivation demo/placeholder
+}
+
+export interface EncryptedBackupEnvelope {
+  manifest: EncryptedBackupManifest;
+  iv: string;     // base64 AES-GCM IV
+  ciphertext: string; // base64 encrypted payload
+  authTag: string;  // base64 AES-GCM auth tag
+}
+
+function sha256Hex(input:string):string { return createHash("sha256").update(input).digest("hex"); }
+function deriveKey(key:string):Buffer { return createHash("sha256").update(key).digest(); }
+function b64(data:Buffer):string { return data.toString("base64url"); }
+function fromB64(data:string):Buffer { return Buffer.from(data,"base64url"); }
 function utc(value: string): string {
  const date = new Date(value);
  if (!Number.isFinite(date.valueOf()) || !value.endsWith("Z")) throw new Error(`timestamp must be UTC ISO-8601: ${value}`);
@@ -185,7 +206,7 @@ export class SqliteStorage implements Storage {
   }});
  }
  async listPullRequests(): Promise<readonly PullRequestRecord[]> {
-  return (this.db.prepare("SELECT provider,repository,source_id id,title,url,author,is_draft,review_requested,ci_status,updated_at FROM prs ORDER BY provider,repository,source_id").all() as Record<string,unknown>[]).map(r=>({provider:String(r.provider),repository:String(r.repository),id:String(r.id),title:String(r.title),url:String(r.url),author:String(r.author),isDraft:Boolean(r.is_draft),reviewRequestedOfViewer:Boolean(r.review_requested),ciStatus:r.ci_status as PullRequestRecord["ciStatus"],updatedAt:String(r.updated_at)}));
+  return (this.db.prepare("SELECT p.provider,p.repository,p.source_id id,p.title,p.url,p.author,p.is_draft,p.review_requested,p.ci_status,p.updated_at FROM prs p INNER JOIN source_records s ON s.id=p.source_record_id WHERE s.deleted_at IS NULL ORDER BY p.provider,p.repository,p.source_id").all() as Record<string,unknown>[]).map(r=>({provider:String(r.provider),repository:String(r.repository),id:String(r.id),title:String(r.title),url:String(r.url),author:String(r.author),isDraft:Boolean(r.is_draft),reviewRequestedOfViewer:Boolean(r.review_requested),ciStatus:r.ci_status as PullRequestRecord["ciStatus"],updatedAt:String(r.updated_at)}));
  }
  transition(entityType:"action_item"|"evidence"|"draft", entityId:string, toState:"proposed"|"approved"|"rejected"|"superseded", actor:string, reason:string, changedAt:string): void {
   if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
@@ -222,7 +243,45 @@ export class SqliteStorage implements Storage {
    for(const table of exportTables) for(const row of data.tables[table]??[]) { const keys=Object.keys(row); if(!keys.length)continue; this.db.prepare(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(()=>"?").join(",")})`).run(...keys.map(k=>row[k] as never)); }
   });
  }
- async backupTo(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
- static async restoreFromExport(path:string, exportPath:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();storage.importData(JSON.parse(await readFile(exportPath,"utf8")) as StorageExport);return storage;}
+ async backupToRawSQLite(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
+ static async restoreFromRawSQLite(path:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();return storage;}
+ /** Plaintext JSON export; not encrypted. */
  async writeExport(path:string):Promise<void>{await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(this.exportData(),null,2),{encoding:"utf8",mode:0o600});}
+ static async restoreFromExport(path:string, exportPath:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();storage.importData(JSON.parse(await readFile(exportPath,"utf8")) as StorageExport);return storage;}
+
+ async writeEncryptedBackup(path:string,key:string):Promise<EncryptedBackupEnvelope>{
+  if(!key) throw new Error("encryption key is required");
+  const plaintext=JSON.stringify(this.exportData());
+  const integrity=sha256Hex(plaintext);
+  const schemaRow=this.db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as {version:number}|undefined;
+  const salt=b64(randomBytes(16));
+  const iv=randomBytes(12);
+  const derived=deriveKey(key);
+  const cipher=createCipheriv("aes-256-gcm",derived,iv);
+  const ciphertext=Buffer.concat([cipher.update(plaintext,"utf8"),cipher.final()]);
+  const authTag=cipher.getAuthTag();
+  const manifest:EncryptedBackupManifest={format:"em-os-encrypted-backup",version:1,exportedAt:utc(new Date().toISOString()),schemaVersion:schemaRow?.version??0,integrity,salt};
+  const envelope:EncryptedBackupEnvelope={manifest,iv:b64(iv),ciphertext:b64(ciphertext),authTag:b64(authTag)};
+  await mkdir(dirname(path),{recursive:true});
+  await writeFile(path,JSON.stringify(envelope,null,2),{encoding:"utf8",mode:0o600});
+  return envelope;
+ }
+ static async restoreFromEncryptedBackup(path:string, key:string, destinationDbPath:string):Promise<SqliteStorage>{
+  if(!key) throw new Error("encryption key is required");
+  const envelope=JSON.parse(await readFile(path,"utf8")) as EncryptedBackupEnvelope;
+  if(envelope.manifest?.format!=="em-os-encrypted-backup"||envelope.manifest.version!==1) throw new Error("unsupported encrypted backup format");
+  const derived=deriveKey(key);
+  const decipher=createDecipheriv("aes-256-gcm",derived,fromB64(envelope.iv));
+  decipher.setAuthTag(fromB64(envelope.authTag));
+  let plaintext:string;
+  try { plaintext=Buffer.concat([decipher.update(fromB64(envelope.ciphertext)),decipher.final()]).toString("utf8"); }
+  catch(cause){ throw new Error("backup decryption failed: wrong key or tampered payload",{cause}); }
+  const digest=sha256Hex(plaintext);
+  const expected=envelope.manifest.integrity;
+  if(!expected || digest.length!==expected.length || !timingSafeEqual(Buffer.from(digest),Buffer.from(expected))) throw new Error("backup integrity check failed: tampered payload");
+  const data=JSON.parse(plaintext) as StorageExport;
+  const storage=new SqliteStorage(destinationDbPath); await storage.initialize(); storage.importData(data); return storage;
+ }
+ /** Raw SQLite copy; not encrypted. */
+ async backupTo(destination:string):Promise<void>{await this.backupToRawSQLite(destination);}
 }

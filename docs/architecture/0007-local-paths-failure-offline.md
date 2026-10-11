@@ -13,7 +13,7 @@ Local-first means independent local instances and honest operation without netwo
 Resolve a per-user application-data root through a `DataPaths` port:
 
 - macOS default: `~/Library/Application Support/EM OS/`;
-- Windows default: `%LOCALAPPDATA%\EM OS\` unless corporate backup/roaming policy selects `%APPDATA%`;
+- Windows default: `%LOCALAPPDATA%\EM OS\` unless corporate backup/roaming policy selects `%APPDATA%\EM OS\`;
 - tests: an explicit isolated temporary root outside the checkout;
 - Linux development: `${XDG_DATA_HOME:-~/.local/share}/em-os/` (not an MVP support commitment).
 
