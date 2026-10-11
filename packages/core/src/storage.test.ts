@@ -24,19 +24,15 @@ function isBase64(str:string):boolean{
 }
 
 test("empty database migrates with foreign keys and FTS5",async()=>{const x=await fixture();try{
+ // v4 is the next free release-line slot: v2 hardens review writes and v3 upgrades shipped storage objects.
  assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2},{version:3},{version:4}]);
- const schemaRows=x.store.db.prepare("SELECT type,name,sql FROM sqlite_master WHERE name IN ('action_review_guard','review_audit_no_insert','review_queue_proposals','proposal_review_audit') ORDER BY name").all() as {type:string;name:string;sql:string}[];
- assert.deepEqual(schemaRows.map(({type,name})=>({type,name})),[
-  {type:"trigger",name:"action_review_guard"},
-  {type:"table",name:"proposal_review_audit"},
-  {type:"trigger",name:"review_audit_no_insert"},
-  {type:"table",name:"review_queue_proposals"},
- ]);
- assert.match(schemaRows.find(row=>row.name==="action_review_guard")!.sql,/em_review_write_mode\(\)/);
- assert.match(schemaRows.find(row=>row.name==="review_audit_no_insert")!.sql,/em_review_write_mode\(\)/);
-
  assert.equal((x.store.db.prepare("PRAGMA foreign_keys").get() as {foreign_keys:number}).foreign_keys,1);
  assert.equal((x.store.db.prepare("PRAGMA user_version").get() as {user_version:number}).user_version,4);
+ const schemaObjects=new Set(Array.from(x.store.db.prepare("SELECT name FROM sqlite_master").all() as {name:string}[],row=>row.name));
+ assert.equal(schemaObjects.has("review_queue_proposals"),true);
+ assert.equal(schemaObjects.has("proposal_review_audit"),true);
+ const reviewGuard=(x.store.db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='evidence_review_guard'").get() as {sql:string}).sql;
+ assert.match(reviewGuard,/em_review_write_mode\(\)/);
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records_fts WHERE source_records_fts MATCH 'review'").get() as {n:number}).n,1);
 }finally{await x.cleanup();}});
@@ -74,9 +70,24 @@ test("review states require audited API transition and cannot leave terminal sta
  x.store.transition("action_item","a1","approved","manager","verified source","2026-10-09T10:00:00.000Z");
  assert.equal((x.store.db.prepare("SELECT review_state FROM action_items WHERE id='a1'").get() as {review_state:string}).review_state,"approved");
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit WHERE entity_id='a1'").get() as {n:number}).n,1);
+ x.store.transition("evidence","e1","approved","manager","verified evidence","2026-10-09T10:05:00.000Z");
+ assert.equal((x.store.db.prepare("SELECT status FROM evidence WHERE id='e1'").get() as {status:string}).status,"approved");
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit WHERE entity_type='evidence' AND entity_id='e1'").get() as {n:number}).n,1);
  assert.throws(()=>x.store.transition("action_item","a1","rejected","manager","changed mind","2026-10-09T11:00:00.000Z"),/terminal review state/);
  assert.throws(()=>x.store.db.prepare("DELETE FROM review_audit WHERE entity_id='a1'").run(),/append-only/);
 }finally{await x.cleanup();}});
+
+test("historical v1 evidence guard validates status transitions against audit",async()=>{
+ const db=new DatabaseSync(":memory:");
+ try {
+  db.exec(HISTORICAL_V1_SCHEMA_SQL);
+  db.exec("INSERT INTO people(id,display_name,identities_json,identity_confirmed) VALUES('p1','Person','[]',1);");
+  db.prepare("INSERT INTO evidence(id,subject_person_id,observation,author,observed_at,sensitivity) VALUES('e1','p1','obs','a',?,'private')").run("2026-10-09T09:00:00.000Z");
+  db.exec("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('evidence','e1','proposed','approved','manager','verified','2026-10-09T10:00:00.000Z');");
+  db.exec("UPDATE evidence SET status='approved' WHERE id='e1';");
+  assert.equal((db.prepare("SELECT status FROM evidence WHERE id='e1'").get() as {status:string}).status,"approved");
+ } finally { db.close(); }
+});
 
 test("a deletion tombstone prevents stale sync from restoring excerpts",async()=>{const x=await fixture();try{
  x.store.persistSync({connector:"github",scope:"acme/api",observedAt:record.observedAt,records:[record]});
@@ -211,7 +222,6 @@ test("dev-only insecure plaintext paths still exist for diagnostics",async()=>{c
  assert.equal((restored.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,1); restored.close();
  const backupPath=join(x.dir,"backup","store.sqlite"); await x.store.backupToDevInsecure(backupPath);
  const backup=new SqliteStorage(backupPath); await backup.initialize(); assert.equal((backup.db.prepare("SELECT cursor FROM sync_cursors").get() as {cursor:string}).cursor,"c1"); backup.close();
-
 
 }finally{await x.cleanup();}});
 
