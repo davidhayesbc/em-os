@@ -111,10 +111,16 @@ function parseMessage(value: unknown): SlackMessageDto {
   const row = value as Record<string, unknown>;
   exactKeys(row, ["id", "channelId", "channelKind", "occurredAt", "updatedAt", "text", "permalink", "deleted", "proposalKind"], "message");
   const channelKind = row.channelKind;
-  if (!(["public_channel", "private_channel", "im", "mpim"] as const).includes(channelKind as SlackChannelKind)) throw new Error("unsupported Slack channel kind");
+  if (channelKind !== "public_channel") throw new Error("unsupported Slack channel kind; only public_channel is allowed");
   const proposalKind = row.proposalKind;
   if (proposalKind !== undefined && proposalKind !== "action" && proposalKind !== "decision") throw new Error("unsupported proposal kind");
   if (typeof row.deleted !== "undefined" && typeof row.deleted !== "boolean") throw new Error("deleted must be boolean");
+  const permalink = boundedString(row.permalink, "message.permalink", 2_048, false);
+  if (permalink !== undefined) {
+    let url;
+    try { url = new URL(permalink); } catch { throw new Error("message.permalink must be an https URL"); }
+    if (url.protocol !== "https:" || url.hostname.length === 0) throw new Error("message.permalink must be an https URL");
+  }
   return {
     id: boundedString(row.id, "message.id", 128)!,
     channelId: boundedString(row.channelId, "message.channelId", 64)!,
@@ -122,7 +128,7 @@ function parseMessage(value: unknown): SlackMessageDto {
     occurredAt: utc(row.occurredAt, "message.occurredAt"),
     updatedAt: row.updatedAt === undefined ? undefined : utc(row.updatedAt, "message.updatedAt"),
     text: boundedString(row.text, "message.text", 12_000, false),
-    permalink: boundedString(row.permalink, "message.permalink", 2_048, false),
+    permalink,
     deleted: row.deleted as boolean | undefined,
     proposalKind: proposalKind as SlackProposalKind | undefined,
   };

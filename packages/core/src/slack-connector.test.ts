@@ -90,7 +90,7 @@ test("fails closed for excessive, write, private and non-allowlisted scope", asy
     await assert.rejects(() => new SlackReviewQueueAdapter(new FixtureSource(x.pages), x.store).sync({ ...baseScope, channelIds: [] }), /allowlist/);
   } finally { await x.cleanup(); }
   const basePage = x.pages[0] as {messages: Record<string,unknown>[]};
-  await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], channelKind: "im" }] }, baseScope, /private channels and DMs/);
+  await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], channelKind: "im" }] }, baseScope, /only public_channel is allowed/);
   await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], channelId: "COTHER1" }] }, baseScope, /non-allowlisted/);
 });
 
@@ -101,8 +101,11 @@ test("rejects out-of-window and unbounded or unsupported response fields", async
     await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], occurredAt: "2026-11-01T00:00:00.000Z" }] }, baseScope, /outside the approved time window/);
     await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], token: "must-not-pass" }] }, baseScope, /unsupported fields/);
     await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], text: "x".repeat(12_001) }] }, baseScope, /exceeds 12000/);
-  } finally { await x.cleanup(); }
-});
+    await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], permalink: "javascript:alert(1)" }] }, baseScope, /must be an https URL/);
+    await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], permalink: "data:text/html,<h1>hi</h1>" }] }, baseScope, /must be an https URL/);
+    await expectRejectedPage({ ...(x.pages[0] as object), messages: [{ ...basePage.messages[0], permalink: "http://example.invalid/archives/CPUBLIC1/p1700000000001" }] }, baseScope, /must be an https URL/);
+    } finally { await x.cleanup(); }
+    });
 
 test("page persistence and cursor are transactional", async () => {
   const x = await fixture();
