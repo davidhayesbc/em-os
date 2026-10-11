@@ -9,6 +9,14 @@ import { encryptBackupArtifact, decryptBackupArtifact, BackupEnvelopeError, Back
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 
+function parseEncryptedBackupEnvelope(serialized:string):EncryptedBackupEnvelope{
+ try { return JSON.parse(serialized) as EncryptedBackupEnvelope; }
+ catch(error){
+  if(error instanceof SyntaxError||error instanceof TypeError) throw new BackupEnvelopeError("EnvelopeValidationError: envelope is not valid JSON");
+  throw error;
+ }
+}
+
 const migrations = [
   {
     version: 1,
@@ -387,7 +395,7 @@ export class SqliteStorage implements Storage {
  }
 
  static async restoreFromEncryptedBackup(path:string, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
-  const envelope=JSON.parse(await readFile(path,"utf8")) as EncryptedBackupEnvelope;
+  const envelope=parseEncryptedBackupEnvelope(await readFile(path,"utf8"));
   const decrypted=decryptBackupArtifact(envelope,kekSource,"sqlite-backup");
   const tmp=await mkdtemp(join(tmpdir(),"em-os-restore-"));
   try {
@@ -406,7 +414,7 @@ export class SqliteStorage implements Storage {
  }
 
  static async restoreFromExport(pathOrEnvelope:string|EncryptedBackupEnvelope, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
-   const envelope = typeof pathOrEnvelope === "string" ? JSON.parse(await readFile(pathOrEnvelope,"utf8")) as EncryptedBackupEnvelope : pathOrEnvelope;
+   const envelope = typeof pathOrEnvelope === "string" ? parseEncryptedBackupEnvelope(await readFile(pathOrEnvelope,"utf8")) : pathOrEnvelope;
    const decrypted=decryptBackupArtifact(envelope,kekSource,"em-os-storage");
    const data=JSON.parse(decrypted.toString("utf8")) as StorageExport;
    // Pre-create the restored DB file with 0o600 before SqliteStorage opens it.

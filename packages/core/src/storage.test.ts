@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { SqliteStorage, BackupKeyUnavailableError, type BackupKeySource } from "./storage.js";
+import { SqliteStorage, BackupEnvelopeError, BackupKeyUnavailableError, type BackupKeySource } from "./storage.js";
 
 async function fixture() {
  const dir=await mkdtemp(join(tmpdir(),"em-os-storage-"));
@@ -140,6 +140,22 @@ test("versioned encrypted SQLite backup round-trips with integrity",async()=>{co
   assert.equal((restored.db.prepare("PRAGMA integrity_check").get() as {integrity_check:string}).integrity_check,"ok");
  } finally { restored.close(); }
  await assertOwnerOnlyModeOnPosix(destPath,"restored DB from encrypted backup must be 0o600");
+}finally{await x.cleanup();}});
+
+test("both public encrypted restore APIs normalize invalid JSON before key access or destination writes",async()=>{const x=await fixture();try{
+ for(const api of ["export","backup"] as const){
+  const input=join(x.dir,`${api}-invalid-json.enc.json`);
+  const destination=join(x.dir,"must-not-exist",`${api}.sqlite`);
+  await writeFile(input,"{not valid JSON and must not appear in the error");
+  let keyCalls=0;
+  const countingKey:BackupKeySource={getKeyMaterial:()=>{keyCalls++;return keyMaterial;}};
+  const operation=api==="export"
+   ?SqliteStorage.restoreFromExport(input,destination,countingKey)
+   :SqliteStorage.restoreFromEncryptedBackup(input,destination,countingKey);
+  await assert.rejects(operation,(error:unknown)=>error instanceof BackupEnvelopeError&&error.message==="EnvelopeValidationError: envelope is not valid JSON");
+  assert.equal(keyCalls,0,"invalid JSON must fail before key-source access");
+  await assert.rejects(stat(destination),{code:"ENOENT"});
+ }
 }finally{await x.cleanup();}});
 
 test("both public encrypted restore APIs reject malformed envelopes before KDF or destination writes",async()=>{const x=await fixture();try{
