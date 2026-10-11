@@ -46,3 +46,25 @@ jobs:
           node-version: 22
       - name: Scan working tree and full history for secrets, PII or work content
         run: node scripts/scan-repo-safety.mjs --history
+
+  backup-drill:
+    name: backup-drill ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS-arm64
+          - os: windows-latest
+            label: Windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Run G-SEC-02 encrypted backup/restore drill
+        run: npm run backup:drill

@@ -1,12 +1,21 @@
 import { backup, DatabaseSync } from "node:sqlite";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { chmod, mkdir, readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import type { PullRequestRecord, Storage } from "./contracts.js";
 import type { SlackPersistencePage } from "./slack-connector.js";
+import { encryptBackupArtifact, decryptBackupArtifact, BackupEnvelopeError, BackupKeyUnavailableError, type BackupArtifact, type BackupKeySource, type EncryptedBackupEnvelope, recomputeHeaderAAD } from "./backup-envelope.js";
 
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+
+function parseEncryptedBackupEnvelope(serialized:string):EncryptedBackupEnvelope{
+ try { return JSON.parse(serialized) as EncryptedBackupEnvelope; }
+ catch(error){
+  if(error instanceof SyntaxError||error instanceof TypeError) throw new BackupEnvelopeError("EnvelopeValidationError: envelope is not valid JSON");
+  throw error;
+ }
+}
 
 const migrations = [
   {
@@ -205,25 +214,6 @@ export interface StorageExport { format: "em-os-storage"; version: 1; exportedAt
 const exportTables = ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","review_queue_proposals","proposal_review_audit","deletion_tombstones"] as const;
 const clearTables = [...exportTables, "cache_entries"] as const;
 
-export interface EncryptedBackupManifest {
-  format: "em-os-encrypted-backup";
-  version: 1;
-  exportedAt: string;
-  schemaVersion: number;
-  integrity: string; // sha256 over the plaintext export JSON
-}
-
-export interface EncryptedBackupEnvelope {
-  manifest: EncryptedBackupManifest;
-  iv: string;     // base64 AES-GCM IV
-  ciphertext: string; // base64 encrypted payload
-  authTag: string;  // base64 AES-GCM auth tag
-}
-
-function sha256Hex(input:string):string { return createHash("sha256").update(input).digest("hex"); }
-function deriveKey(key:string):Buffer { return createHash("sha256").update(key).digest(); }
-function b64(data:Buffer):string { return data.toString("base64url"); }
-function fromB64(data:string):Buffer { return Buffer.from(data,"base64url"); }
 function utc(value: string): string {
  const date = new Date(value);
  if (!Number.isFinite(date.valueOf()) || !value.endsWith("Z")) throw new Error(`timestamp must be UTC ISO-8601: ${value}`);
@@ -380,47 +370,64 @@ export class SqliteStorage implements Storage {
    } finally { this.#reviewWrite=undefined; }
   });
  }
- async backupToRawSQLite(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
- static async restoreFromRawSQLite(path:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();return storage;}
- /** Plaintext JSON export; not encrypted. */
- async writeExport(path:string):Promise<void>{await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(this.exportData(),null,2),{encoding:"utf8",mode:0o600});}
- static async restoreFromExport(path:string, exportPath:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();storage.importData(JSON.parse(await readFile(exportPath,"utf8")) as StorageExport);return storage;}
 
- async writeEncryptedBackup(path:string,key:string):Promise<EncryptedBackupEnvelope>{
-  if(!key) throw new Error("encryption key is required");
-  const plaintext=JSON.stringify(this.exportData());
-  const integrity=sha256Hex(plaintext);
-  const schemaRow=this.db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as {version:number}|undefined;
-  const iv=randomBytes(12);
-  const derived=deriveKey(key);
-  const cipher=createCipheriv("aes-256-gcm",derived,iv);
-  const ciphertext=Buffer.concat([cipher.update(plaintext,"utf8"),cipher.final()]);
-  const authTag=cipher.getAuthTag();
-  const manifest:EncryptedBackupManifest={format:"em-os-encrypted-backup",version:1,exportedAt:utc(new Date().toISOString()),schemaVersion:schemaRow?.version??0,integrity};
-  const envelope:EncryptedBackupEnvelope={manifest,iv:b64(iv),ciphertext:b64(ciphertext),authTag:b64(authTag)};
+ // Plaintext paths are dev-only and explicitly named insecure.
+ async backupToDevInsecure(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
+ async writeExportDevInsecure(path:string):Promise<void>{await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(this.exportData(),null,2),{encoding:"utf8",mode:0o600});}
+
+ async backupToEncrypted(destination:string, kekSource:BackupKeySource):Promise<void>{
+  await mkdir(dirname(destination),{recursive:true});
+  const tmp=await mkdtemp(join(tmpdir(),"em-os-backup-"));
+  try {
+   const plain=join(tmp,"plain.sqlite");
+   await backup(this.db,plain);
+   const bytes=await readFile(plain);
+   const envelope=encryptBackupArtifact(bytes,"sqlite-backup",kekSource);
+   await writeFile(destination,JSON.stringify(envelope,null,2),{encoding:"utf8",mode:0o600});
+  } finally { await rm(tmp,{recursive:true,force:true}); }
+ }
+
+ async writeExport(path:string, kekSource:BackupKeySource):Promise<void>{
   await mkdir(dirname(path),{recursive:true});
+  const bytes=Buffer.from(JSON.stringify(this.exportData(),null,2),"utf8");
+  const envelope=encryptBackupArtifact(bytes,"em-os-storage",kekSource);
   await writeFile(path,JSON.stringify(envelope,null,2),{encoding:"utf8",mode:0o600});
-  return envelope;
  }
- static async restoreFromEncryptedBackup(path:string, key:string, destinationDbPath:string):Promise<SqliteStorage>{
-  if(!key) throw new Error("encryption key is required");
-  const envelope=JSON.parse(await readFile(path,"utf8")) as EncryptedBackupEnvelope;
-  if(envelope.manifest?.format!=="em-os-encrypted-backup"||envelope.manifest.version!==1) throw new Error("unsupported encrypted backup format");
-  const derived=deriveKey(key);
-  const decipher=createDecipheriv("aes-256-gcm",derived,fromB64(envelope.iv));
-  decipher.setAuthTag(fromB64(envelope.authTag));
-  let plaintext:string;
-  try { plaintext=Buffer.concat([decipher.update(fromB64(envelope.ciphertext)),decipher.final()]).toString("utf8"); }
-  catch(cause){ throw new Error("backup decryption failed: wrong key or tampered payload",{cause}); }
-  const digest=sha256Hex(plaintext);
-  const expected=envelope.manifest.integrity;
-  if(!expected || digest.length!==expected.length || !timingSafeEqual(Buffer.from(digest),Buffer.from(expected))) throw new Error("backup integrity check failed: tampered payload");
-  const data=JSON.parse(plaintext) as StorageExport;
-  const storage=new SqliteStorage(destinationDbPath); await storage.initialize();
-  const dbVersion=(storage.db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as {version:number}|undefined)?.version??0;
-  if(envelope.manifest.schemaVersion !== dbVersion) throw new Error(`schema version mismatch: backup=${envelope.manifest.schemaVersion}, db=${dbVersion}`);
-  storage.importData(data); return storage;
+
+ static async restoreFromEncryptedBackup(path:string, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
+  const envelope=parseEncryptedBackupEnvelope(await readFile(path,"utf8"));
+  const decrypted=decryptBackupArtifact(envelope,kekSource,"sqlite-backup");
+  const tmp=await mkdtemp(join(tmpdir(),"em-os-restore-"));
+  try {
+   const plain=join(tmp,"restored.sqlite");
+   await writeFile(plain,decrypted);
+   await mkdir(dirname(destinationDb),{recursive:true});
+   // Ensure destinationDb file exists as an empty SQLite database so backup() accepts it, with 0o600 per ADR 0008 restored-material handling.
+   await writeFile(destinationDb, Buffer.alloc(0), { mode: 0o600 });
+   const destDb=new DatabaseSync(destinationDb);
+   try { destDb.close(); } catch { destDb.close(); }
+   const plainDb=new DatabaseSync(plain);
+   try { await backup(plainDb,destinationDb); } finally { plainDb.close(); }
+   await chmod(destinationDb,0o600);
+   const storage=new SqliteStorage(destinationDb); await storage.initialize(); return storage;
+  } finally { await rm(tmp,{recursive:true,force:true}); }
  }
- /** Raw SQLite copy; not encrypted. */
- async backupTo(destination:string):Promise<void>{await this.backupToRawSQLite(destination);}
+
+ static async restoreFromExport(pathOrEnvelope:string|EncryptedBackupEnvelope, destinationDb:string, kekSource:BackupKeySource):Promise<SqliteStorage>{
+   const envelope = typeof pathOrEnvelope === "string" ? parseEncryptedBackupEnvelope(await readFile(pathOrEnvelope,"utf8")) : pathOrEnvelope;
+   const decrypted=decryptBackupArtifact(envelope,kekSource,"em-os-storage");
+   const data=JSON.parse(decrypted.toString("utf8")) as StorageExport;
+   // Pre-create the restored DB file with 0o600 before SqliteStorage opens it.
+   await mkdir(dirname(destinationDb),{recursive:true});
+   await writeFile(destinationDb, Buffer.alloc(0), { mode: 0o600 });
+   const storage=new SqliteStorage(destinationDb); await storage.initialize(); storage.importData(data); await chmod(destinationDb,0o600); return storage;
+ }
+
+ static async restoreFromExportDevInsecure(path:string, destinationDb:string):Promise<SqliteStorage>{
+  const storage=new SqliteStorage(destinationDb);await storage.initialize();storage.importData(JSON.parse(await readFile(path,"utf8")) as StorageExport);return storage;
+ }
 }
+
+export type { BackupArtifact, EncryptedBackupEnvelope };
+export { BackupEnvelopeError, BackupKeyUnavailableError, recomputeHeaderAAD };
+export type { BackupKeySource } from "./backup-envelope.js";
