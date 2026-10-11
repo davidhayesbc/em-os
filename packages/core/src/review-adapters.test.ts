@@ -33,6 +33,17 @@ test("calendar contract paginates, normalizes DST, prompts on ambiguous identity
   assert.equal(store.deletions[0].sourceId, "team-calendar:evt-old");
 });
 
+test("Calendar and Jira proposal titles redact inline secrets and emails", async () => {
+  const store = new InMemoryReviewQueueStore();
+  const item: CalendarItem = { id: "redact-cal", calendarId: "team-calendar", title: "token=xai-1234567890abcdef and email alice@example.invalid", htmlLink: "https://calendar.example.invalid/redact", start: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z" };
+  await new CalendarReviewAdapter(baseConfig, async() => ({ items: [item], observedAt: "2026-11-01T00:00:00Z" }), store).sync("team-calendar");
+  const proposal = [...store.proposals.values()][0];
+  assert.match(proposal.title, /token=\[REDACTED_SECRET\]/);
+  assert.match(proposal.title, /\[REDACTED_EMAIL\]/);
+  assert.doesNotMatch(proposal.title, /xai-1234567890abcdef/);
+  assert.doesNotMatch(proposal.title, /alice@example\.invalid/);
+});
+
 test("Calendar and Jira can be enabled independently and reject non-allowlisted scopes", async () => {
   const store = new InMemoryReviewQueueStore(); let calls = 0;
   const disabled = new CalendarReviewAdapter({...baseConfig,enabled:false}, async()=>{calls++;throw new Error("must not read");}, store);

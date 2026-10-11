@@ -82,6 +82,29 @@ test("prompt injection remains inert bounded source data and never auto-approves
   } finally { await x.cleanup(); }
 });
 
+test("excerpt and proposal description redact inline secrets and emails", async () => {
+  const x = await fixture();
+  try {
+    const page = {
+      schemaVersion: 1,
+      observedAt: "2026-10-09T09:00:00.000Z",
+      messages: [{
+        id: "1700000000.007", channelId: "CPUBLIC1", channelKind: "public_channel", occurredAt: "2026-10-09T08:55:00.000Z",
+        text: "token=xai-1234567890abcdef and contact alice@example.invalid for the API key=secret-value", proposalKind: "action",
+      }],
+    };
+    await new SlackReviewQueueAdapter(new FixtureSource([page]), x.store).sync(baseScope);
+    const row = x.store.db.prepare("SELECT excerpt FROM source_records WHERE source_id=?").get("CPUBLIC1:1700000000.007") as {excerpt:string};
+    assert.match(row.excerpt, /token=\[REDACTED_SECRET\]/);
+    assert.match(row.excerpt, /API key=\[REDACTED_SECRET\]/);
+    assert.doesNotMatch(row.excerpt, /xai-1234567890abcdef/);
+    assert.doesNotMatch(row.excerpt, /alice@example\.invalid/);
+    const proposal = x.store.db.prepare("SELECT description FROM review_queue_proposals").get() as {description:string};
+    assert.match(proposal.description, /\[REDACTED_SECRET\]/);
+    assert.doesNotMatch(proposal.description, /alice@example\.invalid/);
+  } finally { await x.cleanup(); }
+});
+
 test("fails closed for excessive, write, private and non-allowlisted scope", async () => {
   const x = await fixture();
   try {

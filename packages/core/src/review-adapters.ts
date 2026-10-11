@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SqliteStorage } from "./storage.js";
+import { redact } from "./meeting-import.js";
 
 export type ReviewSource = "calendar" | "jira";
 export type ReviewProposalKind = "calendar-follow-up" | "jira-action";
@@ -161,7 +162,7 @@ export class CalendarReviewAdapter extends ReviewAdapter<CalendarItem> {
   protected content(item: CalendarItem): unknown { return { id: item.id, calendarId: item.calendarId, title: item.title, htmlLink: item.htmlLink, start: item.start, updatedAt: item.updatedAt, organizer: item.organizer, relatedUrls: item.relatedUrls }; }
   protected proposal(item: CalendarItem, scope: string, observedAt: string, retentionUntil: string): Omit<ReviewProposal, "dedupSuggestions"> {
     const sourceId = this.sourceId(item); const occurredAt = utc(item.start, "calendar start"); const sourceUrl = validateUrl(item.htmlLink, "calendar source URL");
-    return { id: id(this.id, sourceId), provider: this.id, sourceId, scope, kind: "calendar-follow-up", title: item.title.trim(), occurredAt, observedAt, sourceUrl, sourceLinks: uniqueLinks(sourceUrl, item.relatedUrls), owner: identity(item.organizer, item.organizerCandidates, this.config.identityConfidenceThreshold), reviewState: "proposed", retentionUntil };
+    return { id: id(this.id, sourceId), provider: this.id, sourceId, scope, kind: "calendar-follow-up", title: redact(item.title.trim()), occurredAt, observedAt, sourceUrl, sourceLinks: uniqueLinks(sourceUrl, item.relatedUrls), owner: identity(item.organizer, item.organizerCandidates, this.config.identityConfidenceThreshold), reviewState: "proposed", retentionUntil };
   }
 }
 
@@ -174,7 +175,7 @@ export class JiraReviewAdapter extends ReviewAdapter<JiraItem> {
   protected content(item: JiraItem): unknown { return { id: item.id, projectKey: item.projectKey, key: item.key, summary: item.summary, browseUrl: item.browseUrl, updatedAt: item.updatedAt, assignee: item.assignee, relatedUrls: item.relatedUrls }; }
   protected proposal(item: JiraItem, scope: string, observedAt: string, retentionUntil: string): Omit<ReviewProposal, "dedupSuggestions"> {
     const sourceId = this.sourceId(item); const occurredAt = utc(item.updatedAt, "Jira updatedAt"); const sourceUrl = validateUrl(item.browseUrl, "Jira source URL");
-    return { id: id(this.id, sourceId), provider: this.id, sourceId, scope, kind: "jira-action", title: `${item.key}: ${item.summary}`.trim(), occurredAt, observedAt, sourceUrl, sourceLinks: uniqueLinks(sourceUrl, item.relatedUrls), owner: identity(item.assignee, item.assigneeCandidates, this.config.identityConfidenceThreshold), reviewState: "proposed", retentionUntil };
+    return { id: id(this.id, sourceId), provider: this.id, sourceId, scope, kind: "jira-action", title: redact(`${item.key}: ${item.summary}`.trim()), occurredAt, observedAt, sourceUrl, sourceLinks: uniqueLinks(sourceUrl, item.relatedUrls), owner: identity(item.assignee, item.assigneeCandidates, this.config.identityConfidenceThreshold), reviewState: "proposed", retentionUntil };
   }
 }
 
@@ -205,6 +206,7 @@ export class SqliteReviewQueueStore implements ReviewQueueStore {
       retentionUntil: p.retentionUntil,
       dedupSuggestions: [...p.dedupSuggestions],
       owner: p.owner,
+      description: redact(p.title),
     }));
     const deletions = batch.deletions.map(d => ({ provider: d.provider as string, sourceId: d.sourceId, contentHash: d.contentHash, deletedAt: d.deletedAt, reason: d.reason as string }));
     this.store.commitAdapterBatch({ connector: batch.connector as string, scope: batch.scope, previousCursor: batch.previousCursor, nextCursor: batch.nextCursor, observedAt: batch.observedAt, fetched: batch.fetched, proposals, deletions });

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SqliteStorage } from "./storage.js";
+import { SqliteStorage, StorageImportError } from "./storage.js";
 
 async function fixture() {
  const dir=await mkdtemp(join(tmpdir(),"em-os-storage-"));
@@ -92,4 +92,20 @@ test("timestamps reject local offsets and normalize UTC fixtures",async()=>{cons
  assert.throws(()=>x.store.persistSync({connector:"calendar",scope:"synthetic",observedAt:"2026-11-01T01:30:00-04:00",records:[]}),/must be UTC/);
  x.store.persistSync({connector:"calendar",scope:"synthetic",observedAt:"2026-11-01T05:30:00.000Z",records:[]});
  assert.equal((x.store.db.prepare("SELECT last_success_at FROM sync_cursors").get() as {last_success_at:string}).last_success_at,"2026-11-01T05:30:00.000Z");
+}finally{await x.cleanup();}});
+
+test("import rejects unknown tables and hostile column identifiers with typed errors",async()=>{const x=await fixture();try{
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ exported.tables.evil_table=[{id:"x"}];
+ assert.throws(()=>x.store.importData(exported),(error:unknown)=>error instanceof StorageImportError&&error.code==="unknown_table");
+ delete exported.tables.evil_table;
+ exported.tables.source_records.push({id:"evil",provider:"github",source_id:"evil:sid",observed_at:"2026-10-09T09:00:00.000Z",content_hash:"h",classification:"work",last_seen_at:"2026-10-09T09:00:00.000Z","-- DROP TABLE source_records":null});
+ assert.throws(()=>x.store.importData(exported),(error:unknown)=>error instanceof StorageImportError&&error.code==="unknown_column");
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,0);
+}finally{await x.cleanup();}});
+
+test("import rejects unsupported value types with a typed error",async()=>{const x=await fixture();try{
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ exported.tables.source_records.push({id:"s99",provider:"slack",source_id:"s99",observed_at:"2026-10-09T09:00:00.000Z",content_hash:"h",classification:"work",last_seen_at:"2026-10-09T09:00:00.000Z",retention_until:false});
+ assert.throws(()=>x.store.importData(exported),(error:unknown)=>error instanceof StorageImportError&&error.code==="invalid_value");
 }finally{await x.cleanup();}});

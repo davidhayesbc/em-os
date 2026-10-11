@@ -174,6 +174,8 @@ function digest(text: string): string {
   return `sha256:${createHash("sha256").update(text).digest("hex")}`;
 }
 
+import { redact } from "./meeting-import.js";
+
 function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : "unknown Slack connector failure";
   return message.replace(/[\r\n]/g, " ").slice(0, 300);
@@ -212,7 +214,8 @@ export class SlackReviewQueueAdapter {
           if (message.occurredAt < validated.start || message.occurredAt > validated.end) throw new Error("Slack response included a message outside the approved time window");
           const sourceId = `${message.channelId}:${message.id}`;
           if (message.deleted) { deletedSourceIds.push(sourceId); continue; }
-          const excerpt = (message.text ?? "").slice(0, scope.maxExcerptChars);
+          const rawExcerpt = (message.text ?? "").slice(0, scope.maxExcerptChars);
+          const excerpt = redact(rawExcerpt);
           const sourceRecordId = `slack:message:${sourceId}`;
           records.push({ id: sourceRecordId, provider: "slack", sourceId, stableUrl: message.permalink, occurredAt: message.occurredAt, observedAt: page.observedAt, excerpt, contentHash: digest(excerpt), classification: scope.classification, lastSeenAt: page.observedAt, retentionUntil: retentionFrom(page.observedAt, scope.retentionDays) });
           if (message.proposalKind) proposals.push({ id: `slack:proposal:${sourceId}`, kind: message.proposalKind, description: excerpt, sourceRecordId });

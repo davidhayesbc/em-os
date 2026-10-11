@@ -7,6 +7,31 @@ import type { SlackPersistencePage } from "./slack-connector.js";
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 
+export class StorageImportError extends Error {
+ constructor(readonly code: "unknown_table" | "unknown_column" | "invalid_value", message: string) {
+  super(message);
+  this.name = "StorageImportError";
+ }
+}
+
+const tableColumns: Record<string, ReadonlySet<string>> = {
+ people: new Set(["id","display_name","role","identities_json","identity_confirmed","created_at","updated_at"]),
+ source_records: new Set(["id","provider","source_id","stable_url","occurred_at","observed_at","excerpt","content_hash","classification","last_seen_at","retention_until","deleted_at","deletion_reason","created_at","updated_at"]),
+ sync_cursors: new Set(["connector","scope","cursor","watermark","last_success_at","last_error","fetched_count","updated_at"]),
+ prs: new Set(["id","source_record_id","provider","repository","source_id","author","reviewers_json","title","url","created_at","updated_at","merged_at","is_draft","ci_status","review_requested","last_relevant_activity_at","state"]),
+ initiatives: new Set(["id","title","goal","deadline","dependencies_json","status","created_at","updated_at"]),
+ action_items: new Set(["id","owner_person_id","description","due_at","due_timezone","status","review_state","snoozed_until","suppressed","created_at","updated_at"]),
+ action_item_sources: new Set(["action_item_id","source_record_id","anchor"]),
+ evidence: new Set(["id","subject_person_id","observation","impact","competency_tags_json","author","approver","observed_at","interpretation","sensitivity","status","supersedes_id","created_at","updated_at"]),
+ evidence_sources: new Set(["evidence_id","source_record_id","anchor"]),
+ drafts: new Set(["id","type","period","audience","input_record_ids_json","model_route","model_version","file_path","generated_at","reviewer_state","cached_markdown","created_at","updated_at"]),
+ draft_sources: new Set(["draft_id","source_record_id","anchor"]),
+ review_audit: new Set(["id","entity_type","entity_id","from_state","to_state","actor","reason","changed_at"]),
+ review_queue_proposals: new Set(["id","kind","description","source_record_id","source_context_json","source_links_json","occurred_at","retention_until","review_state","created_at","updated_at"]),
+ proposal_review_audit: new Set(["id","proposal_id","from_state","to_state","actor","reason","changed_at"]),
+ deletion_tombstones: new Set(["provider","source_id","deleted_at","reason","content_hash"]),
+} as const;
+
 const migrations = [
   {
     version: 1,
@@ -359,9 +384,18 @@ export class SqliteStorage implements Storage {
  }
  importData(data:StorageExport): void {
   if(data.format!=="em-os-storage"||data.version!==STORAGE_EXPORT_VERSION) throw new Error("unsupported storage export");
+  for (const table of Object.keys(data.tables)) {
+   if (!tableColumns[table]) throw new StorageImportError("unknown_table", `import contains unknown table ${table}`);
+  }
   this.transaction(()=>{ this.db.exec("PRAGMA defer_foreign_keys=ON");
    for(const table of [...clearTables].reverse()) this.db.exec(`DELETE FROM ${table}`);
-   for(const table of exportTables) for(const row of data.tables[table]??[]) { const keys=Object.keys(row); if(!keys.length)continue; this.db.prepare(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(()=>"?").join(",")})`).run(...keys.map(k=>row[k] as never)); }
+   for(const table of exportTables) for(const row of data.tables[table]??[]) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) throw new StorageImportError("invalid_value", `import row for ${table} must be an object`);
+    const keys=Object.keys(row); if(!keys.length)continue;
+    for (const key of keys) if (!tableColumns[table]!.has(key)) throw new StorageImportError("unknown_column", `import row for ${table} contains unknown column ${key}`);
+    const values=keys.map(key=>{const value=row[key]; if(value===null||typeof value==="string"||(typeof value==="number"&&Number.isInteger(value)))return value; throw new StorageImportError("invalid_value",`import row for ${table}.${key} has unsupported value type`);});
+    this.db.prepare(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(()=>"?").join(",")})`).run(...values as never[]);
+   }
   });
  }
  async backupTo(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
