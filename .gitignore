@@ -44,4 +44,5 @@ secrets.json
 Thumbs.db
 node_modules/
 dist/
+*.tsbuildinfo
 coverage/
