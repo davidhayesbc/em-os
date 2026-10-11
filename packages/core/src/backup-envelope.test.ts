@@ -104,14 +104,14 @@ test("M1 rejects artifact swap without AAD update", () => {
   assert.throws(() => decryptBackupArtifact(swapped, fixedKeySource), /EnvelopeValidationError:.*aad_b64 does not match/i);
 });
 
-test("info label tamper on HKDF envelope is silently ignored by design", () => {
+test("HKDF info tamper is rejected before key source access", () => {
   const envelope = encryptBackupArtifact(Buffer.from("payload", "utf8"), "em-os-storage", fixedKeySource);
   const tampered = JSON.parse(JSON.stringify(envelope));
   tampered.kdf.info = "wrong";
-  // Changing info alters neither the AAD (only alg/source are authenticated) nor the derived key (info is fixed by contract),
-  // so this is silently ignored by design. Record the expectation explicitly.
-  const restored = decryptBackupArtifact(tampered, fixedKeySource);
-  assert.deepEqual(restored, Buffer.from("payload", "utf8"));
+  let calls = 0;
+  const countingSource: BackupKeySource = { getKeyMaterial: () => { calls++; return hkdfMaterial; } };
+  assert.throws(() => decryptBackupArtifact(tampered, countingSource), BackupEnvelopeError);
+  assert.equal(calls, 0);
 });
 
 test("PBKDF2 wrong passphrase is rejected", () => {
@@ -162,4 +162,50 @@ test("PBKDF2 iterations below 600000 floor rejected", () => {
   const envelope = encryptBackupArtifact(plaintext, "em-os-storage", source);
   const low = mutateAAD(envelope, (e) => { e.kdf.iterations = 100000; });
   assert.throws(() => decryptBackupArtifact(low, source), BackupEnvelopeError);
+});
+
+test("M2 validates every encoded field and exact HKDF contract before KDF", () => {
+  const base = encryptBackupArtifact(Buffer.from("payload"), "em-os-storage", fixedKeySource);
+  const mutations: Array<[string, (envelope: any) => void]> = [
+    ["missing inner", (e) => { delete e.inner; }],
+    ["non-string inner", (e) => { e.inner = null; }],
+    ["invalid inner base64", (e) => { e.inner = "***not-base64***"; }],
+    ["invalid nonce base64", (e) => { e.nonce_b64 = "***not-base64***"; }],
+    ["short nonce", (e) => { e.nonce_b64 = Buffer.alloc(11).toString("base64"); }],
+    ["invalid tag base64", (e) => { e.tag_b64 = "A==="; }],
+    ["short tag", (e) => { e.tag_b64 = Buffer.alloc(15).toString("base64"); }],
+    ["missing salt", (e) => { delete e.kdf.salt_b64; }],
+    ["invalid salt base64", (e) => { e.kdf.salt_b64 = "***not-base64***"; }],
+    ["short salt", (e) => { e.kdf.salt_b64 = Buffer.alloc(15).toString("base64"); }],
+    ["wrong dkLen", (e) => { e.kdf.dkLen = 16; }],
+    ["wrong source", (e) => { e.kdf.source = "operator-passphrase"; }],
+    ["wrong info", (e) => { e.kdf.info = "wrong"; }],
+    ["missing info", (e) => { delete e.kdf.info; }],
+    ["unknown envelope field", (e) => { e.extra = true; }],
+    ["mistyped created_at", (e) => { e.created_at = 42; }],
+    ["unknown kdf field", (e) => { e.kdf.extra = true; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const malformed = JSON.parse(JSON.stringify(base)); mutate(malformed);
+    if (malformed.kdf?.source) malformed.aad_b64 = recomputeHeaderAAD(malformed).toString("base64");
+    let calls = 0;
+    const countingSource: BackupKeySource = { getKeyMaterial: () => { calls++; return hkdfMaterial; } };
+    assert.throws(() => decryptBackupArtifact(malformed, countingSource), BackupEnvelopeError, name);
+    assert.equal(calls, 0, `${name} must fail before getKeyMaterial`);
+  }
+});
+
+test("PBKDF2 exact v1 contract rejects wrong source, dkLen, fields, and oversized work before KDF", () => {
+  const source = passphraseSource("correct passphrase");
+  const base = encryptBackupArtifact(Buffer.from("payload"), "em-os-storage", source);
+  for (const [name, mutate] of [
+    ["oversized iterations", (e: any) => { e.kdf.iterations = 600_001; }],
+    ["non-integer iterations", (e: any) => { e.kdf.iterations = 600_000.5; }],
+    ["wrong source", (e: any) => { e.kdf.source = "os-keystore"; }],
+    ["wrong dkLen", (e: any) => { e.kdf.dkLen = 16; }],
+    ["unexpected info", (e: any) => { e.kdf.info = "em-os backup key v1"; }],
+  ] as Array<[string, (e: any) => void]>) {
+    const malformed = mutateAAD(base, mutate);
+    assert.throws(() => decryptBackupArtifact(malformed, source), BackupEnvelopeError, name);
+  }
 });

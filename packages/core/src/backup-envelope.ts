@@ -43,6 +43,31 @@ export class BackupEnvelopeError extends Error {
 
 const HKDF_INFO = "em-os backup key v1";
 const PBKDF2_ITERS = 600_000;
+// Version 1 deliberately fixes the work factor. This is both the minimum and
+// maximum accepted value so an untrusted envelope cannot choose KDF cost.
+const PBKDF2_MAX_ITERS = PBKDF2_ITERS;
+
+const ENVELOPE_FIELDS = ["aad_b64", "artifact", "cipher", "created_at", "format", "inner", "kdf", "nonce_b64", "schema_version", "tag_b64", "version"];
+const HKDF_FIELDS = ["alg", "dkLen", "info", "salt_b64", "source"];
+const PBKDF2_FIELDS = ["alg", "dkLen", "iterations", "salt_b64", "source"];
+
+function hasExactlyFields(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length && actual.every((field, index) => field === expected[index]);
+}
+
+function decodeCanonicalBase64(value: unknown, field: string, expectedLength?: number): { decoded?: Buffer; error?: string } {
+  if (typeof value !== "string") return { error: `${field} must be a base64 string` };
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    return { error: `${field} must be canonical base64` };
+  }
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.toString("base64") !== value) return { error: `${field} must be canonical base64` };
+  if (expectedLength !== undefined && decoded.length !== expectedLength) {
+    return { error: `${field} must decode to exactly ${expectedLength} bytes` };
+  }
+  return { decoded };
+}
 
 // Minimal JCS-style canonical JSON: sorted object keys recursively, no insignificant whitespace.
 function canonJson(value: unknown): string {
@@ -69,24 +94,42 @@ export function recomputeHeaderAAD(envelope: EncryptedBackupEnvelope): Buffer { 
 function validateEnvelope(envelope: EncryptedBackupEnvelope): void {
   const errors: string[] = [];
   if (typeof envelope !== "object" || envelope === null) throw new BackupEnvelopeError("EnvelopeValidationError: envelope must be an object");
+  const envelopeRecord = envelope as unknown as Record<string, unknown>;
+  if (!hasExactlyFields(envelopeRecord, ENVELOPE_FIELDS)) errors.push("envelope contains missing or unknown fields");
   if (envelope.cipher !== "AES-256-GCM") errors.push(`cipher must be AES-256-GCM, got ${JSON.stringify(envelope.cipher)}`);
   if (envelope.format !== "em-os-enc-backup") errors.push(`format must be em-os-enc-backup, got ${JSON.stringify(envelope.format)}`);
   if (envelope.version !== 1 || typeof envelope.version !== "number") errors.push(`version must be integer 1, got ${JSON.stringify(envelope.version)}`);
   if (envelope.schema_version !== 1 || typeof envelope.schema_version !== "number") errors.push(`schema_version must be integer 1, got ${JSON.stringify(envelope.schema_version)}`);
+  if (typeof envelope.created_at !== "string") errors.push("created_at must be a string");
   if (typeof envelope.aad_b64 !== "string" || envelope.aad_b64.length === 0) errors.push("aad_b64 must be present (v1 contract); v0 envelopes are invalid");
   if (!envelope.artifact || !["em-os-storage", "sqlite-backup"].includes(envelope.artifact)) errors.push(`unknown artifact ${JSON.stringify(envelope.artifact)}`);
-  if (typeof envelope.nonce_b64 !== "string" || envelope.nonce_b64.length === 0) errors.push("nonce_b64 must be a non-empty base64 string");
-  if (typeof envelope.tag_b64 !== "string" || envelope.tag_b64.length === 0) errors.push("tag_b64 must be a non-empty base64 string");
+  const inner = decodeCanonicalBase64(envelope.inner, "inner"); if (inner.error) errors.push(inner.error);
+  const nonce = decodeCanonicalBase64(envelope.nonce_b64, "nonce_b64", 12); if (nonce.error) errors.push(nonce.error);
+  const tag = decodeCanonicalBase64(envelope.tag_b64, "tag_b64", 16); if (tag.error) errors.push(tag.error);
   if (typeof envelope.kdf !== "object" || envelope.kdf === null) errors.push("kdf must be an object");
-  else if (!envelope.kdf?.alg || !["HKDF-SHA-256", "PBKDF2-HMAC-SHA256"].includes(envelope.kdf.alg)) errors.push(`unknown kdf.alg ${JSON.stringify(envelope.kdf?.alg)}`);
-  if (envelope.kdf?.alg === "PBKDF2-HMAC-SHA256" && (!Number.isInteger(envelope.kdf?.iterations) || (envelope.kdf.iterations as number) < PBKDF2_ITERS)) {
-    errors.push(`PBKDF2 iterations below ${PBKDF2_ITERS} floor`);
+  else {
+    const kdf = envelope.kdf as unknown as Record<string, unknown>;
+    const salt = decodeCanonicalBase64(kdf.salt_b64, "kdf.salt_b64", 16); if (salt.error) errors.push(salt.error);
+    if (kdf.dkLen !== 32 || !Number.isInteger(kdf.dkLen)) errors.push("kdf.dkLen must be integer 32");
+    if (kdf.alg === "HKDF-SHA-256") {
+      if (!hasExactlyFields(kdf, HKDF_FIELDS)) errors.push("HKDF kdf contains missing or unknown fields");
+      if (kdf.source !== "os-keystore") errors.push("HKDF source must be os-keystore");
+      if (kdf.info !== HKDF_INFO) errors.push(`HKDF info must be ${JSON.stringify(HKDF_INFO)}`);
+    } else if (kdf.alg === "PBKDF2-HMAC-SHA256") {
+      if (!hasExactlyFields(kdf, PBKDF2_FIELDS)) errors.push("PBKDF2 kdf contains missing or unknown fields");
+      if (kdf.source !== "operator-passphrase") errors.push("PBKDF2 source must be operator-passphrase");
+      if (!Number.isInteger(kdf.iterations) || (kdf.iterations as number) < PBKDF2_ITERS || (kdf.iterations as number) > PBKDF2_MAX_ITERS) {
+        errors.push(`PBKDF2 iterations must be an integer from ${PBKDF2_ITERS} through ${PBKDF2_MAX_ITERS}`);
+      }
+    } else {
+      errors.push(`unknown kdf.alg ${JSON.stringify(kdf.alg)}`);
+    }
   }
   if (typeof envelope.aad_b64 === "string" && envelope.aad_b64.length > 0 && typeof envelope.kdf === "object" && envelope.kdf !== null && typeof envelope.kdf.alg === "string") {
     const recomputed = headerAAD(envelope);
-    let received: Buffer | null = null;
-    try { received = Buffer.from(envelope.aad_b64, "base64"); } catch { received = null; }
-    if (!received || !recomputed.equals(received)) errors.push("aad_b64 does not match recomputed header AAD (byte-exact)");
+    const aad = decodeCanonicalBase64(envelope.aad_b64, "aad_b64");
+    if (aad.error) errors.push(aad.error);
+    else if (!recomputed.equals(aad.decoded!)) errors.push("aad_b64 does not match recomputed header AAD (byte-exact)");
   }
   if (errors.length) throw new BackupEnvelopeError(`EnvelopeValidationError: ${errors.join("; ")}`);
 }

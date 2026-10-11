@@ -123,6 +123,19 @@ test("both public encrypted restore APIs reject malformed envelopes before KDF o
    const missing=structuredClone(valid); delete missing[field]; cases.push(missing);
    const nil=structuredClone(valid); nil[field]=null; cases.push(nil);
   }
+  for(const mutate of [
+   (e:any)=>{delete e.inner;},
+   (e:any)=>{e.inner="***not-base64***";},
+   (e:any)=>{delete e.kdf.salt_b64;},
+   (e:any)=>{e.kdf.salt_b64="***not-base64***";},
+   (e:any)=>{e.kdf.dkLen=16;},
+   (e:any)=>{e.kdf.source="operator-passphrase";},
+   (e:any)=>{e.kdf.info="wrong";},
+   (e:any)=>{e.nonce_b64="***not-base64***";},
+   (e:any)=>{e.nonce_b64=Buffer.alloc(11).toString("base64");},
+   (e:any)=>{e.tag_b64="***not-base64***";},
+   (e:any)=>{e.tag_b64=Buffer.alloc(15).toString("base64");},
+  ]){const malformed=structuredClone(valid);mutate(malformed);cases.push(malformed);}
   for(let i=0;i<cases.length;i++){
    const input=join(x.dir,`${api}-malformed-${i}.json`); await writeFile(input,JSON.stringify(cases[i]));
    const destination=join(x.dir,"must-not-exist",`${api}-${i}.sqlite`); let kdfCalls=0;
