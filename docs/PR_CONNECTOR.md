@@ -7,7 +7,7 @@ Status: synthetic fixture implementation. Real work-data ingestion is disabled u
 - Direct MCP is fail-closed because discovery did not approve its transport or schema. The connector accepts only the in-process `synthetic-fixture` transport and a separately approved `approved-claude-runner` transport.
 - The runner boundary is a fixed `fetchPage` operation. Every request carries exactly `pull_requests:read`; write/admin scopes are rejected. Repositories must be explicit `owner/repo` allowlist entries.
 - Responses use schema version 1, reject unknown fields, and bound each page to 50 records, each sync to 20 pages, text fields to documented parser limits, and retries to three.
-- Only stable absolute HTTPS source URLs without credentials or fragments are accepted. A URL must identify the requested repository and PR source ID.
+- Source origins are an explicit connector allowlist of canonical HTTPS origins. Record URLs must use one of those origins, contain no credentials, query, or fragment, and match exactly `/owner/repository/pull/source-id`; repository substrings and source IDs in unrelated path segments are rejected. The synthetic fixture allowlists only `https://example.invalid`.
 - Source text is data only. The DTO has no prompt, command, token, credential, comment-body, or write field.
 
 ## Fixture and approved-work probes
@@ -24,4 +24,4 @@ Permission, rate-limit, offline, schema, configuration, and transient failures a
 
 ## Verification
 
-Run `npm test`. `pr-connector.test.ts` covers pagination, duplicates, updates, deletion, transactional cursor behavior, bounded retry, permission denial, offline operation, schema drift, route/scope/repository enforcement, and a no-network fixture run.
+Run `npm test`. `pr-connector.test.ts` covers pagination, duplicates, updates, deletion, transactional cursor behavior, bounded retry, permission denial, offline operation, schema drift, route/scope/repository/source-origin enforcement, canonical URL validation, and a no-network fixture run.
