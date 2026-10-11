@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "classification": "synthetic",
   "description": "Synthetic Slack public-channel pages for pagination, update, delete, and review proposals.",
   "pages": [
     {
