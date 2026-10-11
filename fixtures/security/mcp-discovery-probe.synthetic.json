@@ -5,7 +5,7 @@
   "probe": {
     "transport": "UNVERIFIED",
     "authentication": "UNVERIFIED",
-    "requestedCapabilities": ["tools/list", "resources/list"],
+    "requestedCapabilities": ["tools/list"],
     "requestedScopes": ["read:pull-requests"],
     "prohibitedOperations": ["create", "update", "delete", "comment", "merge", "send", "admin"],
     "requestLogPolicy": "Metadata only: endpoint class, tool name, outcome, duration, retry count and schema fingerprint. Never log request/response bodies, headers, tokens, source excerpts or prompts."
