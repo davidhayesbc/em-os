@@ -112,8 +112,12 @@ test("SqliteReviewQueueStore persists calendar and jira proposals, cursors and t
     assert.equal((storage.db.prepare("SELECT count(*) n FROM review_queue_proposals WHERE kind='calendar-follow-up'").get() as {n:number}).n, 1);
     assert.equal((storage.db.prepare("SELECT count(*) n FROM review_queue_proposals WHERE kind='jira-action'").get() as {n:number}).n, 1);
     assert.equal((storage.db.prepare("SELECT count(*) n FROM deletion_tombstones WHERE provider='calendar'").get() as {n:number}).n, 1);
-    const jiraProposal = storage.db.prepare("SELECT id FROM review_queue_proposals WHERE kind='jira-action'").get() as {id:string};
+    const calendarProposal = storage.db.prepare("SELECT id FROM review_queue_proposals WHERE kind='calendar-follow-up'").get() as {id:string};
+    const jiraProposal = storage.db.prepare("SELECT id, source_context_json FROM review_queue_proposals WHERE kind='jira-action'").get() as {id:string;source_context_json:string};
     assert.ok(jiraProposal.id);
     assert.equal((storage.db.prepare("SELECT count(*) n FROM review_queue_proposals WHERE id=?").get(jiraProposal.id) as {n:number}).n, 1);
+    const context = JSON.parse(jiraProposal.source_context_json) as {owner?:{sourceIdentity:string};dedupSuggestions:string[]};
+    assert.equal(context.owner?.sourceIdentity, "alex@example.invalid");
+    assert.deepEqual(context.dedupSuggestions, [calendarProposal.id]);
   } finally { storage.close(); }
 });

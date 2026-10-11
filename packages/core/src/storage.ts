@@ -7,6 +7,10 @@ import type { PullRequestRecord, Storage } from "./contracts.js";
 export const STORAGE_EXPORT_VERSION = 1 as const;
 const ISO_UTC = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 
+function normalizeReviewTitle(value: string): string {
+ return value.toLowerCase().replace(/^[A-Z][A-Z0-9]+-\d+:\s*/i, "").replace(/\W+/g, " ").trim();
+}
+
 // Byte-for-byte schema shipped by commit 89c24b8d. Never edit this fixture;
 // append a forward migration instead so stamped databases are not stranded.
 export const HISTORICAL_V1_SCHEMA_SQL = `
@@ -256,6 +260,7 @@ export class SqliteStorage implements Storage {
   this.db.function("em_review_actor",()=>this.#reviewWrite?.mode==="transition"?this.#reviewWrite.actor:"");
   this.db.function("em_review_reason",()=>this.#reviewWrite?.mode==="transition"?this.#reviewWrite.reason:"");
   this.db.function("em_review_changed_at",()=>this.#reviewWrite?.mode==="transition"?this.#reviewWrite.changedAt:"");
+  this.db.function("em_normalize_review_title",(value)=>normalizeReviewTitle(String(value)));
   this.db.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000");
  }
  async initialize(): Promise<void> {
@@ -349,8 +354,8 @@ export class SqliteStorage implements Storage {
     const row=db.prepare("SELECT cursor FROM sync_cursors WHERE connector=? AND scope=?").get(connector,scope) as {cursor:string|null}|undefined;
     return row?.cursor??undefined;
    },
-   findSimilarProposals(provider:string, normalizedTitle:string, occurredAt:string):readonly string[] {
-    const rows=db.prepare(`SELECT p.id FROM review_queue_proposals p INNER JOIN source_records s ON s.id=p.source_record_id WHERE p.review_state='proposed' AND s.provider=? AND lower(p.description)=? AND abs(strftime('%s',p.occurred_at)-strftime('%s',?)) <= 7*24*60*60`).all(provider,normalizedTitle,occurredAt) as {id:string}[];
+   findSimilarProposals(_provider:string, normalizedTitle:string, occurredAt:string):readonly string[] {
+    const rows=db.prepare(`SELECT p.id FROM review_queue_proposals p INNER JOIN source_records s ON s.id=p.source_record_id WHERE p.review_state='proposed' AND em_normalize_review_title(p.description)=? AND abs(strftime('%s',p.occurred_at)-strftime('%s',?)) <= 7*24*60*60`).all(normalizedTitle,occurredAt) as {id:string}[];
     return rows.map(r=>r.id);
    },
    commitAdapterBatch(batch:unknown):void {
@@ -363,8 +368,7 @@ export class SqliteStorage implements Storage {
      const proposalSql=`INSERT INTO review_queue_proposals(id,kind,description,source_record_id,source_context_json,source_links_json,occurred_at,retention_until)
       VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,description=excluded.description,source_context_json=excluded.source_context_json,source_links_json=excluded.source_links_json,occurred_at=excluded.occurred_at,retention_until=excluded.retention_until,updated_at=${ISO} WHERE review_queue_proposals.review_state='proposed'`;
      const proposalStmt=db.prepare(proposalSql);
-     const dedupSql=`INSERT INTO review_queue_proposals(id,kind,description,source_record_id,source_context_json,source_links_json,occurred_at,retention_until) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=${ISO} WHERE review_queue_proposals.review_state='proposed'`;
-     const dedupStmt=db.prepare(dedupSql);
+
      const isTombstoned=db.prepare("SELECT 1 tombstoned FROM deletion_tombstones WHERE provider=? AND source_id=?");
      const isDeleted=db.prepare("SELECT deleted_at FROM source_records WHERE provider=? AND source_id=?");
      for(const proposal of b.proposals) {
@@ -373,8 +377,7 @@ export class SqliteStorage implements Storage {
       const existingDeleted=(isDeleted.get(proposal.provider,proposal.sourceId) as {deleted_at?:string|null}|undefined)?.deleted_at;
       if(existingTombstone || existingDeleted) continue;
       sourceStmt.run(recordId,proposal.provider,proposal.sourceId,proposal.sourceUrl,proposal.occurredAt,proposal.observedAt,proposal.title,`sha256:${proposal.id}`,proposal.provider,proposal.observedAt,proposal.retentionUntil);
-      proposalStmt.run(proposal.id,proposal.kind,proposal.title,recordId,JSON.stringify({owner:proposal.owner}),JSON.stringify(proposal.sourceLinks),proposal.occurredAt,proposal.retentionUntil);
-      for(const suggestion of proposal.dedupSuggestions) if (suggestion !== proposal.id) dedupStmt.run(suggestion,proposal.kind,proposal.title,recordId,JSON.stringify({owner:proposal.owner}),JSON.stringify(proposal.sourceLinks),proposal.occurredAt,proposal.retentionUntil);
+      proposalStmt.run(proposal.id,proposal.kind,proposal.title,recordId,JSON.stringify({owner:proposal.owner,dedupSuggestions:proposal.dedupSuggestions}),JSON.stringify(proposal.sourceLinks),proposal.occurredAt,proposal.retentionUntil);
      }
      for(const deletion of b.deletions) {
       const row=db.prepare("SELECT id,content_hash FROM source_records WHERE provider=? AND source_id=?").get(deletion.provider,deletion.sourceId) as {id:string;content_hash:string}|undefined;
