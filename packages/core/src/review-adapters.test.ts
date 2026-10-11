@@ -91,7 +91,7 @@ test("updates are stable by provider identity and retention removes expired prop
 test("non-https and userinfo source links fail closed with field-named errors", async () => {
   const store = new InMemoryReviewQueueStore();
   await assert.rejects(() => new CalendarReviewAdapter(baseConfig, async() => ({items:[{id:"bad-cal",calendarId:"team-calendar",title:"Bad",htmlLink:"http://calendar.example.invalid/bad",start:"2026-11-01T00:00:00Z",updatedAt:"2026-11-01T00:00:00Z"}],observedAt:"2026-11-01T00:00:00Z"}), store).sync("team-calendar"), /calendar source URL must use https/);
-  await assert.rejects(() => new JiraReviewAdapter({...baseConfig,allowedScopes:["ENG"]}, async() => ({items:[{id:"bad-jira",projectKey:"ENG",key:"ENG-2",summary:"Bad",browseUrl:"https://user:pass@jira.example.invalid/browse/ENG-2",updatedAt:"2026-11-01T00:00:00Z"}],observedAt:"2026-11-01T00:00:00Z"}), store).sync("ENG"), /Jira source URL must not contain userinfo/);
+  await assert.rejects(() => new JiraReviewAdapter({...baseConfig,allowedScopes:["ENG"]}, async() => ({items:[{id:"bad-jira",projectKey:"ENG",key:"ENG-2",summary:"Bad",browseUrl:"https://user:pass@example.invalid/browse/ENG-2",updatedAt:"2026-11-01T00:00:00Z"}],observedAt:"2026-11-01T00:00:00Z"}), store).sync("ENG"), /Jira source URL must not contain userinfo/);
   await assert.rejects(() => new CalendarReviewAdapter(baseConfig, async() => ({items:[{id:"ugly-cal",calendarId:"team-calendar",title:"Ugly",htmlLink:"not a url",start:"2026-11-01T00:00:00Z",updatedAt:"2026-11-01T00:00:00Z"}],observedAt:"2026-11-01T00:00:00Z"}), store).sync("team-calendar"), /calendar source URL must be an https URL/);
 });
 
