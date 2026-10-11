@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { homedir, platform as processPlatform } from "node:os";
 import { posix, win32 } from "node:path";
 import type { AppSettings } from "./contracts";
 
@@ -8,7 +8,9 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
   staleDataHours: 6,
 });
 
-export function appDataDirectory(platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+export type Platform = "aix" | "android" | "darwin" | "freebsd" | "haiku" | "linux" | "openbsd" | "sunos" | "win32" | "cygwin" | "netbsd" | "posix";
+
+export function appDataDirectory(platform: Platform = processPlatform() as Platform, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
   const paths = platform === "win32" ? win32 : posix;
   if (env.EM_OS_DATA_DIR) return paths.resolve(env.EM_OS_DATA_DIR);
   if (platform === "darwin") return paths.join(home, "Library", "Application Support", "EM OS");
@@ -26,8 +28,8 @@ export interface LocalPaths {
   logsDir: string;
 }
 
-export function localPaths(dataDirectory = appDataDirectory()): LocalPaths {
-  const paths = process.platform === "win32" ? win32 : posix;
+export function localPaths(dataDirectory = appDataDirectory(), platform: Platform = processPlatform() as Platform): LocalPaths {
+  const paths = platform === "win32" ? win32 : posix;
   return {
     dataDirectory,
     dbDir: paths.join(dataDirectory, "db"),

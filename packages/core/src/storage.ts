@@ -188,7 +188,6 @@ export interface EncryptedBackupManifest {
   exportedAt: string;
   schemaVersion: number;
   integrity: string; // sha256 over the plaintext export JSON
-  salt: string;      // base64 random bytes used for key derivation demo/placeholder
 }
 
 export interface EncryptedBackupEnvelope {
@@ -252,7 +251,7 @@ export class SqliteStorage implements Storage {
    this.db.prepare(`INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,content_hash,classification,last_seen_at)
     SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
     ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,observed_at=excluded.observed_at,last_seen_at=excluded.last_seen_at,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`)
-    .run(id,record.provider,sourceId,record.url,when,sourceId,"work",when,record.provider,sourceId);
+    .run(id,record.provider,sourceId,record.url,when,sourceId,"internal",when,record.provider,sourceId);
    this.db.prepare(`INSERT INTO prs(id,source_record_id,provider,repository,source_id,author,title,url,updated_at,is_draft,ci_status,review_requested,last_relevant_activity_at)
     SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
       AND EXISTS(SELECT 1 FROM source_records WHERE id=? AND deleted_at IS NULL)
@@ -315,13 +314,12 @@ export class SqliteStorage implements Storage {
   const plaintext=JSON.stringify(this.exportData());
   const integrity=sha256Hex(plaintext);
   const schemaRow=this.db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as {version:number}|undefined;
-  const salt=b64(randomBytes(16));
   const iv=randomBytes(12);
   const derived=deriveKey(key);
   const cipher=createCipheriv("aes-256-gcm",derived,iv);
   const ciphertext=Buffer.concat([cipher.update(plaintext,"utf8"),cipher.final()]);
   const authTag=cipher.getAuthTag();
-  const manifest:EncryptedBackupManifest={format:"em-os-encrypted-backup",version:1,exportedAt:utc(new Date().toISOString()),schemaVersion:schemaRow?.version??0,integrity,salt};
+  const manifest:EncryptedBackupManifest={format:"em-os-encrypted-backup",version:1,exportedAt:utc(new Date().toISOString()),schemaVersion:schemaRow?.version??0,integrity};
   const envelope:EncryptedBackupEnvelope={manifest,iv:b64(iv),ciphertext:b64(ciphertext),authTag:b64(authTag)};
   await mkdir(dirname(path),{recursive:true});
   await writeFile(path,JSON.stringify(envelope,null,2),{encoding:"utf8",mode:0o600});
@@ -341,7 +339,10 @@ export class SqliteStorage implements Storage {
   const expected=envelope.manifest.integrity;
   if(!expected || digest.length!==expected.length || !timingSafeEqual(Buffer.from(digest),Buffer.from(expected))) throw new Error("backup integrity check failed: tampered payload");
   const data=JSON.parse(plaintext) as StorageExport;
-  const storage=new SqliteStorage(destinationDbPath); await storage.initialize(); storage.importData(data); return storage;
+  const storage=new SqliteStorage(destinationDbPath); await storage.initialize();
+  const dbVersion=(storage.db.prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").get() as {version:number}|undefined)?.version??0;
+  if(envelope.manifest.schemaVersion !== dbVersion) throw new Error(`schema version mismatch: backup=${envelope.manifest.schemaVersion}, db=${dbVersion}`);
+  storage.importData(data); return storage;
  }
  /** Raw SQLite copy; not encrypted. */
  async backupTo(destination:string):Promise<void>{await this.backupToRawSQLite(destination);}
