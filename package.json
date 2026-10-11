@@ -10,6 +10,7 @@
     "check": "tsc -b --pretty false",
     "test": "npm run build && node --test packages/core/dist/**/*.test.js",
     "demo": "npm run build && node packages/cli/dist/main.js attention --fixture fixtures/prs.synthetic.json --now 2026-10-09T09:00:00.000Z",
+    "backup:drill": "node scripts/backup-restore-drill.mjs",
     "scan:repo": "node scripts/scan-repo-safety.mjs",
     "ci": "npm run check && npm test && npm run demo && npm run scan:repo"
   },
