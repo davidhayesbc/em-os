@@ -36,7 +36,12 @@ function fixtureFailures(path, text) {
   try {
     const parsed = JSON.parse(text);
     const serialized = JSON.stringify(parsed);
-    const markedSynthetic = parsed?.classification === 'synthetic' || /"provider":"synthetic-[^"]+"/.test(serialized);
+    const idFields = [parsed?.recordId, parsed?.id, parsed?.sourceId].filter((v) => typeof v === 'string');
+    const hasSyntheticIdPrefix = idFields.some((v) => v.startsWith('synthetic:'));
+    const hasSyntheticFlag = parsed?.synthetic === true || parsed?._synthetic === true;
+    const hasClassificationSynthetic = parsed?.classification === 'synthetic';
+    const hasSyntheticProvider = /"provider":"synthetic-[^"]+"/.test(serialized);
+    const markedSynthetic = hasSyntheticIdPrefix || hasSyntheticFlag || hasClassificationSynthetic || hasSyntheticProvider;
     if (!markedSynthetic) failures.push({ file: path, rule: 'fixture.synthetic-marker' });
   } catch {
     failures.push({ file: path, rule: 'fixture.valid-json' });
