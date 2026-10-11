@@ -11,7 +11,9 @@ function argument(name: string): string | undefined {
 async function main(): Promise<void> {
   const command = process.argv[2];
   if (command === "paths") {
-    console.log(JSON.stringify(localPaths(), null, 2));
+    const paths = localPaths();
+    console.log(JSON.stringify({ ...paths, database: "REDACTED" }, null, 2));
+    console.log(`Database path: ${paths.database}`);
     return;
   }
   if (command !== "attention") {
