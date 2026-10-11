@@ -13,8 +13,11 @@
     "backup:drill": "node scripts/backup-restore-drill.mjs",
     "scan:repo": "node scripts/scan-repo-safety.mjs",
     "verify:release": "node scripts/verify-release.mjs",
-    "release:check": "npm run clean && npm run check && npm test && npm run demo && npm run backup:drill && npm run verify:release && npm run scan:repo",
-    "ci": "npm run check && npm test && npm run demo && npm run backup:drill && npm run verify:release && npm run scan:repo"
+    "security:discovery": "node scripts/validate-security-discovery.mjs",
+    "security:repository": "node scripts/validate-repository-safety.mjs",
+    "security:repository:test": "node scripts/validate-repository-safety.mjs --self-test",
+    "release:check": "npm run clean && npm run check && npm test && npm run demo && npm run backup:drill && npm run verify:release && npm run scan:repo && npm run security:repository:test && npm run security:repository",
+    "ci": "npm run check && npm test && npm run security:repository:test && npm run security:repository && npm run demo && npm run backup:drill && npm run verify:release && npm run scan:repo"
   },
   "devDependencies": {
     "@types/node": "^24.7.0",

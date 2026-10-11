@@ -17,10 +17,9 @@ function parseEncryptedBackupEnvelope(serialized:string):EncryptedBackupEnvelope
  }
 }
 
-const migrations = [
-  {
-    version: 1,
-    sql: `
+// Byte-for-byte schema shipped by commit 89c24b8d. Never edit this fixture;
+// append a forward migration instead so stamped databases are not stranded.
+export const HISTORICAL_V1_SCHEMA_SQL = `
 CREATE TABLE people (
  id TEXT PRIMARY KEY, display_name TEXT NOT NULL, role TEXT,
  identities_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(identities_json)),
@@ -134,18 +133,21 @@ CREATE TABLE deletion_tombstones (
  provider TEXT NOT NULL, source_id TEXT NOT NULL, deleted_at TEXT NOT NULL, reason TEXT NOT NULL,
  content_hash TEXT NOT NULL, PRIMARY KEY(provider,source_id)
 ) STRICT;
-`},
+`;
+
+export const migrations = [
+  { version: 1, sql: HISTORICAL_V1_SCHEMA_SQL },
   {
     version: 2,
     sql: `
-DROP TRIGGER action_review_guard;
-DROP TRIGGER evidence_review_guard;
-DROP TRIGGER draft_review_guard;
-DROP TRIGGER action_items_initial_review_guard;
-DROP TRIGGER evidence_initial_review_guard;
-DROP TRIGGER drafts_initial_review_guard;
-DROP TRIGGER review_audit_no_update;
-DROP TRIGGER review_audit_no_delete;
+DROP TRIGGER IF EXISTS action_review_guard;
+DROP TRIGGER IF EXISTS evidence_review_guard;
+DROP TRIGGER IF EXISTS draft_review_guard;
+DROP TRIGGER IF EXISTS action_items_initial_review_guard;
+DROP TRIGGER IF EXISTS evidence_initial_review_guard;
+DROP TRIGGER IF EXISTS drafts_initial_review_guard;
+DROP TRIGGER IF EXISTS review_audit_no_update;
+DROP TRIGGER IF EXISTS review_audit_no_delete;
 CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
 CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' AND em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
@@ -173,16 +175,45 @@ END;
 CREATE TRIGGER draft_review_audit AFTER UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state AND em_review_write_mode()='transition' BEGIN
  INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('draft',old.id,old.reviewer_state,new.reviewer_state,em_review_actor(),em_review_reason(),em_review_changed_at());
 END;
-ALTER TABLE deletion_tombstones RENAME TO deletion_tombstones_v1;
+`},
+  {
+    version: 3,
+    sql: `
+-- Upgrade objects added after the immutable v1/v2 migrations shipped.
+DROP TRIGGER IF EXISTS source_records_ad;
+DROP TRIGGER IF EXISTS source_records_au;
+DROP TRIGGER IF EXISTS review_audit_no_update;
+DROP TRIGGER IF EXISTS review_audit_no_delete;
+DROP TRIGGER IF EXISTS review_audit_no_insert;
+CREATE TRIGGER source_records_ad AFTER DELETE ON source_records WHEN old.deleted_at IS NULL BEGIN
+ INSERT INTO source_records_fts(source_records_fts,rowid,excerpt) VALUES('delete',old.rowid,old.excerpt);
+END;
+CREATE TRIGGER source_records_au AFTER UPDATE OF excerpt,deleted_at ON source_records BEGIN
+ INSERT INTO source_records_fts(source_records_fts,rowid,excerpt) SELECT 'delete',old.rowid,old.excerpt WHERE old.deleted_at IS NULL;
+ INSERT INTO source_records_fts(rowid,excerpt) SELECT new.rowid,new.excerpt WHERE new.deleted_at IS NULL;
+END;
+CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit WHEN em_review_write_mode() <> 'import' BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+CREATE TRIGGER review_audit_no_insert BEFORE INSERT ON review_audit WHEN em_review_write_mode() NOT IN ('transition','import') BEGIN SELECT RAISE(ABORT,'review audit may only be written by storage API'); END;
+CREATE INDEX IF NOT EXISTS prs_source_record_idx ON prs(source_record_id);
+CREATE INDEX IF NOT EXISTS action_items_owner_idx ON action_items(owner_person_id);
+CREATE INDEX IF NOT EXISTS action_item_sources_source_idx ON action_item_sources(source_record_id);
+CREATE INDEX IF NOT EXISTS evidence_subject_idx ON evidence(subject_person_id);
+CREATE INDEX IF NOT EXISTS evidence_supersedes_idx ON evidence(supersedes_id);
+CREATE INDEX IF NOT EXISTS evidence_sources_source_idx ON evidence_sources(source_record_id);
+CREATE INDEX IF NOT EXISTS draft_sources_source_idx ON draft_sources(source_record_id);
+CREATE INDEX IF NOT EXISTS cache_entries_source_idx ON cache_entries(source_record_id);
+ALTER TABLE deletion_tombstones RENAME TO deletion_tombstones_pre_v3;
 CREATE TABLE deletion_tombstones (
  provider TEXT NOT NULL, source_id TEXT NOT NULL, deleted_at TEXT NOT NULL, reason TEXT NOT NULL,
  content_hash TEXT, PRIMARY KEY(provider,source_id)
 ) STRICT;
-INSERT INTO deletion_tombstones SELECT * FROM deletion_tombstones_v1;
-DROP TABLE deletion_tombstones_v1;
+INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash)
+ SELECT provider,source_id,deleted_at,reason,content_hash FROM deletion_tombstones_pre_v3;
+DROP TABLE deletion_tombstones_pre_v3;
 `},
   {
-    version: 3,
+    version: 4,
     sql: `
 CREATE TABLE review_queue_proposals (
  id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('action','decision')),
@@ -217,7 +248,9 @@ const clearTables = [...exportTables, "cache_entries"] as const;
 function utc(value: string): string {
  const date = new Date(value);
  if (!Number.isFinite(date.valueOf()) || !value.endsWith("Z")) throw new Error(`timestamp must be UTC ISO-8601: ${value}`);
- return date.toISOString();
+ const iso = date.toISOString();
+ if (value !== iso) throw new Error(`timestamp must be normalised UTC ISO-8601: ${value}`);
+ return iso;
 }
 
 export class SqliteStorage implements Storage {
@@ -233,11 +266,15 @@ export class SqliteStorage implements Storage {
  }
  async initialize(): Promise<void> {
   this.db.exec("CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+  const currentVersion = migrations.length > 0 ? migrations[migrations.length - 1].version : 0;
+  const maxRow = this.db.prepare("SELECT COALESCE(MAX(version),0) version FROM schema_migrations").get() as {version:number};
+  if (maxRow.version > currentVersion) throw new Error(`database schema version ${maxRow.version} is newer than supported version ${currentVersion}; open with a newer release first`);
   const applied = new Set((this.db.prepare("SELECT version FROM schema_migrations").all() as {version:number}[]).map(x=>x.version));
   for (const migration of migrations) if (!applied.has(migration.version)) this.transaction(() => {
    this.db.exec(migration.sql);
    this.db.prepare("INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)").run(migration.version,new Date().toISOString());
   });
+  this.db.exec(`PRAGMA user_version=${currentVersion}`);
  }
  close(): void { this.db.close(); }
  private transaction<T>(fn:()=>T): T {
@@ -318,7 +355,7 @@ export class SqliteStorage implements Storage {
    this.db.prepare(`INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,content_hash,classification,last_seen_at)
     SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
     ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,observed_at=excluded.observed_at,last_seen_at=excluded.last_seen_at,updated_at=${ISO_UTC} WHERE source_records.deleted_at IS NULL`)
-    .run(id,record.provider,sourceId,record.url,when,sourceId,"internal",when,record.provider,sourceId);
+     .run(id,record.provider,sourceId,record.url,when,sourceId,"work",when,record.provider,sourceId);
    this.db.prepare(`INSERT INTO prs(id,source_record_id,provider,repository,source_id,author,title,url,updated_at,is_draft,ci_status,review_requested,last_relevant_activity_at)
     SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM deletion_tombstones WHERE provider=? AND source_id=?)
       AND EXISTS(SELECT 1 FROM source_records WHERE id=? AND deleted_at IS NULL)
@@ -332,6 +369,7 @@ export class SqliteStorage implements Storage {
  }
  transition(entityType:"action_item"|"evidence"|"draft", entityId:string, toState:"proposed"|"approved"|"rejected"|"superseded", actor:string, reason:string, changedAt:string): void {
   if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
+  if(toState==="proposed") throw new Error("review transition must move away from proposed");
   const config={action_item:["action_items","review_state"],evidence:["evidence","status"],draft:["drafts","reviewer_state"]} as const;
   const [table,column]=config[entityType];
   const at=utc(changedAt);
@@ -356,20 +394,82 @@ export class SqliteStorage implements Storage {
   return rows.length;
  }
  exportData(exportedAt=new Date().toISOString()): StorageExport {
-  const tables:StorageExport["tables"]={}; for(const table of exportTables) tables[table]=this.db.prepare(`SELECT * FROM ${table}`).all() as Record<string,unknown>[];
+  const tables:StorageExport["tables"]={};
+  for(const table of exportTables) {
+   // PR metadata is derived from its source. Retain the local row to enforce
+   // tombstones, but never make deleted content portable or restorable.
+   const query=table==="prs"
+    ? "SELECT p.* FROM prs p INNER JOIN source_records s ON s.id=p.source_record_id WHERE s.deleted_at IS NULL"
+    : `SELECT * FROM ${table}`;
+   tables[table]=this.db.prepare(query).all() as Record<string,unknown>[];
+  }
   return {format:"em-os-storage",version:STORAGE_EXPORT_VERSION,exportedAt:utc(exportedAt),tables};
  }
  importData(data:StorageExport): void {
   if(data.format!=="em-os-storage"||data.version!==STORAGE_EXPORT_VERSION) throw new Error("unsupported storage export");
-  // Imports are trusted full restores. Import mode deliberately bypasses review
-  // transition and append-only guards so an existing profile can be replaced.
-  this.transaction(()=>{ this.db.exec("PRAGMA defer_foreign_keys=ON"); this.#reviewWrite={mode:"import"};
+  // review transition and append-only guards are bypassed via em_review_write_mode()='import'.
+  // Invariant validation before commit is performed by #assertReviewInvariants().
+  this.transaction(()=>{
+   this.db.exec("PRAGMA defer_foreign_keys=ON"); this.#reviewWrite={mode:"import"};
    try {
-   for(const table of [...clearTables].reverse()) this.db.exec(`DELETE FROM ${table}`);
-   for(const table of exportTables) for(const row of data.tables[table]??[]) { const keys=Object.keys(row); if(!keys.length)continue; this.db.prepare(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(()=>"?").join(",")})`).run(...keys.map(k=>row[k] as never)); }
+    for(const table of [...clearTables].reverse()) this.db.exec(`DELETE FROM ${table}`);
+    for(const table of exportTables) for(const row of data.tables[table]??[]) {
+     const keys=Object.keys(row); if(!keys.length)continue;
+     this.db.prepare(`INSERT INTO ${table}(${keys.join(",")}) VALUES(${keys.map(()=>"?").join(",")})`).run(...keys.map(k=>this.#normalizeImportValue(table,k,row[k]) as never));
+    }
+    this.#assertReviewInvariants();
+    this.db.exec("INSERT INTO source_records_fts(source_records_fts) VALUES('rebuild')");
    } finally { this.#reviewWrite=undefined; }
   });
  }
+ #normalizeImportValue(table:string, column:string, value:unknown): unknown {
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value !== "string") return value;
+  if (this.#isTimestampColumn(table,column)) return utc(value);
+  return value;
+ }
+ #isTimestampColumn(table:string, column:string): boolean {
+  const timestampColumns:Record<string,Set<string>>={
+   people:new Set(["created_at","updated_at"]),
+   source_records:new Set(["occurred_at","observed_at","last_seen_at","retention_until","deleted_at","created_at","updated_at"]),
+   sync_cursors:new Set(["last_success_at","updated_at"]),
+   prs:new Set(["created_at","updated_at","merged_at","last_relevant_activity_at"]),
+   initiatives:new Set(["deadline","created_at","updated_at"]),
+   action_items:new Set(["due_at","snoozed_until","created_at","updated_at"]),
+   evidence:new Set(["observed_at","created_at","updated_at"]),
+   drafts:new Set(["generated_at","created_at","updated_at"]),
+   review_audit:new Set(["changed_at"]),
+   deletion_tombstones:new Set(["deleted_at"]),
+   cache_entries:new Set(["expires_at"]),
+  };
+  return timestampColumns[table]?.has(column)??false;
+ }
+ #assertReviewInvariants(): void {
+  const terminalStates = new Set(["approved","rejected","superseded"]);
+  const entities = [
+   ...this.db.prepare("SELECT id, 'action_item' entity_type, review_state state FROM action_items").all() as {id:string;entity_type:string;state:string}[],
+   ...this.db.prepare("SELECT id, 'evidence' entity_type, status state FROM evidence").all() as {id:string;entity_type:string;state:string}[],
+   ...this.db.prepare("SELECT id, 'draft' entity_type, reviewer_state state FROM drafts").all() as {id:string;entity_type:string;state:string}[],
+  ];
+  for (const row of entities) {
+   const audits=this.db.prepare("SELECT from_state,to_state FROM review_audit WHERE entity_type=? AND entity_id=? ORDER BY id").all(row.entity_type,row.id) as {from_state:string;to_state:string}[];
+   if (row.state==="proposed") {
+    if (audits.length) throw new Error(`import violates review invariant: ${row.entity_type} ${row.id} proposed state has audit history`);
+    continue;
+   }
+   if (!terminalStates.has(row.state)) throw new Error(`import violates review invariant: ${row.entity_type} ${row.id} has invalid state ${row.state}`);
+   if (audits.length!==1 || audits[0].from_state!=="proposed" || audits[0].to_state!==row.state)
+    throw new Error(`import violates review invariant: ${row.entity_type} ${row.id} terminal state ${row.state} requires exactly one proposed-to-${row.state} audit row`);
+  }
+  const dangling = this.db.prepare(`SELECT a.entity_type, a.entity_id FROM review_audit a
+   WHERE (a.entity_type='action_item' AND NOT EXISTS (SELECT 1 FROM action_items i WHERE i.id=a.entity_id))
+      OR (a.entity_type='evidence' AND NOT EXISTS (SELECT 1 FROM evidence e WHERE e.id=a.entity_id))
+      OR (a.entity_type='draft' AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.id=a.entity_id))`).get() as {entity_type:string;entity_id:string}|undefined;
+  if (dangling) throw new Error(`import violates review invariant: audit references missing ${dangling.entity_type} ${dangling.entity_id}`);
+ }
+ async backupToRawSQLite(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
+ static async restoreFromRawSQLite(path:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();return storage;}
 
  // Plaintext paths are dev-only and explicitly named insecure.
  async backupToDevInsecure(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}

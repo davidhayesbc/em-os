@@ -206,7 +206,7 @@ macOS arm64 and Windows x64 in the existing CI matrix.
 
 Reviewed fixtures are synthetic only and use reserved domains
 (`example.invalid`, `example.test`). Note for reviewers:
-`person@example.test` and `token=secret-value` appear only in the original
+`person@example.invalid` and `token=secret-value` appear only in the original
 union review scope, on the meeting-import line, as redaction inputs and are
 asserted to be removed from stored output.
 
