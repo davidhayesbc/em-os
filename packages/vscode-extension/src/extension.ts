@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { AttentionQueue, isSnapshotStale, type QueueChange, type QueueItem, type QueueSnapshot, syntheticOfflineSnapshot } from "./attentionQueue";
+import { AttentionQueue, effectiveItemFreshness, effectiveItemStatus, isSnapshotStale, mergeQueueSnapshot, queueItemContextValue, queueItemQuickPickLabel, type QueueChange, type QueueItem, type QueueSnapshot, syntheticOfflineSnapshot } from "./attentionQueue";
 
 const STATE_KEY = "em-os.attentionQueue.v1";
 
@@ -43,23 +43,26 @@ class QueueProvider implements vscode.TreeDataProvider<QueueNode> {
     }
 
     const data = node.item;
+    const now = new Date();
+    const freshness = effectiveItemFreshness(this.queue.snapshot, data, now);
+    const status = effectiveItemStatus(data, now);
     const item = new vscode.TreeItem(data.title, vscode.TreeItemCollapsibleState.None);
     item.id = `em-os.item.${data.id}`;
-    item.description = `${data.freshness.toUpperCase()} · ${data.status}${data.dueAt ? ` · due ${data.dueAt}` : ""}`;
+    item.description = `${freshness.toUpperCase()} · ${status}${status === "snoozed" ? ` until ${data.snoozedUntil}` : ""}${data.dueAt ? ` · due ${data.dueAt}` : ""}`;
     item.tooltip = new vscode.MarkdownString([
-      `**${data.freshness === "stale" ? "STALE — not current" : "Current"}**`,
-      `Status: ${data.status}`,
+      `**${freshness === "stale" ? "STALE — not current" : "Current"}**`,
+      `Status: ${status}${status === "snoozed" ? ` until ${data.snoozedUntil}` : ""}`,
       data.dueAt ? `Due: ${data.dueAt}` : "Due: not set",
       `Why: ${data.rationale}`,
       `Provenance: ${data.provenance}`,
       `Observed: ${data.observedAt}`,
       `Source: ${data.sourceLabel}`,
     ].join("\n\n"));
-    item.iconPath = new vscode.ThemeIcon(data.freshness === "stale" ? "warning" : "circle-large-outline");
-    item.contextValue = `em-os.queueItem.${data.status}`;
+    item.iconPath = new vscode.ThemeIcon(freshness === "stale" ? "warning" : "circle-large-outline");
+    item.contextValue = queueItemContextValue(data, now);
     item.command = { command: "em-os.openSource", title: "Open source", arguments: [node] };
     item.accessibilityInformation = {
-      label: `${data.title}. ${data.freshness}. ${data.status}. ${data.rationale}. ${data.dueAt ? `Due ${data.dueAt}` : "No due date"}. Source ${data.sourceLabel}`,
+      label: `${data.title}. ${freshness === "stale" ? "Stale, not current" : "Current"}. ${status}${status === "snoozed" ? ` until ${data.snoozedUntil}` : ""}. ${data.rationale}. ${data.dueAt ? `Due ${data.dueAt}` : "No due date"}. Provenance: ${data.provenance}. Observed: ${data.observedAt}. Source ${data.sourceLabel}`,
       role: "treeitem",
     };
     return item;
@@ -89,10 +92,22 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   };
 
+  const openSource = async (item: QueueItem): Promise<void> => {
+    try {
+      await provider.getQueue().openSource(item.id, {
+        open: async (url) => { await vscode.env.openExternal(vscode.Uri.parse(url)); },
+      });
+    } catch (error) {
+      await vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const chooseItem = async (value: unknown, title: string): Promise<QueueItem | undefined> => {
     if (isQueueNode(value)) return value.item;
-    const picked = await vscode.window.showQuickPick(provider.getQueue().visible(new Date()).map((item) => ({
-      label: `${item.freshness === "stale" ? "$(warning) STALE: " : ""}${item.title}`,
+    const queue = provider.getQueue();
+    const now = new Date();
+    const picked = await vscode.window.showQuickPick(queue.visible(now).map((item) => ({
+      label: queueItemQuickPickLabel(queue.snapshot, item, now),
       description: item.status,
       detail: `${item.rationale} · ${item.provenance}`,
       item,
@@ -103,7 +118,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("em-os.sync", async () => {
       const now = new Date();
-      const snapshot = syntheticOfflineSnapshot(now);
+      const snapshot = mergeQueueSnapshot(provider.getQueue().snapshot, syntheticOfflineSnapshot(now));
       await save(new AttentionQueue(snapshot));
       await view.reveal(provider.getChildren()[0]!, { focus: true, select: true });
       await vscode.window.showWarningMessage(snapshot.syncError ?? "Sync completed");
@@ -114,18 +129,20 @@ export function activate(context: vscode.ExtensionContext): void {
       if (first) await view.reveal(first, { focus: true, select: true });
     }),
     vscode.commands.registerCommand("em-os.whatNext", async () => {
-      const items = provider.getQueue().visible(new Date());
+      const queue = provider.getQueue();
+      const now = new Date();
+      const items = queue.visible(now);
       const selected = await vscode.window.showQuickPick(items.map((item) => ({
-        label: `${item.freshness === "stale" ? "$(warning) STALE: " : ""}${item.title}`,
+        label: queueItemQuickPickLabel(queue.snapshot, item, now),
         description: item.dueAt ? `Due ${item.dueAt}` : "No due date",
         detail: `${item.rationale} · ${item.provenance}`,
         item,
       })), { title: "EM OS: What Next", placeHolder: "Choose an item; cached items are explicitly marked stale", matchOnDetail: true });
-      if (selected) await provider.getQueue().openSource(selected.item.id, { open: async (url) => { await vscode.env.openExternal(vscode.Uri.parse(url)); } });
+      if (selected) await openSource(selected.item);
     }),
     vscode.commands.registerCommand("em-os.openSource", async (node: unknown) => {
       const item = await chooseItem(node, "EM OS: Open Source");
-      if (item) await provider.getQueue().openSource(item.id, { open: async (url) => { await vscode.env.openExternal(vscode.Uri.parse(url)); } });
+      if (item) await openSource(item);
     }),
     vscode.commands.registerCommand("em-os.confirm", async (node: unknown) => {
       const item = await chooseItem(node, "EM OS: Confirm Action");
