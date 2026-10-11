@@ -395,7 +395,15 @@ export class SqliteStorage implements Storage {
   };
  }
  exportData(exportedAt=new Date().toISOString()): StorageExport {
-  const tables:StorageExport["tables"]={}; for(const table of exportTables) tables[table]=this.db.prepare(`SELECT * FROM ${table}`).all() as Record<string,unknown>[];
+  const tables:StorageExport["tables"]={};
+  for(const table of exportTables) {
+   // PR metadata is derived from its source. Retain the local row to enforce
+   // tombstones, but never make deleted content portable or restorable.
+   const query=table==="prs"
+    ? "SELECT p.* FROM prs p INNER JOIN source_records s ON s.id=p.source_record_id WHERE s.deleted_at IS NULL"
+    : `SELECT * FROM ${table}`;
+   tables[table]=this.db.prepare(query).all() as Record<string,unknown>[];
+  }
   return {format:"em-os-storage",version:STORAGE_EXPORT_VERSION,exportedAt:utc(exportedAt),tables};
  }
  importData(data:StorageExport): void {
@@ -440,14 +448,20 @@ export class SqliteStorage implements Storage {
  }
  #assertReviewInvariants(): void {
   const terminalStates = new Set(["approved","rejected","superseded"]);
-  const terminalRows = [
-   ...this.db.prepare("SELECT id, 'action_item' entity_type, review_state state FROM action_items WHERE review_state IN ('approved','rejected','superseded')").all() as {id:string;entity_type:string;state:string}[],
-   ...this.db.prepare("SELECT id, 'evidence' entity_type, status state FROM evidence WHERE status IN ('approved','rejected','superseded')").all() as {id:string;entity_type:string;state:string}[],
-   ...this.db.prepare("SELECT id, 'draft' entity_type, reviewer_state state FROM drafts WHERE reviewer_state IN ('approved','rejected','superseded')").all() as {id:string;entity_type:string;state:string}[],
+  const entities = [
+   ...this.db.prepare("SELECT id, 'action_item' entity_type, review_state state FROM action_items").all() as {id:string;entity_type:string;state:string}[],
+   ...this.db.prepare("SELECT id, 'evidence' entity_type, status state FROM evidence").all() as {id:string;entity_type:string;state:string}[],
+   ...this.db.prepare("SELECT id, 'draft' entity_type, reviewer_state state FROM drafts").all() as {id:string;entity_type:string;state:string}[],
   ];
-  for (const row of terminalRows) {
-   const exists = this.db.prepare("SELECT 1 FROM review_audit WHERE entity_type=? AND entity_id=? AND to_state=? AND from_state='proposed' LIMIT 1").get(row.entity_type,row.id,row.state);
-   if (!exists) throw new Error(`import violates review invariant: ${row.entity_type} ${row.id} terminal state ${row.state} has no audit row from proposed`);
+  for (const row of entities) {
+   const audits=this.db.prepare("SELECT from_state,to_state FROM review_audit WHERE entity_type=? AND entity_id=? ORDER BY id").all(row.entity_type,row.id) as {from_state:string;to_state:string}[];
+   if (row.state==="proposed") {
+    if (audits.length) throw new Error(`import violates review invariant: ${row.entity_type} ${row.id} proposed state has audit history`);
+    continue;
+   }
+   if (!terminalStates.has(row.state)) throw new Error(`import violates review invariant: ${row.entity_type} ${row.id} has invalid state ${row.state}`);
+   if (audits.length!==1 || audits[0].from_state!=="proposed" || audits[0].to_state!==row.state)
+    throw new Error(`import violates review invariant: ${row.entity_type} ${row.id} terminal state ${row.state} requires exactly one proposed-to-${row.state} audit row`);
   }
   const dangling = this.db.prepare(`SELECT a.entity_type, a.entity_id FROM review_audit a
    WHERE (a.entity_type='action_item' AND NOT EXISTS (SELECT 1 FROM action_items i WHERE i.id=a.entity_id))

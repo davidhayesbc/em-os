@@ -123,14 +123,28 @@ test("versioned export/import and SQLite backup restore data, including encrypte
  await assert.rejects(SqliteStorage.restoreFromEncryptedBackup(encryptedPath,key,join(x.dir,"bad-integrity.sqlite")),/backup decryption failed|tampered payload/);
 }finally{await x.cleanup();}});
 
-test("deleted PR is excluded from listPullRequests while tombstone remains",async()=>{const x=await fixture();try{
- const pr={provider:"github",repository:"acme/api",id:"42",title:"Synthetic PR",url:"https://example.invalid/acme/api/pull/42",author:"alice",isDraft:false,reviewRequestedOfViewer:true,ciStatus:"passing" as const,updatedAt:"2026-10-09T09:00:00.000Z"};
+test("deleted PR metadata is excluded from reads and exports while live PRs round-trip",async()=>{const x=await fixture();try{
+ const pr={provider:"github",repository:"acme/api",id:"42",title:"Sensitive deleted title",url:"https://example.invalid/acme/api/pull/42",author:"alice",isDraft:false,reviewRequestedOfViewer:true,ciStatus:"passing" as const,updatedAt:"2026-10-09T09:00:00.000Z"};
  await x.store.savePullRequests([pr],record.observedAt);
+ const liveExport=x.store.exportData("2026-10-09T12:00:00.000Z");
+ assert.equal(liveExport.tables.prs.length,1);
+ const live=await fixture(); try {
+  live.store.importData(liveExport);
+  assert.equal((await live.store.listPullRequests())[0].title,"Sensitive deleted title");
+ } finally { await live.cleanup(); }
  assert.equal((await x.store.listPullRequests()).length,1);
  x.store.deleteSource("github","acme/api:42","source_deleted","2026-10-10T00:00:00.000Z");
  assert.equal((await x.store.listPullRequests()).length,0);
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM deletion_tombstones").get() as {n:number}).n,1);
- assert.equal((x.store.db.prepare("SELECT title FROM prs").get() as {title:string}).title,"Synthetic PR");
+ assert.equal((x.store.db.prepare("SELECT title FROM prs").get() as {title:string}).title,"Sensitive deleted title");
+ const deletedExport=x.store.exportData("2026-10-10T01:00:00.000Z");
+ assert.deepEqual(deletedExport.tables.prs,[]);
+ assert.doesNotMatch(JSON.stringify(deletedExport.tables.prs),/Sensitive deleted title|alice|pull\/42/);
+ const restored=await fixture(); try {
+  restored.store.importData(deletedExport);
+  assert.equal((restored.store.db.prepare("SELECT count(*) n FROM prs").get() as {n:number}).n,0);
+  assert.equal((await restored.store.listPullRequests()).length,0);
+ } finally { await restored.cleanup(); }
 }finally{await x.cleanup();}});
 
 test("timestamps reject local offsets and normalize UTC fixtures",async()=>{const x=await fixture();try{
@@ -155,7 +169,7 @@ test("import rejects terminal review states without audit",async()=>{const x=awa
  x.store.db.prepare("INSERT INTO action_items(id,description) VALUES('existing','Existing')").run();
  const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
  exported.tables.action_items.push({id:"bad",description:"bad",review_state:"approved",created_at:"2026-10-09T09:00:00.000Z",updated_at:"2026-10-09T09:00:00.000Z"});
- assert.throws(()=>x.store.importData(exported),/no audit row from proposed|must start proposed/);
+ assert.throws(()=>x.store.importData(exported),/requires exactly one proposed-to-approved audit row|must start proposed/);
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM action_items").get() as {n:number}).n,1);
  assert.equal((x.store.db.prepare("SELECT review_state state FROM action_items WHERE id='existing'").get() as {state:string}).state,"proposed");
 }finally{await x.cleanup();}});
@@ -164,6 +178,28 @@ test("import rejects audit rows with missing or inconsistent entity",async()=>{c
  const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
  exported.tables.review_audit=[{entity_type:"action_item",entity_id:"ghost",from_state:"proposed",to_state:"approved",actor:"x",reason:"x",changed_at:"2026-10-09T10:00:00.000Z"}];
  assert.throws(()=>x.store.importData(exported),/missing action_item ghost/);
+}finally{await x.cleanup();}});
+
+test("import requires exact single-transition audit history for every review entity type",async()=>{const x=await fixture();try{
+ x.store.db.prepare("INSERT INTO people(id,display_name,identities_json,identity_confirmed) VALUES('p1','Person','[]',1)").run();
+ x.store.db.prepare("INSERT INTO action_items(id,description) VALUES('a1','Action')").run();
+ x.store.db.prepare("INSERT INTO evidence(id,subject_person_id,observation,author,observed_at,sensitivity) VALUES('e1','p1','Observation','a','2026-10-09T09:00:00.000Z','private')").run();
+ x.store.db.prepare("INSERT INTO drafts(id,type,period,audience,input_record_ids_json,generated_at) VALUES('d1','weekly','2026-W41','m','[]','2026-10-09T09:00:00.000Z')").run();
+ for(const [type,id] of [["action_item","a1"],["evidence","e1"],["draft","d1"]] as const)
+  x.store.transition(type,id,"approved","manager","verified","2026-10-09T10:00:00.000Z");
+ const valid=x.store.exportData("2026-10-09T11:00:00.000Z");
+ x.store.importData(valid);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit").get() as {n:number}).n,3);
+ for(const [type,id] of [["action_item","a1"],["evidence","e1"],["draft","d1"]] as const) {
+  const forged=structuredClone(valid);
+  forged.tables.review_audit.push({entity_type:type,entity_id:id,from_state:"rejected",to_state:"approved",actor:"intruder",reason:"forged",changed_at:"2026-10-09T10:30:00.000Z"});
+  assert.throws(()=>x.store.importData(forged),/requires exactly one proposed-to-approved audit row/);
+  assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit").get() as {n:number}).n,3,"invalid import must roll back");
+ }
+ const proposedWithAudit=structuredClone(valid);
+ proposedWithAudit.tables.action_items[0].review_state="proposed";
+ assert.throws(()=>x.store.importData(proposedWithAudit),/proposed state has audit history/);
+ assert.equal((x.store.db.prepare("SELECT review_state FROM action_items WHERE id='a1'").get() as {review_state:string}).review_state,"approved");
 }finally{await x.cleanup();}});
 
 test("import normalises non-UTC timestamps and retention no longer deletes early",async()=>{const x=await fixture();try{
