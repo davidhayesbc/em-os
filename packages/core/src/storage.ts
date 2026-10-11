@@ -242,6 +242,40 @@ CREATE TRIGGER review_queue_proposals_audit_guard BEFORE UPDATE OF review_state 
  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM proposal_review_audit WHERE proposal_id=old.id AND from_state=old.review_state AND to_state=new.review_state) THEN RAISE(ABORT,'review transition requires audit') END;
 END;
 `},
+  {
+    version: 5,
+    sql: `
+-- Authorize proposal transitions through the same private connection-local
+-- context used by the other review entities.  This forward migration also
+-- repairs databases already stamped with the originally shipped v4.
+DROP TRIGGER IF EXISTS review_queue_proposals_initial_guard;
+DROP TRIGGER IF EXISTS review_queue_proposals_terminal_guard;
+DROP TRIGGER IF EXISTS review_queue_proposals_audit_guard;
+DROP TRIGGER IF EXISTS proposal_review_audit_no_update;
+DROP TRIGGER IF EXISTS proposal_review_audit_no_delete;
+CREATE TRIGGER review_queue_proposals_initial_guard BEFORE INSERT ON review_queue_proposals
+ WHEN new.review_state <> 'proposed' AND em_review_write_mode() <> 'import'
+ BEGIN SELECT RAISE(ABORT,'review queue proposals must start proposed'); END;
+CREATE TRIGGER proposal_review_audit_no_update BEFORE UPDATE ON proposal_review_audit
+ WHEN em_review_write_mode() <> 'import'
+ BEGIN SELECT RAISE(ABORT,'proposal review audit is append-only'); END;
+CREATE TRIGGER proposal_review_audit_no_delete BEFORE DELETE ON proposal_review_audit
+ WHEN em_review_write_mode() <> 'import'
+ BEGIN SELECT RAISE(ABORT,'proposal review audit is append-only'); END;
+CREATE TRIGGER proposal_review_audit_no_insert BEFORE INSERT ON proposal_review_audit
+ WHEN em_review_write_mode() NOT IN ('transition','import')
+ BEGIN SELECT RAISE(ABORT,'proposal review audit may only be written by storage API'); END;
+CREATE TRIGGER review_queue_proposals_review_guard BEFORE UPDATE OF review_state ON review_queue_proposals
+ WHEN old.review_state <> new.review_state BEGIN
+ SELECT CASE WHEN em_review_write_mode() NOT IN ('transition','import') THEN RAISE(ABORT,'proposal review transition requires storage API') END;
+ SELECT CASE WHEN old.review_state <> 'proposed' AND em_review_write_mode() <> 'import' THEN RAISE(ABORT,'terminal review state cannot transition') END;
+END;
+CREATE TRIGGER review_queue_proposals_review_audit AFTER UPDATE OF review_state ON review_queue_proposals
+ WHEN old.review_state <> new.review_state AND em_review_write_mode()='transition' BEGIN
+ INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at)
+ VALUES(old.id,old.review_state,new.review_state,em_review_actor(),em_review_reason(),em_review_changed_at());
+END;
+`},
 ] as const;
 
 export interface SourceInput {
@@ -353,8 +387,9 @@ export class SqliteStorage implements Storage {
   if(!actor.trim()||!reason.trim()) throw new Error("actor and reason are required");
   this.transaction(()=>{const row=this.db.prepare("SELECT review_state state FROM review_queue_proposals WHERE id=?").get(proposalId) as {state:string}|undefined;
    if(!row)throw new Error("proposal not found"); if(row.state!=="proposed")throw new Error(`terminal review state cannot transition: ${row.state}`);
-   const at=utc(changedAt); this.db.prepare("INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,?,?,?,?)").run(proposalId,row.state,toState,actor,reason,at);
-   this.db.prepare("UPDATE review_queue_proposals SET review_state=?,updated_at=? WHERE id=?").run(toState,at,proposalId);
+   const at=utc(changedAt); this.#reviewWrite={mode:"transition",actor,reason,changedAt:at};
+   try { this.db.prepare("UPDATE review_queue_proposals SET review_state=?,updated_at=? WHERE id=?").run(toState,at,proposalId); }
+   finally { this.#reviewWrite=undefined; }
   });
  }
  async savePullRequests(records: readonly PullRequestRecord[], observedAt: string): Promise<void> {
@@ -508,6 +543,8 @@ export class SqliteStorage implements Storage {
    evidence:new Set(["observed_at","created_at","updated_at"]),
    drafts:new Set(["generated_at","created_at","updated_at"]),
    review_audit:new Set(["changed_at"]),
+   review_queue_proposals:new Set(["occurred_at","retention_until","created_at","updated_at"]),
+   proposal_review_audit:new Set(["changed_at"]),
    deletion_tombstones:new Set(["deleted_at"]),
    cache_entries:new Set(["expires_at"]),
   };
@@ -535,6 +572,21 @@ export class SqliteStorage implements Storage {
       OR (a.entity_type='evidence' AND NOT EXISTS (SELECT 1 FROM evidence e WHERE e.id=a.entity_id))
       OR (a.entity_type='draft' AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.id=a.entity_id))`).get() as {entity_type:string;entity_id:string}|undefined;
   if (dangling) throw new Error(`import violates review invariant: audit references missing ${dangling.entity_type} ${dangling.entity_id}`);
+  const proposals=this.db.prepare("SELECT id,review_state state FROM review_queue_proposals").all() as {id:string;state:string}[];
+  for (const row of proposals) {
+   const audits=this.db.prepare("SELECT from_state,to_state FROM proposal_review_audit WHERE proposal_id=? ORDER BY id").all(row.id) as {from_state:string;to_state:string}[];
+   if (row.state==="proposed") {
+    if (audits.length) throw new Error(`import violates proposal review invariant: proposal ${row.id} proposed state has audit history`);
+    continue;
+   }
+   if (row.state!=="approved" && row.state!=="rejected")
+    throw new Error(`import violates proposal review invariant: proposal ${row.id} has invalid state ${row.state}`);
+   if (audits.length!==1 || audits[0].from_state!=="proposed" || audits[0].to_state!==row.state)
+    throw new Error(`import violates proposal review invariant: proposal ${row.id} terminal state ${row.state} requires exactly one proposed-to-${row.state} audit row`);
+  }
+  const danglingProposalAudit=this.db.prepare(`SELECT a.proposal_id FROM proposal_review_audit a
+   WHERE NOT EXISTS (SELECT 1 FROM review_queue_proposals p WHERE p.id=a.proposal_id)`).get() as {proposal_id:string}|undefined;
+  if (danglingProposalAudit) throw new Error(`import violates proposal review invariant: audit references missing proposal ${danglingProposalAudit.proposal_id}`);
  }
  async backupToRawSQLite(destination:string):Promise<void>{await mkdir(dirname(destination),{recursive:true}); await backup(this.db,destination);}
  static async restoreFromRawSQLite(path:string):Promise<SqliteStorage>{const storage=new SqliteStorage(path);await storage.initialize();return storage;}

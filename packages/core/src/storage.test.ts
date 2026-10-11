@@ -24,10 +24,10 @@ function isBase64(str:string):boolean{
 }
 
 test("empty database migrates with foreign keys and FTS5",async()=>{const x=await fixture();try{
- // v4 is the next free release-line slot: v2 hardens review writes and v3 upgrades shipped storage objects.
- assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2},{version:3},{version:4}]);
+ // v5 applies the private review-write context to proposal review transitions.
+ assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2},{version:3},{version:4},{version:5}]);
  assert.equal((x.store.db.prepare("PRAGMA foreign_keys").get() as {foreign_keys:number}).foreign_keys,1);
- assert.equal((x.store.db.prepare("PRAGMA user_version").get() as {user_version:number}).user_version,4);
+ assert.equal((x.store.db.prepare("PRAGMA user_version").get() as {user_version:number}).user_version,5);
  const schemaObjects=new Set(Array.from(x.store.db.prepare("SELECT name FROM sqlite_master").all() as {name:string}[],row=>row.name));
  assert.equal(schemaObjects.has("review_queue_proposals"),true);
  assert.equal(schemaObjects.has("proposal_review_audit"),true);
@@ -373,6 +373,49 @@ test("import over audited DB round-trips review_audit and preserves append-only 
  assert.throws(()=>x.store.db.prepare("UPDATE review_audit SET reason='tampered' WHERE entity_id='a1'").run(),/append-only/);
 }finally{await x.cleanup();}});
 
+test("proposal transitions reject direct bypasses and atomically append one audit row",async()=>{const x=await fixture();try{
+ x.store.persistSync({connector:"slack",scope:"synthetic",observedAt:record.observedAt,records:[{...record,id:"s-proposal",provider:"slack",sourceId:"C1:1"}]});
+ x.store.db.prepare("INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES('p1','action','Review me','s-proposal')").run();
+ assert.throws(()=>x.store.db.prepare("INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at) VALUES('p1','proposed','approved','intruder','bypass','2026-10-09T10:00:00.000Z')").run(),/may only be written by storage API/);
+ assert.throws(()=>x.store.db.prepare("UPDATE review_queue_proposals SET review_state='approved' WHERE id='p1'").run(),/requires storage API/);
+ x.store.transitionSlackProposal("p1","approved","manager","verified","2026-10-09T10:00:00.000Z");
+ assert.equal((x.store.db.prepare("SELECT review_state FROM review_queue_proposals WHERE id='p1'").get() as {review_state:string}).review_state,"approved");
+ assert.deepEqual({...x.store.db.prepare("SELECT proposal_id,from_state,to_state,actor,reason,changed_at FROM proposal_review_audit WHERE proposal_id='p1'").get() as Record<string,unknown>},{proposal_id:"p1",from_state:"proposed",to_state:"approved",actor:"manager",reason:"verified",changed_at:"2026-10-09T10:00:00.000Z"});
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM proposal_review_audit WHERE proposal_id='p1'").get() as {n:number}).n,1);
+ assert.throws(()=>x.store.db.prepare("UPDATE proposal_review_audit SET reason='tampered' WHERE proposal_id='p1'").run(),/append-only/);
+ assert.throws(()=>x.store.db.prepare("DELETE FROM proposal_review_audit WHERE proposal_id='p1'").run(),/append-only/);
+}finally{await x.cleanup();}});
+
+test("proposal audit history re-imports over an existing DB and guards remain active",async()=>{const x=await fixture();try{
+ x.store.persistSync({connector:"slack",scope:"synthetic",observedAt:record.observedAt,records:[{...record,id:"s-proposal",provider:"slack",sourceId:"C1:2"}]});
+ x.store.db.prepare("INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES('p1','action','Review me','s-proposal')").run();
+ x.store.transitionSlackProposal("p1","rejected","manager","not actionable","2026-10-09T10:00:00.000Z");
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ x.store.importData(exported);
+ x.store.importData(exported);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM proposal_review_audit").get() as {n:number}).n,1);
+ assert.equal((x.store.db.prepare("SELECT review_state FROM review_queue_proposals WHERE id='p1'").get() as {review_state:string}).review_state,"rejected");
+ assert.throws(()=>x.store.db.prepare("DELETE FROM proposal_review_audit").run(),/append-only/);
+}finally{await x.cleanup();}});
+
+test("proposal import invariants reject forged histories and roll back",async()=>{const x=await fixture();try{
+ x.store.persistSync({connector:"slack",scope:"synthetic",observedAt:record.observedAt,records:[{...record,id:"s-proposal",provider:"slack",sourceId:"C1:3"}]});
+ x.store.db.prepare("INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES('p1','action','Review me','s-proposal')").run();
+ x.store.transitionSlackProposal("p1","approved","manager","verified","2026-10-09T10:00:00.000Z");
+ const valid=x.store.exportData("2026-10-09T11:00:00.000Z");
+ const cases:typeof valid[]=[];
+ const missing=structuredClone(valid); missing.tables.proposal_review_audit=[]; cases.push(missing);
+ const extra=structuredClone(valid); extra.tables.proposal_review_audit.push({...extra.tables.proposal_review_audit[0],id:99,changed_at:"2026-10-09T10:01:00.000Z"}); cases.push(extra);
+ const mismatch=structuredClone(valid); mismatch.tables.proposal_review_audit[0].to_state="rejected"; cases.push(mismatch);
+ const proposed=structuredClone(valid); proposed.tables.review_queue_proposals[0].review_state="proposed"; cases.push(proposed);
+ const dangling=structuredClone(valid); dangling.tables.proposal_review_audit[0].proposal_id="ghost"; cases.push(dangling);
+ for(const forged of cases) {
+  assert.throws(()=>x.store.importData(forged),/proposal review invariant|FOREIGN KEY constraint failed/);
+  assert.equal((x.store.db.prepare("SELECT review_state FROM review_queue_proposals WHERE id='p1'").get() as {review_state:string}).review_state,"approved");
+  assert.equal((x.store.db.prepare("SELECT count(*) n FROM proposal_review_audit WHERE proposal_id='p1'").get() as {n:number}).n,1);
+ }
+}finally{await x.cleanup();}});
+
 const HISTORICAL_V2_SCHEMA_SQL = `
 DROP TRIGGER action_review_guard;
 DROP TRIGGER evidence_review_guard;
@@ -425,7 +468,7 @@ async function assertHistoricalUpgrade(version:1|2):Promise<void> {
  const store=new SqliteStorage(path);
  try {
   await store.initialize();
-  assert.deepEqual(Array.from(store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),r=>({...r})),[{version:1},{version:2},{version:3},{version:4}]);
+  assert.deepEqual(Array.from(store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),r=>({...r})),[{version:1},{version:2},{version:3},{version:4},{version:5}]);
   const trigger=(store.db.prepare("SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='source_records_ad'").get() as {sql:string}).sql;
   assert.match(trigger,/WHEN old\.deleted_at IS NULL/);
   for(const index of ["prs_source_record_idx","action_items_owner_idx","action_item_sources_source_idx","evidence_subject_idx","evidence_supersedes_idx","evidence_sources_source_idx","draft_sources_source_idx","cache_entries_source_idx"])
