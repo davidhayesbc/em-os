@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { SqliteStorage } from "./storage.js";
 
 async function fixture() {
@@ -10,11 +11,12 @@ async function fixture() {
  const store=new SqliteStorage(join(dir,"store.sqlite")); await store.initialize();
  return {dir,store,cleanup:async()=>{store.close();await rm(dir,{recursive:true,force:true});}};
 }
-const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"internal",lastSeenAt:"2026-10-09T09:00:00.000Z"};
+const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z"};
 
 test("empty database migrates with foreign keys and FTS5",async()=>{const x=await fixture();try{
- assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations").all(), row=>({...row})),[{version:1}]);
+ assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1}]);
  assert.equal((x.store.db.prepare("PRAGMA foreign_keys").get() as {foreign_keys:number}).foreign_keys,1);
+ assert.equal((x.store.db.prepare("PRAGMA user_version").get() as {user_version:number}).user_version,1);
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records_fts WHERE source_records_fts MATCH 'review'").get() as {n:number}).n,1);
 }finally{await x.cleanup();}});
@@ -44,6 +46,8 @@ test("review states require audited API transition and cannot leave terminal sta
  x.store.transition("action_item","a1","approved","manager","verified source","2026-10-09T10:00:00.000Z");
  assert.equal((x.store.db.prepare("SELECT review_state FROM action_items WHERE id='a1'").get() as {review_state:string}).review_state,"approved");
  assert.throws(()=>x.store.transition("action_item","a1","rejected","manager","changed mind","2026-10-09T11:00:00.000Z"),/terminal review state/);
+ // audit rows can still be inserted directly; the update/delete guards on review_audit are append-only,
+ // and the review update guards prevent the state change itself.
  x.store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','a1','approved','rejected','intruder','bypass','2026-10-09T11:00:00.000Z')").run();
  assert.throws(()=>x.store.db.prepare("UPDATE action_items SET review_state='rejected' WHERE id='a1'").run(),/terminal review state/);
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_audit WHERE entity_id='a1'").get() as {n:number}).n,2);
@@ -109,3 +113,82 @@ test("timestamps reject local offsets and normalize UTC fixtures",async()=>{cons
  x.store.persistSync({connector:"calendar",scope:"synthetic",observedAt:"2026-11-01T05:30:00.000Z",records:[]});
  assert.equal((x.store.db.prepare("SELECT last_success_at FROM sync_cursors").get() as {last_success_at:string}).last_success_at,"2026-11-01T05:30:00.000Z");
 }finally{await x.cleanup();}});
+
+test("import hardens FTS against tombstoned rows and re-imports over existing deletions",async()=>{const x=await fixture();try{
+ x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
+ x.store.deleteSource(record.provider,record.sourceId,"source_deleted","2026-10-10T00:00:00.000Z");
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ x.store.importData(exported);
+ x.store.importData(exported);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM deletion_tombstones").get() as {n:number}).n,1);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,1);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records_fts WHERE source_records_fts MATCH 'review'").get() as {n:number}).n,0);
+ x.store.db.exec("INSERT INTO source_records_fts(source_records_fts) VALUES('integrity-check')");
+}finally{await x.cleanup();}});
+
+test("import rejects terminal review states without audit",async()=>{const x=await fixture();try{
+ x.store.db.prepare("INSERT INTO action_items(id,description) VALUES('existing','Existing')").run();
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ exported.tables.action_items.push({id:"bad",description:"bad",review_state:"approved",created_at:"2026-10-09T09:00:00.000Z",updated_at:"2026-10-09T09:00:00.000Z"});
+ assert.throws(()=>x.store.importData(exported),/no audit row from proposed|must start proposed/);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM action_items").get() as {n:number}).n,1);
+ assert.equal((x.store.db.prepare("SELECT review_state state FROM action_items WHERE id='existing'").get() as {state:string}).state,"proposed");
+}finally{await x.cleanup();}});
+
+test("import rejects audit rows with missing or inconsistent entity",async()=>{const x=await fixture();try{
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ exported.tables.review_audit=[{entity_type:"action_item",entity_id:"ghost",from_state:"proposed",to_state:"approved",actor:"x",reason:"x",changed_at:"2026-10-09T10:00:00.000Z"}];
+ assert.throws(()=>x.store.importData(exported),/missing action_item ghost/);
+}finally{await x.cleanup();}});
+
+test("import normalises non-UTC timestamps and retention no longer deletes early",async()=>{const x=await fixture();try{
+ x.store.persistSync({connector:"github",scope:"acme/api",observedAt:record.observedAt,records:[{...record,retentionUntil:"2026-10-09T13:00:00.000Z"}]});
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ exported.tables.source_records[0].retention_until="2026-10-09T09:00:00-04:00";
+ assert.throws(()=>x.store.importData(exported),/must be UTC/);
+ exported.tables.source_records[0].retention_until="2026-10-09T13:00:00.000Z";
+ x.store.importData(exported);
+ assert.equal((x.store.db.prepare("SELECT retention_until FROM source_records").get() as {retention_until:string}).retention_until,"2026-10-09T13:00:00.000Z");
+ assert.equal(x.store.applyRetention("2026-10-09T11:00:00.000Z"),0);
+ assert.equal(x.store.applyRetention("2026-10-09T15:00:00.000Z"),1);
+}finally{await x.cleanup();}});
+
+test("full export fixture round-trips every table and FTS is searchable after restore",async()=>{const x=await fixture();try{
+ const observed="2026-10-09T09:00:00.000Z";
+ x.store.db.prepare("INSERT INTO people(id,display_name,identities_json,identity_confirmed) VALUES('p1','Person','[]',1)").run();
+ x.store.db.prepare("INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,excerpt,content_hash,classification,last_seen_at,retention_until) VALUES('s1','github','g/1','https://example.invalid/1',?,'retained excerpt','h1','work',?,?)").run(observed,observed,"2026-10-12T00:00:00.000Z");
+ x.store.db.prepare("INSERT INTO sync_cursors(connector,scope,cursor,watermark,last_success_at,fetched_count) VALUES('github','g','c1','w1',?,5)").run(observed);
+ x.store.db.prepare("INSERT INTO prs(id,source_record_id,provider,repository,source_id,author,title,url,updated_at,is_draft,ci_status,review_requested,last_relevant_activity_at) VALUES('pr1','s1','github','g','1','a','T','https://example.invalid/1',?,0,'passing',1,?)").run(observed,observed);
+ x.store.db.prepare("INSERT INTO initiatives(id,title,deadline) VALUES('i1','Initiative','2026-10-31T00:00:00.000Z')").run();
+ x.store.db.prepare("INSERT INTO action_items(id,description,owner_person_id) VALUES('ai1','Action','p1')").run();
+ x.store.transition("action_item","ai1","approved","manager","verified",observed);
+ x.store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','ai1','proposed','approved','manager','verified',?)").run(observed);
+ x.store.db.prepare("INSERT INTO action_item_sources(action_item_id,source_record_id) VALUES('ai1','s1')").run();
+ x.store.db.prepare("INSERT INTO evidence(id,subject_person_id,observation,author,observed_at,sensitivity) VALUES('e1','p1','Observation','manager',?,'private')").run(observed);
+ x.store.db.prepare("INSERT INTO evidence_sources(evidence_id,source_record_id) VALUES('e1','s1')").run();
+ x.store.db.prepare("INSERT INTO drafts(id,type,period,audience,input_record_ids_json,generated_at) VALUES('d1','weekly','2026-W41','manager','[\"s1\"]',?)").run(observed);
+ x.store.db.prepare("INSERT INTO draft_sources(draft_id,source_record_id) VALUES('d1','s1')").run();
+ x.store.db.prepare("INSERT INTO cache_entries(cache_key,source_record_id,value) VALUES('k','s1','v')").run();
+ const exported=x.store.exportData("2026-10-09T12:00:00.000Z");
+ const exportPath=join(x.dir,"export.json"); await writeFile(exportPath,JSON.stringify(exported,null,2),{encoding:"utf8",mode:0o600});
+ const restored=await SqliteStorage.restoreFromExport(join(x.dir,"roundtrip.sqlite"),exportPath);
+ try {
+  const equalize=(rows:Record<string,unknown>[])=>rows.map(r=>Object.fromEntries(Object.entries(r).sort(([a],[b])=>a.localeCompare(b))));
+  for (const table of ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","deletion_tombstones"]) {
+   const before=equalize(x.store.db.prepare(`SELECT * FROM ${table}`).all() as Record<string,unknown>[]);
+   const after=equalize(restored.db.prepare(`SELECT * FROM ${table}`).all() as Record<string,unknown>[]);
+   assert.deepEqual(after,before,`table ${table} differs after import`);
+  }
+  assert.equal((restored.db.prepare("SELECT count(*) n FROM cache_entries").get() as {n:number}).n,0);
+  assert.equal((restored.db.prepare("SELECT count(*) n FROM source_records_fts WHERE source_records_fts MATCH 'retained'").get() as {n:number}).n,1);
+ } finally { restored.close(); }
+}finally{await x.cleanup();}});
+
+test("newer schema database is rejected and user_version is set",async()=>{
+ const dir=await mkdtemp(join(tmpdir(),"em-os-storage-newer-")); const path=join(dir,"store.sqlite"); const db=new DatabaseSync(path);
+ try { db.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(99,'2026-10-09T09:00:00.000Z');"); } finally { db.close(); }
+ const s=new SqliteStorage(path);
+ try {
+  await assert.rejects(()=>s.initialize(),/schema version 99 is newer than supported/);
+ } finally { s.close(); await rm(dir,{recursive:true,force:true}); }
+});
