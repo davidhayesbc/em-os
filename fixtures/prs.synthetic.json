@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "fetchedAt": "2026-10-09T08:55:00.000Z",
+  "prs": [
+    {
+      "provider": "synthetic-git",
+      "repository": "acme/nebula",
+      "id": "42",
+      "title": "Add lunar cache",
+      "url": "https://example.invalid/acme/nebula/pull/42",
+      "author": "Morgan Example",
+      "isDraft": false,
+      "reviewRequestedOfViewer": true,
+      "ciStatus": "passing",
+      "updatedAt": "2026-10-09T08:45:00.000Z"
+    },
+    {
+      "provider": "synthetic-git",
+      "repository": "acme/orbit",
+      "id": "17",
+      "title": "Harden telemetry parser",
+      "url": "https://example.invalid/acme/orbit/pull/17",
+      "author": "Riley Example",
+      "isDraft": false,
+      "reviewRequestedOfViewer": false,
+      "ciStatus": "failing",
+      "ciUpdatedAt": "2026-10-07T06:00:00.000Z",
+      "updatedAt": "2026-10-07T06:00:00.000Z"
+    },
+    {
+      "provider": "synthetic-git",
+      "repository": "acme/orbit",
+      "id": "18",
+      "title": "Explore experimental renderer",
+      "url": "https://example.invalid/acme/orbit/pull/18",
+      "author": "Casey Example",
+      "isDraft": true,
+      "reviewRequestedOfViewer": true,
+      "ciStatus": "failing",
+      "ciUpdatedAt": "2026-10-01T06:00:00.000Z",
+      "updatedAt": "2026-10-01T06:00:00.000Z"
+    }
+  ]
+}

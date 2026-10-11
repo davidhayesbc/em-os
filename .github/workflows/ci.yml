@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS-arm64
+            expected_arch: arm64
+          - os: windows-latest
+            label: Windows-x64
+            expected_arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify runner architecture
+        shell: bash
+        run: node -e "if(process.arch !== '${{ matrix.expected_arch }}') { throw new Error('Expected ${{ matrix.expected_arch }}, got '+process.arch) }"
+      - run: npm ci
+      - run: npm run ci
