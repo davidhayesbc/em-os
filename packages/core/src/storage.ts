@@ -112,7 +112,7 @@ CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items
 END;
 CREATE TRIGGER evidence_review_guard BEFORE UPDATE OF status ON evidence WHEN old.status <> new.status BEGIN
  SELECT CASE WHEN old.status <> 'proposed' THEN RAISE(ABORT,'terminal review state cannot transition') END;
- SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM review_audit WHERE entity_type='evidence' AND entity_id=old.id AND from_state=old.status AND to_state=new.status) THEN RAISE(ABORT,'review transition requires audit') END;
+ SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM review_audit WHERE entity_type='evidence' AND entity_id=old.id AND from_state=old.status AND to_state=new.review_state) THEN RAISE(ABORT,'review transition requires audit') END;
 END;
 CREATE TRIGGER draft_review_guard BEFORE UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state BEGIN
  SELECT CASE WHEN old.reviewer_state <> 'proposed' THEN RAISE(ABORT,'terminal review state cannot transition') END;
@@ -124,6 +124,32 @@ CREATE TABLE deletion_tombstones (
  content_hash TEXT NOT NULL, PRIMARY KEY(provider,source_id)
 ) STRICT;
 `},
+  {
+    version: 2,
+    sql: `
+CREATE TABLE review_queue_proposals (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('action','decision','calendar-follow-up','jira-action')),
+ description TEXT NOT NULL, source_record_id TEXT NOT NULL REFERENCES source_records(id) ON DELETE RESTRICT,
+ source_context_json TEXT CHECK(json_valid(source_context_json)),
+ source_links_json TEXT CHECK(json_valid(source_links_json)),
+ occurred_at TEXT, retention_until TEXT,
+ review_state TEXT NOT NULL DEFAULT 'proposed' CHECK(review_state IN ('proposed','approved','rejected')),
+ created_at TEXT NOT NULL DEFAULT (${ISO_UTC}), updated_at TEXT NOT NULL DEFAULT (${ISO_UTC})
+) STRICT;
+CREATE INDEX review_queue_proposals_state_idx ON review_queue_proposals(review_state,kind,updated_at);
+CREATE INDEX review_queue_proposals_source_idx ON review_queue_proposals(source_record_id) WHERE review_state='proposed';
+CREATE TRIGGER review_queue_proposals_initial_guard BEFORE INSERT ON review_queue_proposals WHEN new.review_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'review queue proposals must start proposed'); END;
+CREATE TRIGGER review_queue_proposals_terminal_guard BEFORE UPDATE OF review_state ON review_queue_proposals WHEN old.review_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'terminal review state cannot transition'); END;
+CREATE TABLE proposal_review_audit (
+ id INTEGER PRIMARY KEY, proposal_id TEXT NOT NULL REFERENCES review_queue_proposals(id) ON DELETE RESTRICT,
+ from_state TEXT NOT NULL, to_state TEXT NOT NULL, actor TEXT NOT NULL, reason TEXT NOT NULL, changed_at TEXT NOT NULL
+) STRICT;
+CREATE TRIGGER proposal_review_audit_no_update BEFORE UPDATE ON proposal_review_audit BEGIN SELECT RAISE(ABORT,'proposal review audit is append-only'); END;
+CREATE TRIGGER proposal_review_audit_no_delete BEFORE DELETE ON proposal_review_audit BEGIN SELECT RAISE(ABORT,'proposal review audit is append-only'); END;
+CREATE TRIGGER review_queue_proposals_audit_guard BEFORE UPDATE OF review_state ON review_queue_proposals WHEN old.review_state <> new.review_state BEGIN
+ SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM proposal_review_audit WHERE proposal_id=old.id AND from_state=old.review_state AND to_state=new.review_state) THEN RAISE(ABORT,'review transition requires audit') END;
+END;
+`},
 ] as const;
 
 export interface SourceInput {
@@ -132,7 +158,7 @@ export interface SourceInput {
 }
 export interface SyncBatch { connector: string; scope: string; cursor?: string; watermark?: string; observedAt: string; records: readonly SourceInput[]; }
 export interface StorageExport { format: "em-os-storage"; version: 1; exportedAt: string; tables: Record<string, Record<string, unknown>[]>; }
-const exportTables = ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","deletion_tombstones"] as const;
+const exportTables = ["people","source_records","sync_cursors","prs","initiatives","action_items","action_item_sources","evidence","evidence_sources","drafts","draft_sources","review_audit","review_queue_proposals","proposal_review_audit","deletion_tombstones"] as const;
 const clearTables = [...exportTables, "cache_entries"] as const;
 
 function utc(value: string): string {
@@ -210,6 +236,67 @@ export class SqliteStorage implements Storage {
   const rows=this.db.prepare("SELECT provider,source_id FROM source_records WHERE deleted_at IS NULL AND retention_until IS NOT NULL AND retention_until <= ?").all(utc(now)) as {provider:string;source_id:string}[];
   for(const row of rows)this.deleteSource(row.provider,row.source_id,"retention_expired",now);
   return rows.length;
+ }
+ adapterStore(): {
+  getCursor(connector:string, scope:string): string|undefined;
+  findSimilarProposals(provider:string, normalizedTitle:string, occurredAt:string): readonly string[];
+  commitAdapterBatch(batch:unknown): void;
+ } {
+  type AdapterCommitLike = {
+   connector: string; scope: string; previousCursor?: string; nextCursor?: string; observedAt: string; fetched: number;
+   proposals: readonly { id:string; provider:string; sourceId:string; scope:string; kind:string; title:string; occurredAt:string; observedAt:string; sourceUrl:string; sourceLinks:readonly string[]; reviewState:string; retentionUntil:string; dedupSuggestions:readonly string[]; owner?:{ sourceIdentity:string; resolvedPersonId?:string; candidates:readonly {personId:string;label:string;confidence:number}[]; prompt?:string } }[];
+   deletions: readonly { provider:string; sourceId:string; contentHash:string; deletedAt:string; reason:string }[];
+  };
+  const db=this.db; const ISO="strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+  return {
+   getCursor(connector:string, scope:string):string|undefined {
+    const row=db.prepare("SELECT cursor FROM sync_cursors WHERE connector=? AND scope=?").get(connector,scope) as {cursor:string|null}|undefined;
+    return row?.cursor??undefined;
+   },
+   findSimilarProposals(provider:string, normalizedTitle:string, occurredAt:string):readonly string[] {
+    const rows=db.prepare(`SELECT p.id FROM review_queue_proposals p INNER JOIN source_records s ON s.id=p.source_record_id WHERE p.review_state='proposed' AND s.provider=? AND lower(p.description)=? AND abs(strftime('%s',p.occurred_at)-strftime('%s',?)) <= 7*24*60*60`).all(provider,normalizedTitle,occurredAt) as {id:string}[];
+    return rows.map(r=>r.id);
+   },
+   commitAdapterBatch(batch:unknown):void {
+    const b=batch as AdapterCommitLike;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+     const sourceSql=`INSERT INTO source_records(id,provider,source_id,stable_url,occurred_at,observed_at,excerpt,content_hash,classification,last_seen_at,retention_until)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET stable_url=excluded.stable_url,occurred_at=excluded.occurred_at,observed_at=excluded.observed_at,excerpt=excluded.excerpt,content_hash=excluded.content_hash,classification=excluded.classification,last_seen_at=excluded.last_seen_at,retention_until=excluded.retention_until,updated_at=${ISO} WHERE source_records.deleted_at IS NULL`;
+     const sourceStmt=db.prepare(sourceSql);
+     const proposalSql=`INSERT INTO review_queue_proposals(id,kind,description,source_record_id,source_context_json,source_links_json,occurred_at,retention_until)
+      VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,description=excluded.description,source_context_json=excluded.source_context_json,source_links_json=excluded.source_links_json,occurred_at=excluded.occurred_at,retention_until=excluded.retention_until,updated_at=${ISO} WHERE review_queue_proposals.review_state='proposed'`;
+     const proposalStmt=db.prepare(proposalSql);
+     const dedupSql=`INSERT INTO review_queue_proposals(id,kind,description,source_record_id,source_context_json,source_links_json,occurred_at,retention_until) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=${ISO} WHERE review_queue_proposals.review_state='proposed'`;
+     const dedupStmt=db.prepare(dedupSql);
+     const isTombstoned=db.prepare("SELECT 1 tombstoned FROM deletion_tombstones WHERE provider=? AND source_id=?");
+     const isDeleted=db.prepare("SELECT deleted_at FROM source_records WHERE provider=? AND source_id=?");
+     for(const proposal of b.proposals) {
+      const recordId=`${proposal.provider}:source:${proposal.sourceId}`;
+      const existingTombstone=(isTombstoned.get(proposal.provider,proposal.sourceId) as {tombstoned?:number}|undefined)?.tombstoned;
+      const existingDeleted=(isDeleted.get(proposal.provider,proposal.sourceId) as {deleted_at?:string|null}|undefined)?.deleted_at;
+      if(existingTombstone || existingDeleted) continue;
+      sourceStmt.run(recordId,proposal.provider,proposal.sourceId,proposal.sourceUrl,proposal.occurredAt,proposal.observedAt,proposal.title,`sha256:${proposal.id}`,proposal.provider,proposal.observedAt,proposal.retentionUntil);
+      proposalStmt.run(proposal.id,proposal.kind,proposal.title,recordId,JSON.stringify({owner:proposal.owner}),JSON.stringify(proposal.sourceLinks),proposal.occurredAt,proposal.retentionUntil);
+      for(const suggestion of proposal.dedupSuggestions) if (suggestion !== proposal.id) dedupStmt.run(suggestion,proposal.kind,proposal.title,recordId,JSON.stringify({owner:proposal.owner}),JSON.stringify(proposal.sourceLinks),proposal.occurredAt,proposal.retentionUntil);
+     }
+     for(const deletion of b.deletions) {
+      const row=db.prepare("SELECT id,content_hash FROM source_records WHERE provider=? AND source_id=?").get(deletion.provider,deletion.sourceId) as {id:string;content_hash:string}|undefined;
+      const at=utc(deletion.deletedAt);
+      if(row) {
+       db.prepare("DELETE FROM review_queue_proposals WHERE source_record_id=? AND review_state='proposed'").run(row.id);
+       db.prepare("DELETE FROM cache_entries WHERE source_record_id=?").run(row.id);
+       db.prepare("UPDATE source_records SET excerpt=NULL,deleted_at=?,deletion_reason=?,updated_at=? WHERE id=?").run(at,deletion.reason,at,row.id);
+      }
+      db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES(?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET deleted_at=excluded.deleted_at,reason=excluded.reason,content_hash=excluded.content_hash").run(deletion.provider,deletion.sourceId,at,deletion.reason,deletion.contentHash);
+     }
+     db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,watermark,last_success_at,last_error,fetched_count) VALUES(?,?,?,?,?,NULL,?)
+      ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,watermark=excluded.watermark,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO}`)
+      .run(b.connector,b.scope,b.nextCursor??b.previousCursor??null,b.nextCursor??b.previousCursor??null,utc(b.observedAt),b.fetched);
+     db.exec("COMMIT");
+    } catch(error) { db.exec("ROLLBACK"); throw error; }
+   },
+  };
  }
  exportData(exportedAt=new Date().toISOString()): StorageExport {
   const tables:StorageExport["tables"]={}; for(const table of exportTables) tables[table]=this.db.prepare(`SELECT * FROM ${table}`).all() as Record<string,unknown>[];

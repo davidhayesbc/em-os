@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { SqliteStorage } from "./storage.js";
 
 export type ReviewSource = "calendar" | "jira";
 export type ReviewProposalKind = "calendar-follow-up" | "jira-action";
@@ -26,13 +27,14 @@ export interface ReviewProposal {
   retentionUntil: string;
   dedupSuggestions: readonly string[];
 }
-export interface ReviewDeletion { provider: ReviewSource; sourceId: string; deletedAt: string; reason: "source_deleted" | "retention_expired"; }
+export interface ReviewDeletion { provider: ReviewSource; sourceId: string; contentHash: string; deletedAt: string; reason: "source_deleted" | "retention_expired"; }
 export interface AdapterCommit {
   connector: ReviewSource;
   scope: string;
   previousCursor?: string;
   nextCursor?: string;
   observedAt: string;
+  fetched: number;
   proposals: readonly ReviewProposal[];
   deletions: readonly ReviewDeletion[];
 }
@@ -52,6 +54,7 @@ export interface AdapterConfig {
   maxWindowDays: number;
   retentionDays: number;
   maxPages?: number;
+  identityConfidenceThreshold?: number;
 }
 export interface CalendarItem {
   id: string; calendarId: string; title: string; htmlLink: string; start: string; updatedAt: string;
@@ -77,27 +80,34 @@ function utc(value: string, field: string): string {
   return date.toISOString();
 }
 function validateUrl(value: string, field: string): string {
-  const url = new URL(value);
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error(`${field} must be an https URL`); }
   if (url.protocol !== "https:") throw new Error(`${field} must use https`);
+  if (url.username || url.password) throw new Error(`${field} must not contain userinfo`);
   url.hash = "";
   return url.toString();
+}
+function validateConfig(config: AdapterConfig): void {
+  if (!Number.isInteger(config.retentionDays) || config.retentionDays < 1) throw new Error("retentionDays must be a positive integer");
+  if (config.identityConfidenceThreshold !== undefined && (!Number.isFinite(config.identityConfidenceThreshold) || config.identityConfidenceThreshold <= 0 || config.identityConfidenceThreshold > 1)) throw new Error("identityConfidenceThreshold must be between 0 and 1");
 }
 function window(config: AdapterConfig): { start: string; end: string } {
   const start = utc(config.windowStart, "windowStart"); const end = utc(config.windowEnd, "windowEnd");
   const span = Date.parse(end) - Date.parse(start);
   if (span <= 0 || span > config.maxWindowDays * 86_400_000) throw new Error(`ingestion window must be positive and at most ${config.maxWindowDays} days`);
-  if (!Number.isInteger(config.retentionDays) || config.retentionDays < 1) throw new Error("retentionDays must be a positive integer");
   return { start, end };
 }
-function identity(sourceIdentity: string | undefined, candidates: readonly IdentityCandidate[] | undefined): IdentityResolution | undefined {
+function identity(sourceIdentity: string | undefined, candidates: readonly IdentityCandidate[] | undefined, identityConfidenceThreshold = 1): IdentityResolution | undefined {
   if (!sourceIdentity) return undefined;
   const choices = candidates ?? [];
-  const confirmed = choices.filter(candidate => candidate.confidence === 1);
+  const confirmed = choices.filter(candidate => candidate.confidence >= identityConfidenceThreshold);
   if (confirmed.length === 1 && choices.length === 1) return { sourceIdentity, resolvedPersonId: confirmed[0].personId, candidates: choices };
   return { sourceIdentity, candidates: choices, prompt: choices.length ? `Confirm which person owns source identity ${sourceIdentity}; never merge by display name.` : `Map source identity ${sourceIdentity} to a person or leave it unresolved.` };
 }
 function retention(observedAt: string, days: number): string { return new Date(Date.parse(observedAt) + days * 86_400_000).toISOString(); }
 function id(provider: ReviewSource, sourceId: string): string { return `${provider}:proposal:${createHash("sha256").update(sourceId).digest("hex").slice(0, 20)}`; }
+function sourceRecordId(provider: ReviewSource, sourceId: string): string { return `${provider}:source:${createHash("sha256").update(sourceId).digest("hex").slice(0, 20)}`; }
+function contentHash(payload: unknown): string { return `sha256:${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`; }
 function inWindow(value: string, start: string, end: string): boolean { const n = Date.parse(value); return n >= Date.parse(start) && n <= Date.parse(end); }
 function uniqueLinks(primary: string, related: readonly string[] | undefined): readonly string[] {
   return [...new Set([primary, ...(related ?? [])].map((url, index) => validateUrl(url, index ? "related URL" : "source URL")))];
@@ -105,11 +115,12 @@ function uniqueLinks(primary: string, related: readonly string[] | undefined): r
 
 abstract class ReviewAdapter<T> {
   abstract readonly id: ReviewSource;
-  constructor(protected readonly config: AdapterConfig, protected readonly readPage: ReadPage<T>, protected readonly store: ReviewQueueStore) {}
+  constructor(protected readonly config: AdapterConfig, protected readonly readPage: ReadPage<T>, protected readonly store: ReviewQueueStore) { validateConfig(config); }
   protected abstract itemScope(item: T): string;
   protected abstract deleted(item: T): boolean;
   protected abstract deletedAt(item: T): string;
   protected abstract sourceId(item: T): string;
+  protected abstract content(item: T): unknown;
   protected abstract proposal(item: T, scope: string, observedAt: string, retentionUntil: string): Omit<ReviewProposal, "dedupSuggestions">;
 
   async sync(scope: string): Promise<SyncResult> {
@@ -122,12 +133,12 @@ abstract class ReviewAdapter<T> {
       if (page >= maxPages) throw new Error(`${this.id} pagination exceeded maxPages=${maxPages}`);
       let result: AdapterPage<T>;
       try { result = await this.readPage({ scope, cursor: previousCursor, pageToken, windowStart: start, windowEnd: end }); }
-      catch (error) { if (error instanceof AdapterPermissionError) throw error; throw new Error(`${this.id} read failed for ${scope}: ${error instanceof Error ? error.message : String(error)}`); }
+      catch (error) { if (error instanceof AdapterPermissionError) throw error; throw new Error(`${this.id} read failed for ${scope}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
       observedAt = utc(result.observedAt, "observedAt"); nextCursor = result.nextCursor ?? nextCursor;
       for (const item of result.items) {
         fetched += 1;
         if (this.itemScope(item) !== scope) throw new Error(`${this.id} response escaped requested scope ${scope}`);
-        if (this.deleted(item)) { deletions.push({ provider: this.id, sourceId: this.sourceId(item), deletedAt: utc(this.deletedAt(item), "deletedAt"), reason: "source_deleted" }); continue; }
+        if (this.deleted(item)) { deletions.push({ provider: this.id, sourceId: this.sourceId(item), contentHash: contentHash(this.content(item)), deletedAt: utc(this.deletedAt(item), "deletedAt"), reason: "source_deleted" }); continue; }
         const candidate = this.proposal(item, scope, observedAt, retention(observedAt, this.config.retentionDays));
         if (!inWindow(candidate.occurredAt, start, end)) continue;
         proposals.push({ ...candidate, dedupSuggestions: await this.store.findDedupSuggestions(candidate) });
@@ -136,7 +147,7 @@ abstract class ReviewAdapter<T> {
       if (result.nextPageToken === pageToken) throw new Error(`${this.id} returned a repeated page token`);
       pageToken = result.nextPageToken;
     }
-    await this.store.commit({ connector: this.id, scope, previousCursor, nextCursor, observedAt, proposals, deletions });
+    await this.store.commit({ connector: this.id, scope, previousCursor, nextCursor, observedAt, fetched, proposals, deletions });
     return { status: "synced", fetched, proposed: proposals.length, deleted: deletions.length, cursor: nextCursor };
   }
 }
@@ -147,9 +158,10 @@ export class CalendarReviewAdapter extends ReviewAdapter<CalendarItem> {
   protected deleted(item: CalendarItem): boolean { return item.deleted === true; }
   protected deletedAt(item: CalendarItem): string { return item.updatedAt; }
   protected sourceId(item: CalendarItem): string { return `${item.calendarId}:${item.id}`; }
+  protected content(item: CalendarItem): unknown { return { id: item.id, calendarId: item.calendarId, title: item.title, htmlLink: item.htmlLink, start: item.start, updatedAt: item.updatedAt, organizer: item.organizer, relatedUrls: item.relatedUrls }; }
   protected proposal(item: CalendarItem, scope: string, observedAt: string, retentionUntil: string): Omit<ReviewProposal, "dedupSuggestions"> {
     const sourceId = this.sourceId(item); const occurredAt = utc(item.start, "calendar start"); const sourceUrl = validateUrl(item.htmlLink, "calendar source URL");
-    return { id: id(this.id, sourceId), provider: this.id, sourceId, scope, kind: "calendar-follow-up", title: item.title.trim(), occurredAt, observedAt, sourceUrl, sourceLinks: uniqueLinks(sourceUrl, item.relatedUrls), owner: identity(item.organizer, item.organizerCandidates), reviewState: "proposed", retentionUntil };
+    return { id: id(this.id, sourceId), provider: this.id, sourceId, scope, kind: "calendar-follow-up", title: item.title.trim(), occurredAt, observedAt, sourceUrl, sourceLinks: uniqueLinks(sourceUrl, item.relatedUrls), owner: identity(item.organizer, item.organizerCandidates, this.config.identityConfidenceThreshold), reviewState: "proposed", retentionUntil };
   }
 }
 
@@ -159,9 +171,43 @@ export class JiraReviewAdapter extends ReviewAdapter<JiraItem> {
   protected deleted(item: JiraItem): boolean { return item.deleted === true; }
   protected deletedAt(item: JiraItem): string { return item.updatedAt; }
   protected sourceId(item: JiraItem): string { return `${item.projectKey}:${item.id}`; }
+  protected content(item: JiraItem): unknown { return { id: item.id, projectKey: item.projectKey, key: item.key, summary: item.summary, browseUrl: item.browseUrl, updatedAt: item.updatedAt, assignee: item.assignee, relatedUrls: item.relatedUrls }; }
   protected proposal(item: JiraItem, scope: string, observedAt: string, retentionUntil: string): Omit<ReviewProposal, "dedupSuggestions"> {
     const sourceId = this.sourceId(item); const occurredAt = utc(item.updatedAt, "Jira updatedAt"); const sourceUrl = validateUrl(item.browseUrl, "Jira source URL");
-    return { id: id(this.id, sourceId), provider: this.id, sourceId, scope, kind: "jira-action", title: `${item.key}: ${item.summary}`.trim(), occurredAt, observedAt, sourceUrl, sourceLinks: uniqueLinks(sourceUrl, item.relatedUrls), owner: identity(item.assignee, item.assigneeCandidates), reviewState: "proposed", retentionUntil };
+    return { id: id(this.id, sourceId), provider: this.id, sourceId, scope, kind: "jira-action", title: `${item.key}: ${item.summary}`.trim(), occurredAt, observedAt, sourceUrl, sourceLinks: uniqueLinks(sourceUrl, item.relatedUrls), owner: identity(item.assignee, item.assigneeCandidates, this.config.identityConfidenceThreshold), reviewState: "proposed", retentionUntil };
+  }
+}
+
+/** SqliteStorage-backed review queue store. Persists source records, proposals, cursors and deletion tombstones in one transaction. */
+export class SqliteReviewQueueStore implements ReviewQueueStore {
+  private readonly store;
+  constructor(storage: SqliteStorage) { this.store = storage.adapterStore(); }
+  async getCursor(connector: ReviewSource, scope: string): Promise<string | undefined> { return this.store.getCursor(connector, scope); }
+  async findDedupSuggestions(candidate: Pick<ReviewProposal, "provider" | "sourceId" | "title" | "occurredAt">): Promise<readonly string[]> {
+    const normalized = candidate.title.toLowerCase().replace(/^[A-Z][A-Z0-9]+-\d+:\s*/i, "").replace(/\W+/g, " ").trim();
+    const rows: readonly string[] = this.store.findSimilarProposals(candidate.provider, normalized, candidate.occurredAt);
+    const ownId = id(candidate.provider, candidate.sourceId);
+    return rows.filter((rowId: string) => rowId !== ownId);
+  }
+  async commit(batch: AdapterCommit): Promise<void> {
+    const proposals = batch.proposals.map(p => ({
+      id: p.id,
+      provider: p.provider as string,
+      sourceId: p.sourceId,
+      scope: p.scope,
+      kind: p.kind as string,
+      title: p.title,
+      occurredAt: p.occurredAt,
+      observedAt: p.observedAt,
+      sourceUrl: p.sourceUrl,
+      sourceLinks: [...p.sourceLinks],
+      reviewState: p.reviewState as string,
+      retentionUntil: p.retentionUntil,
+      dedupSuggestions: [...p.dedupSuggestions],
+      owner: p.owner,
+    }));
+    const deletions = batch.deletions.map(d => ({ provider: d.provider as string, sourceId: d.sourceId, contentHash: d.contentHash, deletedAt: d.deletedAt, reason: d.reason as string }));
+    this.store.commitAdapterBatch({ connector: batch.connector as string, scope: batch.scope, previousCursor: batch.previousCursor, nextCursor: batch.nextCursor, observedAt: batch.observedAt, fetched: batch.fetched, proposals, deletions });
   }
 }
 
@@ -171,8 +217,8 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
   failNextCommit = false;
   async getCursor(connector: ReviewSource, scope: string): Promise<string | undefined> { return this.cursors.get(`${connector}:${scope}`); }
   async findDedupSuggestions(candidate: Pick<ReviewProposal, "provider" | "sourceId" | "title" | "occurredAt">): Promise<readonly string[]> {
-    const normalized = candidate.title.toLocaleLowerCase().replace(/^[A-Z][A-Z0-9]+-\d+:\s*/i, "").replace(/\W+/g, " ").trim();
-    return [...this.proposals.values()].filter(item => !(item.provider === candidate.provider && item.sourceId === candidate.sourceId) && item.title.toLocaleLowerCase().replace(/^[A-Z][A-Z0-9]+-\d+:\s*/i, "").replace(/\W+/g, " ").trim() === normalized && Math.abs(Date.parse(item.occurredAt) - Date.parse(candidate.occurredAt)) <= 7 * 86_400_000).map(item => item.id);
+    const normalized = candidate.title.toLowerCase().replace(/^[A-Z][A-Z0-9]+-\d+:\s*/i, "").replace(/\W+/g, " ").trim();
+    return [...this.proposals.values()].filter(item => !(item.provider === candidate.provider && item.sourceId === candidate.sourceId) && item.title.toLowerCase().replace(/^[A-Z][A-Z0-9]+-\d+:\s*/i, "").replace(/\W+/g, " ").trim() === normalized && Math.abs(Date.parse(item.occurredAt) - Date.parse(candidate.occurredAt)) <= 7 * 86_400_000).map(item => item.id);
   }
   async commit(batch: AdapterCommit): Promise<void> {
     if (this.failNextCommit) { this.failNextCommit = false; throw new Error("synthetic commit failure"); }
@@ -183,7 +229,7 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
   applyRetention(now: string): number {
     const at = utc(now, "retention now"); let removed = 0;
     for (const [key, proposal] of this.proposals) if (proposal.retentionUntil <= at) {
-      this.proposals.delete(key); this.deletions.push({ provider: proposal.provider, sourceId: proposal.sourceId, deletedAt: at, reason: "retention_expired" }); removed += 1;
+      this.proposals.delete(key); this.deletions.push({ provider: proposal.provider, sourceId: proposal.sourceId, contentHash: "", deletedAt: at, reason: "retention_expired" }); removed += 1;
     }
     return removed;
   }

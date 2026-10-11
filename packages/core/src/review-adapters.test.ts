@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 import {
-  AdapterPermissionError, CalendarReviewAdapter, InMemoryReviewQueueStore, JiraReviewAdapter,
+  AdapterPermissionError, CalendarReviewAdapter, InMemoryReviewQueueStore, JiraReviewAdapter, SqliteReviewQueueStore,
   type AdapterConfig, type AdapterPage, type CalendarItem, type JiraItem, type ReadPage,
 } from "./review-adapters.js";
+import { SqliteStorage } from "./storage.js";
 
 const baseConfig: AdapterConfig = {
   enabled: true, allowedScopes: ["team-calendar"], windowStart: "2026-10-31T00:00:00Z",
@@ -84,4 +86,34 @@ test("updates are stable by provider identity and retention removes expired prop
   assert.equal(store.proposals.size,1); assert.match([...store.proposals.values()][0].title,/Updated/); assert.equal([...store.proposals.values()][0].retentionUntil,"2026-11-02T07:00:00.000Z");
   assert.equal(store.applyRetention("2026-11-02T06:59:59Z"),0); assert.equal(store.proposals.size,1);
   assert.equal(store.applyRetention("2026-11-02T07:00:00Z"),1); assert.equal(store.proposals.size,0); assert.equal(store.deletions[0].reason,"retention_expired");
+});
+
+test("non-https and userinfo source links fail closed with field-named errors", async () => {
+  const store = new InMemoryReviewQueueStore();
+  await assert.rejects(() => new CalendarReviewAdapter(baseConfig, async() => ({items:[{id:"bad-cal",calendarId:"team-calendar",title:"Bad",htmlLink:"http://calendar.example.invalid/bad",start:"2026-11-01T00:00:00Z",updatedAt:"2026-11-01T00:00:00Z"}],observedAt:"2026-11-01T00:00:00Z"}), store).sync("team-calendar"), /calendar source URL must use https/);
+  await assert.rejects(() => new JiraReviewAdapter({...baseConfig,allowedScopes:["ENG"]}, async() => ({items:[{id:"bad-jira",projectKey:"ENG",key:"ENG-2",summary:"Bad",browseUrl:"https://user:pass@jira.example.invalid/browse/ENG-2",updatedAt:"2026-11-01T00:00:00Z"}],observedAt:"2026-11-01T00:00:00Z"}), store).sync("ENG"), /Jira source URL must not contain userinfo/);
+  await assert.rejects(() => new CalendarReviewAdapter(baseConfig, async() => ({items:[{id:"ugly-cal",calendarId:"team-calendar",title:"Ugly",htmlLink:"not a url",start:"2026-11-01T00:00:00Z",updatedAt:"2026-11-01T00:00:00Z"}],observedAt:"2026-11-01T00:00:00Z"}), store).sync("team-calendar"), /calendar source URL must be an https URL/);
+});
+
+test("SqliteReviewQueueStore persists calendar and jira proposals, cursors and tombstones transactionally", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "em-os-adapters-"));
+  const storage = new SqliteStorage(join(dir, "store.sqlite"));
+  await storage.initialize();
+  const store = new SqliteReviewQueueStore(storage);
+  try {
+    const calendars = await fixture<CalendarItem>("calendar-pages.synthetic.json");
+    const jira = await fixture<JiraItem>("jira-pages.synthetic.json");
+    await new CalendarReviewAdapter(baseConfig, paged(calendars.pages, []), store).sync("team-calendar");
+    await new JiraReviewAdapter({...baseConfig, allowedScopes:["ENG"]}, paged(jira.pages, []), store).sync("ENG");
+    assert.equal(await store.getCursor("calendar", "team-calendar"), "calendar-cursor-2");
+    assert.equal(await store.getCursor("jira", "ENG"), "jira-cursor-9");
+    assert.equal((storage.db.prepare("SELECT count(*) n FROM source_records WHERE provider='calendar'").get() as {n:number}).n, 1);
+    assert.equal((storage.db.prepare("SELECT count(*) n FROM source_records WHERE provider='jira'").get() as {n:number}).n, 1);
+    assert.equal((storage.db.prepare("SELECT count(*) n FROM review_queue_proposals WHERE kind='calendar-follow-up'").get() as {n:number}).n, 1);
+    assert.equal((storage.db.prepare("SELECT count(*) n FROM review_queue_proposals WHERE kind='jira-action'").get() as {n:number}).n, 1);
+    assert.equal((storage.db.prepare("SELECT count(*) n FROM deletion_tombstones WHERE provider='calendar'").get() as {n:number}).n, 1);
+    const jiraProposal = storage.db.prepare("SELECT id FROM review_queue_proposals WHERE kind='jira-action'").get() as {id:string};
+    assert.ok(jiraProposal.id);
+    assert.equal((storage.db.prepare("SELECT count(*) n FROM review_queue_proposals WHERE id=?").get(jiraProposal.id) as {n:number}).n, 1);
+  } finally { storage.close(); }
 });
