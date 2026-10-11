@@ -122,6 +122,7 @@ try {
   let wrongPassRejected = false;
   try { await SqliteStorage.restoreFromExport(fallbackExportPath, join(dir, "ignored.sqlite"), { kind: "pbkdf2", passphrase: "wrong passphrase" }); } catch { wrongPassRejected = true; }
   check("(F) wrong passphrase rejected", wrongPassRejected);
+  source.close();
 } finally {
   await rm(dir, { recursive: true, force: true });
 }
