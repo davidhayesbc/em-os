@@ -68,17 +68,21 @@ export function recomputeHeaderAAD(envelope: EncryptedBackupEnvelope): Buffer { 
 
 function validateEnvelope(envelope: EncryptedBackupEnvelope): void {
   const errors: string[] = [];
+  if (typeof envelope !== "object" || envelope === null) throw new BackupEnvelopeError("EnvelopeValidationError: envelope must be an object");
   if (envelope.cipher !== "AES-256-GCM") errors.push(`cipher must be AES-256-GCM, got ${JSON.stringify(envelope.cipher)}`);
   if (envelope.format !== "em-os-enc-backup") errors.push(`format must be em-os-enc-backup, got ${JSON.stringify(envelope.format)}`);
   if (envelope.version !== 1 || typeof envelope.version !== "number") errors.push(`version must be integer 1, got ${JSON.stringify(envelope.version)}`);
   if (envelope.schema_version !== 1 || typeof envelope.schema_version !== "number") errors.push(`schema_version must be integer 1, got ${JSON.stringify(envelope.schema_version)}`);
   if (typeof envelope.aad_b64 !== "string" || envelope.aad_b64.length === 0) errors.push("aad_b64 must be present (v1 contract); v0 envelopes are invalid");
   if (!envelope.artifact || !["em-os-storage", "sqlite-backup"].includes(envelope.artifact)) errors.push(`unknown artifact ${JSON.stringify(envelope.artifact)}`);
-  if (!envelope.kdf?.alg || !["HKDF-SHA-256", "PBKDF2-HMAC-SHA256"].includes(envelope.kdf.alg)) errors.push(`unknown kdf.alg ${JSON.stringify(envelope.kdf?.alg)}`);
+  if (typeof envelope.nonce_b64 !== "string" || envelope.nonce_b64.length === 0) errors.push("nonce_b64 must be a non-empty base64 string");
+  if (typeof envelope.tag_b64 !== "string" || envelope.tag_b64.length === 0) errors.push("tag_b64 must be a non-empty base64 string");
+  if (typeof envelope.kdf !== "object" || envelope.kdf === null) errors.push("kdf must be an object");
+  else if (!envelope.kdf?.alg || !["HKDF-SHA-256", "PBKDF2-HMAC-SHA256"].includes(envelope.kdf.alg)) errors.push(`unknown kdf.alg ${JSON.stringify(envelope.kdf?.alg)}`);
   if (envelope.kdf?.alg === "PBKDF2-HMAC-SHA256" && (!Number.isInteger(envelope.kdf?.iterations) || (envelope.kdf.iterations as number) < PBKDF2_ITERS)) {
     errors.push(`PBKDF2 iterations below ${PBKDF2_ITERS} floor`);
   }
-  if (typeof envelope.aad_b64 === "string" && envelope.aad_b64.length > 0) {
+  if (typeof envelope.aad_b64 === "string" && envelope.aad_b64.length > 0 && typeof envelope.kdf === "object" && envelope.kdf !== null && typeof envelope.kdf.alg === "string") {
     const recomputed = headerAAD(envelope);
     let received: Buffer | null = null;
     try { received = Buffer.from(envelope.aad_b64, "base64"); } catch { received = null; }
@@ -129,13 +133,13 @@ export function encryptBackupArtifact(plaintext: Buffer, artifact: BackupArtifac
 }
 
 function deriveKekForDecrypt(envelope: EncryptedBackupEnvelope, kekSource: BackupKeySource): Buffer {
-  const salt = Buffer.from(envelope.kdf.salt_b64, "base64");
-  if (envelope.kdf.alg === "PBKDF2-HMAC-SHA256") {
+  const salt = Buffer.from(envelope.kdf?.salt_b64 ?? "", "base64");
+  if (envelope.kdf?.alg === "PBKDF2-HMAC-SHA256") {
     const pbkdf2 = kekSource as Partial<PBKDF2KeySource>;
     if (pbkdf2.kind !== "pbkdf2" || typeof pbkdf2.passphrase !== "string") throw new BackupKeyUnavailableError("PBKDF2 passphrase key source required");
     return Buffer.from(pbkdf2Sync(pbkdf2.passphrase, salt, envelope.kdf.iterations ?? PBKDF2_ITERS, envelope.kdf.dkLen ?? 32, "sha256"));
   }
-  if (envelope.kdf.alg !== "HKDF-SHA-256") throw new BackupEnvelopeError(`unsupported kdf: ${envelope.kdf.alg}`);
+  if (envelope.kdf?.alg !== "HKDF-SHA-256") throw new BackupEnvelopeError(`unsupported kdf: ${envelope.kdf?.alg}`);
   const keyMaterial = kekSource.getKeyMaterial();
   const material = Buffer.isBuffer(keyMaterial) ? keyMaterial : (() => { throw new BackupKeyUnavailableError("sync key material required"); })();
   if (!Buffer.isBuffer(material) || material.length === 0) throw new BackupKeyUnavailableError();

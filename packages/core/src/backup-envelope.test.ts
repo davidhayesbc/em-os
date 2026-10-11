@@ -104,7 +104,7 @@ test("M1 rejects artifact swap without AAD update", () => {
   assert.throws(() => decryptBackupArtifact(swapped, fixedKeySource), /EnvelopeValidationError:.*aad_b64 does not match/i);
 });
 
-test("info label tamper on HKDF envelope is rejected", () => {
+test("info label tamper on HKDF envelope is silently ignored by design", () => {
   const envelope = encryptBackupArtifact(Buffer.from("payload", "utf8"), "em-os-storage", fixedKeySource);
   const tampered = JSON.parse(JSON.stringify(envelope));
   tampered.kdf.info = "wrong";
@@ -141,6 +141,19 @@ test("no KEK material leaks into envelope JSON", () => {
   const envelope = encryptBackupArtifact(plaintext, "em-os-storage", fixedKeySource);
   const json = JSON.stringify(envelope);
   assert.ok(!json.includes(hkdfMaterial.toString("base64")));
+});
+
+test("M2 rejects missing kdf, missing nonce_b64, missing tag_b64, and non-object envelope", () => {
+  const base = encryptBackupArtifact(Buffer.from("x"), "em-os-storage", fixedKeySource);
+  const missingKdf = JSON.parse(JSON.stringify(base)); delete missingKdf.kdf;
+  assert.throws(() => decryptBackupArtifact(missingKdf, fixedKeySource), BackupEnvelopeError);
+  const nullKdf = JSON.parse(JSON.stringify(base)); nullKdf.kdf = null;
+  assert.throws(() => decryptBackupArtifact(nullKdf, fixedKeySource), BackupEnvelopeError);
+  const missingNonce = JSON.parse(JSON.stringify(base)); delete missingNonce.nonce_b64;
+  assert.throws(() => decryptBackupArtifact(missingNonce, fixedKeySource), BackupEnvelopeError);
+  const missingTag = JSON.parse(JSON.stringify(base)); delete missingTag.tag_b64;
+  assert.throws(() => decryptBackupArtifact(missingTag, fixedKeySource), BackupEnvelopeError);
+  assert.throws(() => decryptBackupArtifact(null as unknown as typeof base, fixedKeySource), BackupEnvelopeError);
 });
 
 test("PBKDF2 iterations below 600000 floor rejected", () => {

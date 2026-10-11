@@ -1,5 +1,5 @@
 import { backup, DatabaseSync } from "node:sqlite";
-import { mkdir, readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PullRequestRecord, Storage } from "./contracts.js";
@@ -307,11 +307,13 @@ export class SqliteStorage implements Storage {
   try {
    const plain=join(tmp,"restored.sqlite");
    await writeFile(plain,decrypted);
-   // Ensure destinationDb file exists as an empty SQLite database so backup() accepts it.
+   // Ensure destinationDb file exists as an empty SQLite database so backup() accepts it, with 0o600 per ADR 0008 restored-material handling.
+   await writeFile(destinationDb, Buffer.alloc(0), { mode: 0o600 });
    const destDb=new DatabaseSync(destinationDb);
    try { destDb.close(); } catch { destDb.close(); }
    const plainDb=new DatabaseSync(plain);
    try { await backup(plainDb,destinationDb); } finally { plainDb.close(); }
+   await chmod(destinationDb,0o600);
    const storage=new SqliteStorage(destinationDb); await storage.initialize(); return storage;
   } finally { await rm(tmp,{recursive:true,force:true}); }
  }
@@ -321,7 +323,10 @@ export class SqliteStorage implements Storage {
    if(envelope.artifact!=="em-os-storage") throw new BackupEnvelopeError(`expected em-os-storage artifact, got ${envelope.artifact}`);
    const decrypted=decryptBackupArtifact(envelope,kekSource);
    const data=JSON.parse(decrypted.toString("utf8")) as StorageExport;
-   const storage=new SqliteStorage(destinationDb); await storage.initialize(); storage.importData(data); return storage;
+   // Pre-create the restored DB file with 0o600 before SqliteStorage opens it.
+   await mkdir(dirname(destinationDb),{recursive:true});
+   await writeFile(destinationDb, Buffer.alloc(0), { mode: 0o600 });
+   const storage=new SqliteStorage(destinationDb); await storage.initialize(); storage.importData(data); await chmod(destinationDb,0o600); return storage;
  }
 
  static async restoreFromExportDevInsecure(path:string, destinationDb:string):Promise<SqliteStorage>{

@@ -1,6 +1,6 @@
 # ADR 0008: At-rest protection and encrypted backup envelope
 
-- Status: Accepted with policy conditions; ratified 2026-10-11 by security re-review on PR #16 (verdict: approved with required corrections M1–M3, all landed in this revision) — closes gate `G-SEC-02` subject to §Policy conditions
+- Status: Accepted with policy conditions; ratified 2026-10-11 by security re-review on PR #18 (verdict: approved with required corrections M1–M3, all landed in this revision) — closes gate `G-SEC-02` subject to §Policy conditions
 - Date: 2026-10-10; revised 2026-10-11 (SEC-04 ratification corrections)
 - Spec: `docs/PRODUCT_SPEC.md` §§2, 6, 9, 12, 13
 - Related: `docs/architecture/GATES.md` (G-SEC-02), `docs/architecture/0003-sqlite-fts-storage.md`, `docs/architecture/0007-local-paths-failure-offline.md`, `docs/SECURITY_REVIEW.md` (SEC-04 finding §3, approved-route scopes §5)
@@ -90,7 +90,7 @@ Per the gate procedure: the gate state may move to **Passed** only when this dec
 
 ## Consequences
 
-Implementers must add the envelope around `backupTo()`/`writeExport()` (coder; already scheduled as the SEC-04 code follow-up `t_69f62f22`, including the header-AAD and validated-field-set rework of this revision) and keep plaintext paths dev-only and named. Users must accept that backups cannot be opened without the OS-keystore-derived key and that a destroyed OS profile makes backups unrecoverable unless paired with the PBKDF2 fallback under policy. CI cannot verify the encryption state of artifacts produced on local machines; the drill evidence carries the gate, and (A3) the drill itself runs under CI (`t_19def135`) so the synthetic envelope/rejection contract stays continuously re-verified. The synthetic-prototype label is retained until the gate is unconditionally closed, so no release may claim recovery readiness.
+Implementers must add the envelope around `backupTo()`/`writeExport()` (coder; already scheduled as the SEC-04 code follow-up `t_69f62f22`, including the header-AAD and validated-field-set rework of this revision) and keep plaintext paths dev-only and named. Users must accept that backups cannot be opened without the OS-keystore-derived key and that a destroyed OS profile makes backups unrecoverable unless paired with the PBKDF2 fallback under policy. CI cannot verify the encryption state of artifacts produced on local machines; the drill evidence carries the gate, and (A3) the drill itself runs under CI (`t_9b100434`) in a dedicated `backup-drill` matrix job so the synthetic envelope/rejection contract stays continuously re-verified. The synthetic-prototype label is retained until the gate is unconditionally closed, so no release may claim recovery readiness.
 
 ## Test implications
 
@@ -98,5 +98,5 @@ Implementers must add the envelope around `backupTo()`/`writeExport()` (coder; a
 - AAD contract tests (M1): header round-trip under the canonical serialization; every header-field mutation (artifact swap `em-os-storage` ↔ `sqlite-backup`, `cipher: "AES-128-CBC"`, `format: "em-os-enc"`, `version: 2`, `schema_version: 2`) fails restore with a typed validation error or GCM rejection — never a valid-tag decrypt; `aad_b64` mismatch rejection; the header-AAD bytes are the only AAD input at both encrypt and decrypt time.
 - Fail-closed contract tests (M2): the §M2 validated field set (a)–(f) is verified on every restore; missing/mis-typed fields throw a typed validation error before KDF; unknown-`artifact`/wrong-`format` are rejections, not best-effort restores; no plaintext side-effect files are written before validation passes.
 - Drill script (`scripts/backup-restore-drill.mjs`): populated-to-restore record equality for **both** artifacts (SQLite backup copy and `em-os-storage` export), the §M2 negative checks (bogus cipher / wrong format / wrong version / unknown artifact / tampered AAD header, each rejected), FTS and deletion-state equivalence added when those tables ship into the drill, and pass/fail exit code suitable for CI and gate evidence capture. Deletion-tombstone round-trip is asserted by the storage tests the drill references (ADR 0007 backup/restore tests) until the drill grows a tombstone fixture.
-- A3/CI: the drill runs under `npm run ci` so the gate evidence is continuously re-verified rather than rotting outside CI (qa `t_19def135`).
+- A3/CI: the drill runs under `npm run ci` (which includes `npm run backup:drill`) and in a dedicated `backup-drill` CI matrix job so the gate evidence is continuously re-verified rather than rotting outside CI (qa `t_9b100434`).
 - Migration/backup tests already required by ADR 0003/0007 gain the envelope contract; restore refuses unencrypted exports when the envelope is enabled.

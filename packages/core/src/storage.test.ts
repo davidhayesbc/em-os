@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -86,8 +86,11 @@ test("versioned encrypted export/import round-trips",async()=>{const x=await fix
  assert.equal(parsed.cipher,"AES-256-GCM"); assert.equal(parsed.kdf.alg,"HKDF-SHA-256"); assert.equal(parsed.kdf.info,"em-os backup key v1");
  assert.ok(isBase64(parsed.inner)); assert.ok(isBase64(parsed.nonce_b64)); assert.ok(isBase64(parsed.tag_b64)); assert.ok(isBase64(parsed.aad_b64));
  assert.ok(!parsed.inner.includes("source_records"));
- const restored=await SqliteStorage.restoreFromExport(exportPath,join(x.dir,"restored.sqlite"),keySource);
- assert.equal((restored.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,1); restored.close();
+ const destPath=join(x.dir,"restored.sqlite");
+ const restored=await SqliteStorage.restoreFromExport(exportPath,destPath,keySource);
+ assert.equal((restored.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,1);
+ assert.equal((await stat(destPath)).mode & 0o777,0o600,"restored DB from export must be 0o600");
+ restored.close();
 }finally{await x.cleanup();}});
 
 test("versioned encrypted SQLite backup round-trips with integrity",async()=>{const x=await fixture();try{
@@ -96,9 +99,11 @@ test("versioned encrypted SQLite backup round-trips with integrity",async()=>{co
  const parsed=JSON.parse(await readFile(backupPath,"utf8"));
  assert.equal(parsed.format,"em-os-enc-backup"); assert.equal(parsed.artifact,"sqlite-backup");
  assert.ok(!parsed.inner.includes("source_records"));
- const restored=await SqliteStorage.restoreFromEncryptedBackup(backupPath,join(x.dir,"restored.sqlite"),keySource);
+ const destPath=join(x.dir,"restored.sqlite");
+ const restored=await SqliteStorage.restoreFromEncryptedBackup(backupPath,destPath,keySource);
  assert.equal((restored.db.prepare("SELECT cursor FROM sync_cursors").get() as {cursor:string}).cursor,"c1");
  assert.equal((restored.db.prepare("PRAGMA integrity_check").get() as {integrity_check:string}).integrity_check,"ok");
+ assert.equal((await stat(destPath)).mode & 0o777,0o600,"restored DB from encrypted backup must be 0o600");
  restored.close();
 }finally{await x.cleanup();}});
 
