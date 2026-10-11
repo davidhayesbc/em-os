@@ -11,16 +11,30 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = Object.freeze({
 export function appDataDirectory(platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
   const paths = platform === "win32" ? win32 : posix;
   if (env.EM_OS_DATA_DIR) return paths.resolve(env.EM_OS_DATA_DIR);
-  if (platform === "darwin") return paths.join(home, "Library", "Application Support", "em-os");
-  if (platform === "win32") return paths.join(env.APPDATA ?? paths.join(home, "AppData", "Roaming"), "em-os");
+  if (platform === "darwin") return paths.join(home, "Library", "Application Support", "EM OS");
+  if (platform === "win32") return paths.join(env.LOCALAPPDATA ?? paths.join(env.APPDATA ?? paths.join(home, "AppData", "Roaming"), "..", "Local"), "EM OS");
   return paths.join(env.XDG_DATA_HOME ?? paths.join(home, ".local", "share"), "em-os");
 }
 
-export function localPaths(dataDirectory = appDataDirectory()) {
+export interface LocalPaths {
+  dataDirectory: string;
+  database: string;
+  settings: string;
+  dbDir: string;
+  backupsDir: string;
+  cacheDir: string;
+  logsDir: string;
+}
+
+export function localPaths(dataDirectory = appDataDirectory()): LocalPaths {
   const paths = process.platform === "win32" ? win32 : posix;
   return {
     dataDirectory,
-    database: paths.join(dataDirectory, "em-os.sqlite3"),
+    dbDir: paths.join(dataDirectory, "db"),
+    backupsDir: paths.join(dataDirectory, "backups"),
+    cacheDir: paths.join(dataDirectory, "cache"),
+    logsDir: paths.join(dataDirectory, "logs"),
+    database: paths.join(dataDirectory, "db", "em-os.sqlite3"),
     settings: paths.join(dataDirectory, "settings.json"),
-  } as const;
+  };
 }
