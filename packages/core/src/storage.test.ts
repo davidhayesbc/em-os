@@ -1,19 +1,39 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SqliteStorage } from "./storage.js";
+import { DatabaseSync } from "node:sqlite";
+import { SqliteStorage, BackupEnvelopeError, BackupKeyUnavailableError, type BackupKeySource } from "./storage.js";
 
 async function fixture() {
  const dir=await mkdtemp(join(tmpdir(),"em-os-storage-"));
  const store=new SqliteStorage(join(dir,"store.sqlite")); await store.initialize();
- return {dir,store,cleanup:async()=>{store.close();await rm(dir,{recursive:true,force:true});}};
+ return {dir,store,cleanup:async()=>{store.close();await rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});}};
 }
-const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z"};
+const record={id:"github:pr:acme/api:42",provider:"github",sourceId:"acme/api:42",stableUrl:"https://example.invalid/acme/api/pull/42",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Synthetic review requested",contentHash:"sha256:synthetic",classification:"internal",lastSeenAt:"2026-10-09T09:00:00.000Z"};
+const keyMaterial=Buffer.from("synthetic os key material 32b!!","utf8");
+const keySource:BackupKeySource={getKeyMaterial:()=>keyMaterial};
+
+async function assertOwnerOnlyModeOnPosix(path:string,message:string):Promise<void>{
+ if(process.platform!=="win32") assert.equal((await stat(path)).mode & 0o777,0o600,message);
+}
+
+function isBase64(str:string):boolean{
+ return /^[A-Za-z0-9+/]*={0,2}$/.test(str) && Buffer.from(str,"base64").toString("base64")===str;
+}
 
 test("empty database migrates with foreign keys and FTS5",async()=>{const x=await fixture();try{
- assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2}]);
+ assert.deepEqual(Array.from(x.store.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(), row=>({...row})),[{version:1},{version:2},{version:3}]);
+ const schemaRows=x.store.db.prepare("SELECT type,name,sql FROM sqlite_master WHERE name IN ('action_review_guard','review_audit_no_insert','review_queue_proposals','proposal_review_audit') ORDER BY name").all() as {type:string;name:string;sql:string}[];
+ assert.deepEqual(schemaRows.map(({type,name})=>({type,name})),[
+  {type:"trigger",name:"action_review_guard"},
+  {type:"table",name:"proposal_review_audit"},
+  {type:"trigger",name:"review_audit_no_insert"},
+  {type:"table",name:"review_queue_proposals"},
+ ]);
+ assert.match(schemaRows.find(row=>row.name==="action_review_guard")!.sql,/em_review_write_mode\(\)/);
+ assert.match(schemaRows.find(row=>row.name==="review_audit_no_insert")!.sql,/em_review_write_mode\(\)/);
  assert.equal((x.store.db.prepare("PRAGMA foreign_keys").get() as {foreign_keys:number}).foreign_keys,1);
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records_fts WHERE source_records_fts MATCH 'review'").get() as {n:number}).n,1);
@@ -63,6 +83,26 @@ test("a deletion tombstone prevents stale sync from restoring excerpts",async()=
  const row=x.store.db.prepare("SELECT excerpt,deleted_at FROM source_records").get() as {excerpt:null;deleted_at:string};
  assert.equal(row.excerpt,null); assert.equal(row.deleted_at,"2026-10-10T00:00:00.000Z");
 }finally{await x.cleanup();}});
+test("deletion before first live copy creates a tombstone that suppresses later live copy",async()=>{const x=await fixture();try{
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:00:00.000Z", records:[], deletedSourceIds:["CPUBLIC1:1700000000.003"], proposals:[] });
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:01:00.000Z", records:[{id:"slack:message:CPUBLIC1:1700000000.003",provider:"slack",sourceId:"CPUBLIC1:1700000000.003",stableUrl:"https://example.invalid/archives/CPUBLIC1/p1700000000003",occurredAt:"2026-10-08T12:00:00.000Z",observedAt:"2026-10-09T09:01:00.000Z",excerpt:"Late live copy",contentHash:"sha256:late",classification:"work",lastSeenAt:"2026-10-09T09:01:00.000Z",retentionUntil:"2026-11-08T09:01:00.000Z"}], deletedSourceIds:[], proposals:[] });
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,0);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM deletion_tombstones WHERE source_id='CPUBLIC1:1700000000.003'").get() as {n:number}).n,1);
+}finally{await x.cleanup();}});
+test("slack deletion removes a proposal and later live replay cannot resurrect it",async()=>{const x=await fixture();try{
+ const sourceRecordId="slack:message:CPUBLIC1:1700000000.004";
+ const proposalId="slack:proposal:CPUBLIC1:1700000000.004";
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:00:00.000Z", records:[{id:sourceRecordId,provider:"slack",sourceId:"CPUBLIC1:1700000000.004",stableUrl:"https://example.invalid/archives/CPUBLIC1/p1700000000004",occurredAt:"2026-10-08T12:00:00.000Z",observedAt:"2026-10-09T09:00:00.000Z",excerpt:"Action needed",contentHash:"sha256:live",classification:"work",lastSeenAt:"2026-10-09T09:00:00.000Z",retentionUntil:"2026-11-08T09:00:00.000Z"}], deletedSourceIds:[], proposals:[{id:proposalId,kind:"action",description:"Action needed",sourceRecordId}]});
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_queue_proposals").get() as {n:number}).n,1);
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:02:00.000Z", records:[], deletedSourceIds:["CPUBLIC1:1700000000.004"], proposals:[] });
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_queue_proposals").get() as {n:number}).n,0);
+ assert.equal((x.store.db.prepare("SELECT excerpt FROM source_records WHERE source_id='CPUBLIC1:1700000000.004'").get() as {excerpt:null}).excerpt,null);
+ x.store.persistSlackPage({ connector:"slack-public-review-queue", scope:"CPUBLIC1", observedAt:"2026-10-09T09:03:00.000Z", records:[{id:sourceRecordId,provider:"slack",sourceId:"CPUBLIC1:1700000000.004",stableUrl:"https://example.invalid/archives/CPUBLIC1/p1700000000004",occurredAt:"2026-10-08T12:00:00.000Z",observedAt:"2026-10-09T09:03:00.000Z",excerpt:"Replay action needed",contentHash:"sha256:replay",classification:"work",lastSeenAt:"2026-10-09T09:03:00.000Z",retentionUntil:"2026-11-08T09:03:00.000Z"}], deletedSourceIds:[], proposals:[{id:proposalId,kind:"action",description:"Replay action needed",sourceRecordId}]});
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_queue_proposals").get() as {n:number}).n,0);
+ const row=x.store.db.prepare("SELECT excerpt,deleted_at FROM source_records WHERE source_id='CPUBLIC1:1700000000.004'").get() as {excerpt:null;deleted_at:string};
+ assert.equal(row.excerpt,null);
+ assert.equal(row.deleted_at,"2026-10-09T09:02:00.000Z");
+}finally{await x.cleanup();}});
 
 test("delete-before-sync persists a durable tombstone and suppresses stale materialization",async()=>{const x=await fixture();try{
  x.store.deleteSource(record.provider,record.sourceId,"source_deleted","2026-10-10T00:00:00.000Z");
@@ -72,14 +112,119 @@ test("delete-before-sync persists a durable tombstone and suppresses stale mater
  assert.equal((x.store.db.prepare("SELECT count(*) n FROM deletion_tombstones").get() as {n:number}).n,1);
 }finally{await x.cleanup();}});
 
-test("versioned export/import and SQLite backup restore data",async()=>{const x=await fixture();try{
+test("versioned encrypted export/import round-trips",async()=>{const x=await fixture();try{
  x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
- const exportPath=join(x.dir,"backup","export.json"); await x.store.writeExport(exportPath);
- const parsed=JSON.parse(await readFile(exportPath,"utf8")); assert.equal(parsed.version,1);
- const restored=await SqliteStorage.restoreFromExport(join(x.dir,"restored.sqlite"),exportPath);
+ const exportPath=join(x.dir,"backup","export.enc.json"); await x.store.writeExport(exportPath,keySource);
+ const parsed=JSON.parse(await readFile(exportPath,"utf8"));
+ assert.equal(parsed.format,"em-os-enc-backup"); assert.equal(parsed.version,1); assert.equal(parsed.schema_version,1); assert.equal(parsed.artifact,"em-os-storage");
+ assert.equal(parsed.cipher,"AES-256-GCM"); assert.equal(parsed.kdf.alg,"HKDF-SHA-256"); assert.equal(parsed.kdf.info,"em-os backup key v1");
+ assert.ok(isBase64(parsed.inner)); assert.ok(isBase64(parsed.nonce_b64)); assert.ok(isBase64(parsed.tag_b64)); assert.ok(isBase64(parsed.aad_b64));
+ assert.ok(!parsed.inner.includes("source_records"));
+ const destPath=join(x.dir,"restored.sqlite");
+ const restored=await SqliteStorage.restoreFromExport(exportPath,destPath,keySource);
+ try { assert.equal((restored.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,1); }
+ finally { restored.close(); }
+ await assertOwnerOnlyModeOnPosix(destPath,"restored DB from export must be 0o600");
+}finally{await x.cleanup();}});
+
+test("versioned encrypted SQLite backup round-trips with integrity",async()=>{const x=await fixture();try{
+ x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
+ const backupPath=join(x.dir,"backup","store.enc.json"); await x.store.backupToEncrypted(backupPath,keySource);
+ const parsed=JSON.parse(await readFile(backupPath,"utf8"));
+ assert.equal(parsed.format,"em-os-enc-backup"); assert.equal(parsed.artifact,"sqlite-backup");
+ assert.ok(!parsed.inner.includes("source_records"));
+ const destPath=join(x.dir,"nested","restore","restored.sqlite");
+ const restored=await SqliteStorage.restoreFromEncryptedBackup(backupPath,destPath,keySource);
+ try {
+  assert.equal((restored.db.prepare("SELECT cursor FROM sync_cursors").get() as {cursor:string}).cursor,"c1");
+  assert.equal((restored.db.prepare("PRAGMA integrity_check").get() as {integrity_check:string}).integrity_check,"ok");
+ } finally { restored.close(); }
+ await assertOwnerOnlyModeOnPosix(destPath,"restored DB from encrypted backup must be 0o600");
+}finally{await x.cleanup();}});
+
+test("both public encrypted restore APIs normalize invalid JSON before key access or destination writes",async()=>{const x=await fixture();try{
+ for(const api of ["export","backup"] as const){
+  const input=join(x.dir,`${api}-invalid-json.enc.json`);
+  const destination=join(x.dir,"must-not-exist",`${api}.sqlite`);
+  await writeFile(input,"{not valid JSON and must not appear in the error");
+  let keyCalls=0;
+  const countingKey:BackupKeySource={getKeyMaterial:()=>{keyCalls++;return keyMaterial;}};
+  const operation=api==="export"
+   ?SqliteStorage.restoreFromExport(input,destination,countingKey)
+   :SqliteStorage.restoreFromEncryptedBackup(input,destination,countingKey);
+  await assert.rejects(operation,(error:unknown)=>error instanceof BackupEnvelopeError&&error.message==="EnvelopeValidationError: envelope is not valid JSON");
+  assert.equal(keyCalls,0,"invalid JSON must fail before key-source access");
+  await assert.rejects(stat(destination),{code:"ENOENT"});
+ }
+}finally{await x.cleanup();}});
+
+test("both public encrypted restore APIs reject malformed envelopes before KDF or destination writes",async()=>{const x=await fixture();try{
+ const exportPath=join(x.dir,"export.enc.json"); await x.store.writeExport(exportPath,keySource);
+ const backupPath=join(x.dir,"backup.enc.json"); await x.store.backupToEncrypted(backupPath,keySource);
+ const validExport=JSON.parse(await readFile(exportPath,"utf8"));
+ const validBackup=JSON.parse(await readFile(backupPath,"utf8"));
+ for(const [api,valid] of [["export",validExport],["backup",validBackup]] as const){
+  const cases:(null|number|Record<string,unknown>)[]=[null,42];
+  for(const field of ["kdf","nonce_b64","tag_b64"] as const){
+   const missing=structuredClone(valid); delete missing[field]; cases.push(missing);
+   const nil=structuredClone(valid); nil[field]=null; cases.push(nil);
+  }
+  for(const mutate of [
+   (e:any)=>{delete e.inner;},
+   (e:any)=>{e.inner="***not-base64***";},
+   (e:any)=>{delete e.kdf.salt_b64;},
+   (e:any)=>{e.kdf.salt_b64="***not-base64***";},
+   (e:any)=>{e.kdf.dkLen=16;},
+   (e:any)=>{e.kdf.source="operator-passphrase";},
+   (e:any)=>{e.kdf.info="wrong";},
+   (e:any)=>{e.nonce_b64="***not-base64***";},
+   (e:any)=>{e.nonce_b64=Buffer.alloc(11).toString("base64");},
+   (e:any)=>{e.tag_b64="***not-base64***";},
+   (e:any)=>{e.tag_b64=Buffer.alloc(15).toString("base64");},
+  ]){const malformed=structuredClone(valid);mutate(malformed);cases.push(malformed);}
+  for(let i=0;i<cases.length;i++){
+   const input=join(x.dir,`${api}-malformed-${i}.json`); await writeFile(input,JSON.stringify(cases[i]));
+   const destination=join(x.dir,"must-not-exist",`${api}-${i}.sqlite`); let kdfCalls=0;
+   const countingKey:BackupKeySource={getKeyMaterial:()=>{kdfCalls++;return keyMaterial;}};
+   const operation=api==="export"?SqliteStorage.restoreFromExport(input,destination,countingKey):SqliteStorage.restoreFromEncryptedBackup(input,destination,countingKey);
+   await assert.rejects(operation,(error:unknown)=>error instanceof Error&&error.name==="BackupEnvelopeError");
+   assert.equal(kdfCalls,0,"malformed envelope must fail before KDF");
+   await assert.rejects(stat(destination),{code:"ENOENT"});
+  }
+ }
+}finally{await x.cleanup();}});
+
+test("writeExport and backupTo default paths require a key source",async()=>{const x=await fixture();try{
+ const exportPath=join(x.dir,"backup","export.enc.json");
+ await assert.rejects(x.store.writeExport(exportPath,null as unknown as BackupKeySource),BackupKeyUnavailableError);
+ const backupPath=join(x.dir,"backup","store.enc.json");
+ await assert.rejects(x.store.backupToEncrypted(backupPath,null as unknown as BackupKeySource),BackupKeyUnavailableError);
+}finally{await x.cleanup();}});
+
+test("dev-only insecure plaintext paths still exist for diagnostics",async()=>{const x=await fixture();try{
+ x.store.persistSync({connector:"github",scope:"acme/api",cursor:"c1",observedAt:record.observedAt,records:[record]});
+ const exportPath=join(x.dir,"backup","export.json"); await x.store.writeExportDevInsecure(exportPath);
+ const parsed=JSON.parse(await readFile(exportPath,"utf8")); assert.equal(parsed.version,1); assert.equal(parsed.format,"em-os-storage");
+ const restored=await SqliteStorage.restoreFromExportDevInsecure(exportPath,join(x.dir,"restored.sqlite"));
  assert.equal((restored.db.prepare("SELECT count(*) n FROM source_records").get() as {n:number}).n,1); restored.close();
- const backupPath=join(x.dir,"backup","store.sqlite"); await x.store.backupTo(backupPath);
+ const backupPath=join(x.dir,"backup","store.sqlite"); await x.store.backupToDevInsecure(backupPath);
  const backup=new SqliteStorage(backupPath); await backup.initialize(); assert.equal((backup.db.prepare("SELECT cursor FROM sync_cursors").get() as {cursor:string}).cursor,"c1"); backup.close();
+
+}finally{await x.cleanup();}});
+
+test("deleted PR is excluded from listPullRequests while tombstone remains",async()=>{const x=await fixture();try{
+ const pr={provider:"github",repository:"acme/api",id:"42",title:"Synthetic PR",url:"https://example.invalid/acme/api/pull/42",author:"alice",isDraft:false,reviewRequestedOfViewer:true,ciStatus:"passing" as const,updatedAt:"2026-10-09T09:00:00.000Z"};
+ await x.store.savePullRequests([pr],record.observedAt);
+ assert.equal((await x.store.listPullRequests()).length,1);
+ x.store.deleteSource("github","acme/api:42","source_deleted","2026-10-10T00:00:00.000Z");
+ assert.equal((await x.store.listPullRequests()).length,0);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM deletion_tombstones").get() as {n:number}).n,1);
+ assert.equal((x.store.db.prepare("SELECT title FROM prs").get() as {title:string}).title,"Synthetic PR");
+}finally{await x.cleanup();}});
+
+test("encrypted restore rejects unencrypted export artifact",async()=>{const x=await fixture();try{
+ const exportPath=join(x.dir,"backup","export.json"); await x.store.writeExportDevInsecure(exportPath);
+ await assert.rejects(SqliteStorage.restoreFromExport(exportPath,join(x.dir,"restored.sqlite"),keySource),(error:unknown)=>error instanceof Error&&error.name==="BackupEnvelopeError"&&/format must be em-os-enc-backup/.test(error.message));
 }finally{await x.cleanup();}});
 
 test("timestamps reject local offsets and normalize UTC fixtures",async()=>{const x=await fixture();try{
@@ -87,3 +232,59 @@ test("timestamps reject local offsets and normalize UTC fixtures",async()=>{cons
  x.store.persistSync({connector:"calendar",scope:"synthetic",observedAt:"2026-11-01T05:30:00.000Z",records:[]});
  assert.equal((x.store.db.prepare("SELECT last_success_at FROM sync_cursors").get() as {last_success_at:string}).last_success_at,"2026-11-01T05:30:00.000Z");
 }finally{await x.cleanup();}});
+
+test("pull request ingestion respects tombstones before and after materialization",async()=>{const x=await fixture();try{
+ const pr={provider:"github",repository:"acme/api",id:"42",title:"Synthetic PR",url:record.stableUrl,author:"octocat",isDraft:false,reviewRequestedOfViewer:true,ciStatus:"passing" as const,updatedAt:record.observedAt};
+ await x.store.savePullRequests([pr],record.observedAt);
+ x.store.deleteSource(record.provider,record.sourceId,"source_deleted","2026-10-10T00:00:00.000Z");
+ await x.store.savePullRequests([{...pr,title:"must not update",updatedAt:"2026-10-11T00:00:00.000Z"}],"2026-10-11T00:00:00.000Z");
+ assert.deepEqual({...x.store.db.prepare("SELECT deleted_at,excerpt FROM source_records WHERE provider=? AND source_id=?").get(record.provider,record.sourceId)},{deleted_at:"2026-10-10T00:00:00.000Z",excerpt:null});
+ assert.equal((x.store.db.prepare("SELECT title FROM prs WHERE provider=? AND repository=? AND source_id=?").get(pr.provider,pr.repository,pr.id) as {title:string}).title,"Synthetic PR");
+ const before={...pr,id:"43",url:"https://example.invalid/acme/api/pull/43"};
+ x.store.deleteSource(before.provider,`${before.repository}:${before.id}`,"source_deleted","2026-10-10T00:00:00.000Z");
+ await x.store.savePullRequests([before],record.observedAt);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records WHERE provider=? AND source_id=?").get(before.provider,`${before.repository}:${before.id}`) as {n:number}).n,0);
+ assert.equal((x.store.db.prepare("SELECT count(*) n FROM prs WHERE provider=? AND repository=? AND source_id=?").get(before.provider,before.repository,before.id) as {n:number}).n,0);
+}finally{await x.cleanup();}});
+
+test("import replaces existing audited data and can be repeated",async()=>{const x=await fixture();try{
+ x.store.db.prepare("INSERT INTO action_items(id,description) VALUES('source','Source action')").run();
+ x.store.transition("action_item","source","approved","manager","verified","2026-10-09T10:00:00.000Z");
+ const exported=x.store.exportData("2026-10-09T11:00:00.000Z");
+ x.store.db.prepare("INSERT INTO action_items(id,description) VALUES('existing','Existing action')").run();
+ x.store.transition("action_item","existing","rejected","manager","obsolete","2026-10-09T12:00:00.000Z");
+ x.store.importData(exported); x.store.importData(exported);
+ assert.deepEqual(Array.from(x.store.db.prepare("SELECT entity_id,from_state,to_state,actor,reason,changed_at FROM review_audit ORDER BY id").all(),row=>({...row})),[
+  {entity_id:"source",from_state:"proposed",to_state:"approved",actor:"manager",reason:"verified",changed_at:"2026-10-09T10:00:00.000Z"},
+ ]);
+ assert.throws(()=>x.store.db.prepare("DELETE FROM review_audit").run(),/append-only/);
+}finally{await x.cleanup();}});
+
+test("v1 database with data and audit upgrades through guarded v2 and review-queue v3",async()=>{
+ const dir=await mkdtemp(join(tmpdir(),"em-os-storage-v1-")); const path=join(dir,"store.sqlite"); const v1=new DatabaseSync(path);
+ try { v1.exec(`
+  CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'2026-10-09T09:00:00.000Z');
+  CREATE TABLE action_items(id TEXT PRIMARY KEY,description TEXT NOT NULL,review_state TEXT NOT NULL DEFAULT 'proposed',updated_at TEXT NOT NULL DEFAULT '2026-10-09T09:00:00.000Z') STRICT;
+  CREATE TABLE evidence(id TEXT PRIMARY KEY,status TEXT NOT NULL DEFAULT 'proposed') STRICT; CREATE TABLE drafts(id TEXT PRIMARY KEY,reviewer_state TEXT NOT NULL DEFAULT 'proposed') STRICT;
+  CREATE TABLE review_audit(id INTEGER PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,from_state TEXT NOT NULL,to_state TEXT NOT NULL,actor TEXT NOT NULL,reason TEXT NOT NULL,changed_at TEXT NOT NULL) STRICT;
+  CREATE TABLE deletion_tombstones(provider TEXT NOT NULL,source_id TEXT NOT NULL,deleted_at TEXT NOT NULL,reason TEXT NOT NULL,content_hash TEXT NOT NULL,PRIMARY KEY(provider,source_id)) STRICT;
+  CREATE TRIGGER action_review_guard BEFORE UPDATE OF review_state ON action_items WHEN old.review_state <> new.review_state BEGIN SELECT RAISE(ABORT,'review transition requires audit'); END;
+  CREATE TRIGGER evidence_review_guard BEFORE UPDATE OF status ON evidence WHEN old.status <> new.status BEGIN SELECT RAISE(ABORT,'review transition requires audit'); END;
+  CREATE TRIGGER draft_review_guard BEFORE UPDATE OF reviewer_state ON drafts WHEN old.reviewer_state <> new.reviewer_state BEGIN SELECT RAISE(ABORT,'review transition requires audit'); END;
+  CREATE TRIGGER action_items_initial_review_guard BEFORE INSERT ON action_items WHEN new.review_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+  CREATE TRIGGER evidence_initial_review_guard BEFORE INSERT ON evidence WHEN new.status <> 'proposed' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+  CREATE TRIGGER drafts_initial_review_guard BEFORE INSERT ON drafts WHEN new.reviewer_state <> 'proposed' BEGIN SELECT RAISE(ABORT,'review entities must start proposed'); END;
+  CREATE TRIGGER review_audit_no_update BEFORE UPDATE ON review_audit BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+  CREATE TRIGGER review_audit_no_delete BEFORE DELETE ON review_audit BEGIN SELECT RAISE(ABORT,'review audit is append-only'); END;
+  INSERT INTO action_items(id,description) VALUES('a1','Existing v1 action');
+  INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','a1','proposed','approved','manager','v1 decision','2026-10-09T10:00:00.000Z');
+  INSERT INTO deletion_tombstones VALUES('github','acme/api:42','2026-10-09T10:00:00.000Z','deleted','sha256:v1');
+ `); } finally { v1.close(); }
+ const upgraded=new SqliteStorage(path); try {
+  await upgraded.initialize();
+  assert.deepEqual(Array.from(upgraded.db.prepare("SELECT version FROM schema_migrations ORDER BY version").all(),row=>({...row})),[{version:1},{version:2},{version:3}]);
+  assert.equal((upgraded.db.prepare("SELECT reason FROM deletion_tombstones WHERE provider='github' AND source_id='acme/api:42'").get() as {reason:string}).reason,"deleted");
+  assert.equal((upgraded.db.prepare("SELECT actor FROM review_audit WHERE entity_id='a1'").get() as {actor:string}).actor,"manager");
+  assert.throws(()=>upgraded.db.prepare("UPDATE action_items SET review_state='rejected' WHERE id='a1'").run(),/requires storage API/);
+ } finally { upgraded.close(); await rm(dir,{recursive:true,force:true}); }
+});

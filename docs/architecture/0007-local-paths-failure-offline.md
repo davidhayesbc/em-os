@@ -13,7 +13,7 @@ Local-first means independent local instances and honest operation without netwo
 Resolve a per-user application-data root through a `DataPaths` port:
 
 - macOS default: `~/Library/Application Support/EM OS/`;
-- Windows default: `%LOCALAPPDATA%\EM OS\` unless corporate backup/roaming policy selects `%APPDATA%`;
+- Windows default: `%LOCALAPPDATA%\EM OS\` unless corporate backup/roaming policy selects `%APPDATA%\EM OS\`;
 - tests: an explicit isolated temporary root outside the checkout;
 - Linux development: `${XDG_DATA_HOME:-~/.local/share}/em-os/` (not an MVP support commitment).
 
@@ -45,5 +45,5 @@ Users get useful offline behavior and explicit trust signals. Corporate path/enc
 - Path tests cover both target OS conventions, Unicode/spaces/long paths, checkout rejection, permissions, and no-secret config serialization.
 - Offline/no-network tests prove cached triage and local actions work and model/connectors fail visibly.
 - Failure tests cover rate limit, permission, schema drift, timeout, cancellation, partial page rollback, independent connector isolation, and freshness transitions.
-- Backup/restore tests verify manifest, integrity, encryption policy hook, and deletion state.
+- Backup/restore tests verify manifest, integrity, the `em-os-enc-backup` envelope contract (header-AAD and validated-field-set/rejection rules per ADR 0008 §Decision item 3), and deletion state.
 - Log snapshots use synthetic identifiers and assert tokens, prompt/source bodies, and personnel content are absent.
