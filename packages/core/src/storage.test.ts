@@ -185,6 +185,16 @@ test("v1 database with data and audit upgrades through guarded v2 and review-que
  const dir=await mkdtemp(join(tmpdir(),"em-os-storage-v1-")); const path=join(dir,"store.sqlite"); const v1=new DatabaseSync(path);
  try { v1.exec(`
   CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES(1,'2026-10-09T09:00:00.000Z');
+  CREATE TABLE source_records (
+   id TEXT PRIMARY KEY, provider TEXT NOT NULL, source_id TEXT NOT NULL, stable_url TEXT,
+   occurred_at TEXT, observed_at TEXT NOT NULL, excerpt TEXT, content_hash TEXT NOT NULL,
+   classification TEXT NOT NULL, last_seen_at TEXT NOT NULL, retention_until TEXT,
+   deleted_at TEXT, deletion_reason TEXT,
+   created_at TEXT NOT NULL DEFAULT '2026-10-09T09:00:00.000Z', updated_at TEXT NOT NULL DEFAULT '2026-10-09T09:00:00.000Z',
+   UNIQUE(provider, source_id)
+  ) STRICT;
+  INSERT INTO source_records(id,provider,source_id,stable_url,observed_at,excerpt,content_hash,classification,last_seen_at) VALUES('github:pr:acme/api:42','github','acme/api:42','https://example.invalid/acme/api/pull/42','2026-10-09T09:00:00.000Z','Synthetic review requested','sha256:synthetic','internal','2026-10-09T09:00:00.000Z');
+  CREATE TABLE sync_cursors (connector TEXT NOT NULL, scope TEXT NOT NULL, cursor TEXT, watermark TEXT, last_success_at TEXT, last_error TEXT, fetched_count INTEGER NOT NULL DEFAULT 0 CHECK(fetched_count >= 0), updated_at TEXT NOT NULL DEFAULT '2026-10-09T09:00:00.000Z', PRIMARY KEY(connector, scope)) STRICT;
   CREATE TABLE action_items(id TEXT PRIMARY KEY,description TEXT NOT NULL,review_state TEXT NOT NULL DEFAULT 'proposed',updated_at TEXT NOT NULL DEFAULT '2026-10-09T09:00:00.000Z') STRICT;
   CREATE TABLE evidence(id TEXT PRIMARY KEY,status TEXT NOT NULL DEFAULT 'proposed') STRICT; CREATE TABLE drafts(id TEXT PRIMARY KEY,reviewer_state TEXT NOT NULL DEFAULT 'proposed') STRICT;
   CREATE TABLE review_audit(id INTEGER PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,from_state TEXT NOT NULL,to_state TEXT NOT NULL,actor TEXT NOT NULL,reason TEXT NOT NULL,changed_at TEXT NOT NULL) STRICT;
@@ -207,5 +217,32 @@ test("v1 database with data and audit upgrades through guarded v2 and review-que
   assert.equal((upgraded.db.prepare("SELECT reason FROM deletion_tombstones WHERE provider='github' AND source_id='acme/api:42'").get() as {reason:string}).reason,"deleted");
   assert.equal((upgraded.db.prepare("SELECT actor FROM review_audit WHERE entity_id='a1'").get() as {actor:string}).actor,"manager");
   assert.throws(()=>upgraded.db.prepare("UPDATE action_items SET review_state='rejected' WHERE id='a1'").run(),/requires storage API/);
+
+  // v3 review-queue schema and guards are present after upgrading a populated v1 database
+  const v3Schema=upgraded.db.prepare("SELECT type,name,sql FROM sqlite_master WHERE name IN ('review_queue_proposals','proposal_review_audit','review_queue_proposals_initial_guard','review_queue_proposals_terminal_guard','review_queue_proposals_audit_guard','proposal_review_audit_no_update','proposal_review_audit_no_delete') ORDER BY name").all() as {type:string;name:string;sql:string}[];
+  assert.deepEqual(v3Schema.map(({type,name})=>({type,name})),[
+   {type:"table",name:"proposal_review_audit"},
+   {type:"trigger",name:"proposal_review_audit_no_delete"},
+   {type:"trigger",name:"proposal_review_audit_no_update"},
+   {type:"table",name:"review_queue_proposals"},
+   {type:"trigger",name:"review_queue_proposals_audit_guard"},
+   {type:"trigger",name:"review_queue_proposals_initial_guard"},
+   {type:"trigger",name:"review_queue_proposals_terminal_guard"},
+  ]);
+  assert.match(v3Schema.find(row=>row.name==="review_queue_proposals")!.sql,/CHECK\(review_state IN \('proposed','approved','rejected'\)\)/);
+  assert.match(v3Schema.find(row=>row.name==="proposal_review_audit")!.sql,/REFERENCES review_queue_proposals\(id\) ON DELETE RESTRICT/);
+
+  // v3 transition/audit protections are enforced on the upgraded database
+  upgraded.persistSync({connector:"github",scope:"acme/api",observedAt:record.observedAt,records:[record]});
+  const proposalId="slack:proposal:CPUBLIC1:1700000000.004";
+  upgraded.db.prepare("INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES(?,?,?,?)").run(proposalId,"action","Action needed",record.id);
+  assert.throws(()=>upgraded.db.prepare("INSERT INTO review_queue_proposals(id,kind,description,source_record_id,review_state) VALUES(?,?,?,?,?)").run("bad","action","Bad",record.id,"approved"),/review queue proposals must start proposed/);
+  assert.throws(()=>upgraded.db.prepare("UPDATE review_queue_proposals SET review_state='approved' WHERE id=?").run(proposalId),/review transition requires audit/);
+  upgraded.db.prepare("INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at) VALUES(?,?,?,?,?,?)").run(proposalId,"proposed","approved","manager","verified","2026-10-09T11:00:00.000Z");
+  assert.throws(()=>upgraded.db.prepare("DELETE FROM proposal_review_audit").run(),/append-only/);
+  assert.throws(()=>upgraded.db.prepare("UPDATE proposal_review_audit SET actor='intruder' WHERE proposal_id=?").run(proposalId),/append-only/);
+  upgraded.transitionSlackProposal(proposalId,"approved","manager","verified","2026-10-09T11:00:00.000Z");
+  assert.equal((upgraded.db.prepare("SELECT review_state FROM review_queue_proposals WHERE id=?").get(proposalId) as {review_state:string}).review_state,"approved");
+  assert.throws(()=>upgraded.transitionSlackProposal(proposalId,"rejected","manager","changed mind","2026-10-09T12:00:00.000Z"),/terminal review state/);
  } finally { upgraded.close(); await rm(dir,{recursive:true,force:true}); }
 });
