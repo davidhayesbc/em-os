@@ -475,9 +475,21 @@ async function assertHistoricalUpgrade(version:1|2):Promise<void> {
    assert.ok(store.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='index' AND name=?").get(index),`missing ${index}`);
   const tombstoneInfo=store.db.prepare("PRAGMA table_info(deletion_tombstones)").all() as {name:string;notnull:number}[];
   assert.equal(tombstoneInfo.find(c=>c.name==="content_hash")?.notnull,0);
+  const reviewSchema=store.db.prepare("SELECT type,name FROM sqlite_schema WHERE name IN ('review_queue_proposals','proposal_review_audit','proposal_review_audit_no_insert','review_queue_proposals_review_guard') ORDER BY name").all();
+  assert.deepEqual(Array.from(reviewSchema,row=>({...row})),[
+   {type:"table",name:"proposal_review_audit"},
+   {type:"trigger",name:"proposal_review_audit_no_insert"},
+   {type:"table",name:"review_queue_proposals"},
+   {type:"trigger",name:"review_queue_proposals_review_guard"},
+  ]);
   assert.throws(()=>store.db.prepare("INSERT INTO review_audit(entity_type,entity_id,from_state,to_state,actor,reason,changed_at) VALUES('action_item','a1','proposed','approved','x','x','2026-10-09T11:00:00.000Z')").run(),/may only be written by storage API/);
   assert.throws(()=>store.db.prepare("UPDATE action_items SET review_state='approved' WHERE id='a1'").run(),/requires storage API/);
   store.transition("action_item","a1","approved","manager","verified","2026-10-09T11:00:00.000Z");
+  store.db.prepare("INSERT INTO review_queue_proposals(id,kind,description,source_record_id) VALUES('p1','action','Migrated proposal','s1')").run();
+  assert.throws(()=>store.db.prepare("INSERT INTO proposal_review_audit(proposal_id,from_state,to_state,actor,reason,changed_at) VALUES('p1','proposed','approved','x','x','2026-10-09T11:00:00.000Z')").run(),/may only be written by storage API/);
+  assert.throws(()=>store.db.prepare("UPDATE review_queue_proposals SET review_state='approved' WHERE id='p1'").run(),/requires storage API/);
+  store.transitionSlackProposal("p1","approved","manager","verified","2026-10-09T11:00:00.000Z");
+  assert.equal((store.db.prepare("SELECT count(*) n FROM proposal_review_audit WHERE proposal_id='p1'").get() as {n:number}).n,1);
   const exported=store.exportData("2026-10-09T12:00:00.000Z"); store.importData(exported); store.importData(exported);
   store.db.exec("INSERT INTO source_records_fts(source_records_fts) VALUES('integrity-check')");
   assert.equal((store.db.prepare("SELECT count(*) n FROM review_audit").get() as {n:number}).n,1);
