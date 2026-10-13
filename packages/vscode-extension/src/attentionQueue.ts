@@ -42,6 +42,47 @@ export function isSnapshotStale(snapshot: QueueSnapshot, now: Date): boolean {
     snapshot.items.some((item) => item.freshness === "stale");
 }
 
+export function effectiveItemFreshness(snapshot: QueueSnapshot, item: QueueItem, now: Date): Freshness {
+  return isSnapshotStale(snapshot, now) || item.freshness === "stale" ? "stale" : "fresh";
+}
+
+export function effectiveItemStatus(item: QueueItem, now: Date): ActionStatus {
+  if (item.status === "snoozed" && item.snoozedUntil && Date.parse(item.snoozedUntil) <= now.getTime()) {
+    return "proposed";
+  }
+  return item.status;
+}
+
+export function queueItemContextValue(item: QueueItem, now: Date): string {
+  return `em-os.queueItem.${effectiveItemStatus(item, now)}`;
+}
+
+export function queueItemQuickPickLabel(snapshot: QueueSnapshot, item: QueueItem, now: Date): string {
+  const stalePrefix = effectiveItemFreshness(snapshot, item, now) === "stale" ? "$(warning) STALE: " : "";
+  return `${stalePrefix}${item.title}`;
+}
+
+export function mergeQueueSnapshot(previous: QueueSnapshot, refreshed: QueueSnapshot): QueueSnapshot {
+  const previousById = new Map(previous.items.map((item) => [item.id, item]));
+  const refreshedIds = new Set(refreshed.items.map((item) => item.id));
+  const items = refreshed.items.map((item): QueueItem => {
+    const existing = previousById.get(item.id);
+    if (!existing) return item;
+    return {
+      ...item,
+      status: existing.status,
+      snoozedUntil: existing.status === "snoozed" ? existing.snoozedUntil : undefined,
+    };
+  });
+
+  // Keep completion tombstones so a later refresh cannot reopen an item merely
+  // because it temporarily disappeared from its source.
+  for (const item of previous.items) {
+    if (item.status === "completed" && !refreshedIds.has(item.id)) items.push(item);
+  }
+  return { ...refreshed, items };
+}
+
 function assertUrl(value: string): void {
   const url = new URL(value);
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Source links must use HTTP(S)");
