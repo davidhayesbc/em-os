@@ -27,6 +27,7 @@ async function invoke(command) {
   const invocation = vscode.commands.executeCommand(command);
   await new Promise((resolve) => setTimeout(resolve, 100));
   await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+  await vscode.commands.executeCommand("workbench.action.closeMessages");
   await within(invocation, `${command} invocation`);
 }
 
