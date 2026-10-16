@@ -23,6 +23,13 @@ async function within(promise, label) {
   }
 }
 
+async function invoke(command) {
+  const invocation = vscode.commands.executeCommand(command);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
+  await within(invocation, `${command} invocation`);
+}
+
 exports.run = async function run() {
   const id = process.env.EM_OS_EXPECTED_EXTENSION;
   const extension = vscode.extensions.getExtension(id);
@@ -33,7 +40,7 @@ exports.run = async function run() {
   const registered = await vscode.commands.getCommands(true);
   for (const command of commands) {
     assert.ok(registered.includes(command), `${command} is not registered`);
-    await within(vscode.commands.executeCommand(command), `${command} invocation`);
+    await invoke(command);
     console.log(`[packaged-vsix-smoke] invoked ${command}`);
   }
 };
