@@ -5,8 +5,14 @@
   "version": "0.1.0",
   "private": true,
   "publisher": "em-os",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/davidhayesbc/em-os.git"
+  },
   "engines": {"vscode": "^1.105.0"},
   "main": "./dist/extension.js",
+  "files": ["dist/**/*.js", "LICENSE"],
   "activationEvents": ["onView:em-os.attention"],
   "contributes": {
     "commands": [
@@ -52,6 +58,8 @@
       }
     }
   },
-  "scripts": {"build": "tsc -b"},
-  "dependencies": {"@em-os/core": "0.1.0"}
+  "scripts": {
+    "build": "tsc -b",
+    "package": "npx --yes @vscode/vsce@4.0.0 package --no-dependencies --out ../../artifacts/em-os-vscode.vsix"
+  }
 }
