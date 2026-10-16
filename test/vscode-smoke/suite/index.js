@@ -27,7 +27,10 @@ async function invoke(command) {
   const invocation = vscode.commands.executeCommand(command);
   await new Promise((resolve) => setTimeout(resolve, 100));
   await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
-  await vscode.commands.executeCommand("workbench.action.closeMessages");
+  const available = await vscode.commands.getCommands(true);
+  for (const candidate of ["notifications.clearAll", "notifications.hideList"]) {
+    if (available.includes(candidate)) await vscode.commands.executeCommand(candidate);
+  }
   await within(invocation, `${command} invocation`);
 }
 
