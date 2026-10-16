@@ -2,6 +2,8 @@ name: Build VSIX
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
 
 permissions:
@@ -34,3 +36,26 @@ jobs:
           path: artifacts/*.vsix
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Publish VSIX GitHub Release
+    needs: package
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: em-os-vscode
+          path: artifacts
+
+      - name: Publish release and VSIX asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/*.vsix
+          fail_on_unmatched_files: true
