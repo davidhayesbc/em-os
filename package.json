@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "description": "Local-first engineering manager workbench prototype",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "build": "tsc -b",
     "package:vsix": "npm run build && node -e \"require('fs').mkdirSync('artifacts',{recursive:true})\" && npm run package --workspace em-os-vscode",
+    "test:vsix-smoke": "node scripts/test-packaged-vsix.mjs",
     "check": "tsc -b --pretty false && node scripts/check-architecture-docs.mjs && node scripts/validate-security-discovery.mjs",
     "test": "npm run build && node --test packages/core/dist/**/*.test.js packages/vscode-extension/dist/**/*.test.js",
     "demo": "npm run build && node packages/cli/dist/main.js attention --fixture fixtures/prs.synthetic.json --now 2026-10-09T09:00:00.000Z",
@@ -23,8 +26,11 @@
   "devDependencies": {
     "@types/node": "^24.7.0",
     "@types/vscode": "^1.105.0",
+    "@vscode/test-electron": "2.5.2",
     "typescript": "^5.9.3"
   },
-  "engines": {"node": ">=22"},
+  "engines": {
+    "node": ">=22"
+  },
   "license": "UNLICENSED"
 }

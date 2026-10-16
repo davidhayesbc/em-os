@@ -31,6 +31,10 @@ class QueueProvider implements vscode.TreeDataProvider<QueueNode> {
     ];
   }
 
+  getParent(): null {
+    return null;
+  }
+
   getTreeItem(node: QueueNode): vscode.TreeItem {
     if (node.kind === "status") {
       const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.None);
