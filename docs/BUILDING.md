@@ -51,11 +51,22 @@ Subdirectories separate `db/`, `backups/`, `cache/`, and redacted operational `l
 
 The MVP definition of done requires restore from an encrypted backup. The current implementation satisfies that contract synthetically; application-level DB encryption and production key management remain gated by `G-SEC-02`.
 
-## VS Code extension smoke
+## Packaged VS Code extension smoke
 
-1. Run `npm ci && npm run build`.
-2. Open `packages/vscode-extension` in VS Code and launch an Extension Development Host.
-3. In the Command Palette verify `EM OS: Sync`, `EM OS: Open Inbox`, `EM OS: What Next`, `EM OS: Draft Weekly Update`, and `EM OS: Capture Evidence` are present.
-4. Invoke each command. The scaffold reports that the capability is synthetic/local or not configured; it does not require or open a webview and performs no network access.
+The automated smoke tests the produced VSIX rather than the extension-development source. It downloads the pinned, engine-compatible VS Code 1.105.1 runtime through `@vscode/test-electron`, installs `artifacts/em-os-vscode.vsix` into isolated user-data and extension directories, verifies the exact installed ID/version, and starts a real Extension Host. Inside that host it activates `em-os.em-os-vscode`, verifies all five contributed commands are registered, and invokes each command with network proxies directed to a closed local port.
+
+On Linux, install Xvfb and run:
+
+```text
+npm ci --ignore-scripts
+npm run package:vsix
+xvfb-run -a npm run test:vsix-smoke
+```
+
+`VSCODE_VERSION` may select another explicit version compatible with `engines.vscode`. `VSCODE_EXECUTABLE_PATH` may point at an already-provisioned compatible test runtime. `VSIX_PATH` may select another artifact. Test state and useful VS Code/Extension Host logs are retained under `.vscode-test/packaged-vsix-smoke/` (or `VSCODE_SMOKE_STATE`).
+
+The dedicated `packaged-vsix-smoke` GitHub Actions workflow runs this sequence on Linux under Xvfb and uploads its logs even after failure. The existing macOS-arm64 and Windows-x64 build/package checks remain separate.
+
+This is activation and command smoke coverage, not visual Extensions-view coverage. Optional manual visual smoke consists of installing the VSIX in VS Code, confirming the extension appears in the Extensions view, checking the five `EM OS:` entries in the Command Palette, and invoking each one. The scaffold reports that each capability is synthetic/local or not configured and performs no network access.
 
 The storage-driver, MCP, real-data, credential-storage, encryption, and approved model routes remain fail-closed gates documented in `docs/architecture/GATES.md` and `docs/SECURITY_CONNECTOR_DISCOVERY.md`.

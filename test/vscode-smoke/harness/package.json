@@ -1,0 +1,7 @@
+{
+  "name": "em-os-packaged-vsix-smoke-harness",
+  "version": "0.0.0",
+  "private": true,
+  "engines": { "vscode": "^1.105.0" },
+  "main": "./extension.js"
+}

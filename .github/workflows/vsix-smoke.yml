@@ -1,0 +1,33 @@
+name: packaged-vsix-smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  extension-host-smoke:
+    name: Linux packaged VSIX Extension Host
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run package:vsix
+      - name: Run packaged VSIX smoke in Xvfb
+        run: xvfb-run -a npm run test:vsix-smoke
+      - name: Upload VS Code and Extension Host logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-vsix-smoke-logs
+          path: .vscode-test/packaged-vsix-smoke/logs/
+          if-no-files-found: warn
+          retention-days: 14
