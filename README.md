@@ -36,7 +36,7 @@ code --install-extension artifacts/em-os-vscode.vsix
 
 `npm run package:vsix` compiles all workspaces and packages the extension with the pinned `@vscode/vsce` version. The output is `artifacts/em-os-vscode.vsix`.
 
-For development without installing a VSIX, run `npm ci`, open the repository in VS Code, and use **Run Extension** (or press `F5`) to start an Extension Development Host.
+For iterative development, rerun `npm run package:vsix`, reinstall `artifacts/em-os-vscode.vsix` with the command above, and reload VS Code. This repository does not currently include a VS Code Extension Development Host launch configuration.
 
 ## Configuration
 
