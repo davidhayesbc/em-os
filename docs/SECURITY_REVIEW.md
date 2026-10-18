@@ -214,10 +214,18 @@ macOS arm64 and Windows x64 in the existing CI matrix.
 
 Reviewed fixtures are synthetic only and use reserved domains
 (`example.invalid`, `example.test`). Note for reviewers:
-`person@example.invalid` and `token=hunter2xyz123` appear as redaction inputs in the
+`person@example.invalid` and `api_key='example-sec-1'` appear as redaction inputs in the
 adversarial fixtures/tests (`fixtures/connectors/meeting-notes.synthetic.json`,
-`packages/core/src/slack-connector.test.ts`, `packages/core/src/review-adapters.test.ts`)
-and are asserted to be removed from stored output.
+`packages/core/src/redact.test.ts`, `packages/core/src/slack-connector.test.ts`,
+`packages/core/src/review-adapters.test.ts`) and are asserted to be removed from stored
+output.
+
+The dedicated `repo-safety` CI job scans the full git history. Two paths contain
+historical adversarial redaction literals that pre-date this repair and are
+exempt from the `assignment-secret` rule only: `packages/core/src/redact.test.ts`
+and `fixtures/connectors/meeting-notes.synthetic.json`. The current working tree
+versions of both files already use scanner-allowed literals and do not rely on
+the exemption.
 
 ## 5. Approved routes and read-only scopes (explicit)
 

@@ -71,7 +71,7 @@ test("paginates, deduplicates updates, applies deletion, classification, retenti
     assert.match(action.description, /revised synthetic launch checklist/);
     const redacted = x.store.db.prepare("SELECT description FROM review_queue_proposals WHERE description LIKE '%Confirm with%'").get() as {description:string};
     assert.doesNotMatch(redacted.description, /person@example\.invalid/);
-    assert.doesNotMatch(redacted.description, /hunter2xyz123/);
+    assert.doesNotMatch(redacted.description, /example-sec-1/);
     assert.match(redacted.description, /\[REDACTED-EMAIL\]/);
     assert.match(redacted.description, /\[REDACTED-SECRET\]/);
     const classifications = x.store.db.prepare("SELECT DISTINCT classification FROM source_records WHERE provider='meeting-notes' AND deleted_at IS NULL").all() as {classification:string}[];
@@ -208,16 +208,16 @@ test("unquoted secret assignment is redacted before persistence", async () => {
       documentLabel: "notes/team.md",
       observedAt: "2026-10-09T09:00:00.000Z",
       items: [
-        { id: "mn-u", title: "Rotate deploy key password=hunter2xyz", body: "api_key=abcdef123456", occurredAt: "2026-10-08T10:00:00.000Z", proposalKind: "action" },
+        { id: "mn-u", title: "Rotate deploy key password=example-sec-2", body: "api_key=example-sec-6", occurredAt: "2026-10-08T10:00:00.000Z", proposalKind: "action" },
       ],
     };
     const source: MeetingNotePageSource = { async fetchPage() { return page; } };
     await new MeetingNoteReviewQueueAdapter(source, new SqliteReviewQueueStore(x.store)).sync(baseScope);
     const record = x.store.db.prepare("SELECT excerpt FROM source_records WHERE source_id LIKE '%:mn-u'").get() as {excerpt:string};
-    assert.doesNotMatch(record.excerpt, /hunter2xyz/);
-    assert.doesNotMatch(record.excerpt, /abcdef123456/);
+    assert.doesNotMatch(record.excerpt, /example-sec-2/);
+    assert.doesNotMatch(record.excerpt, /example-sec-6/);
     const proposal = x.store.db.prepare("SELECT description FROM review_queue_proposals WHERE source_record_id LIKE '%:mn-u'").get() as {description:string};
-    assert.doesNotMatch(proposal.description, /hunter2xyz/);
+    assert.doesNotMatch(proposal.description, /example-sec-2/);
   } finally { await x.cleanup(); }
 });
 
