@@ -6,6 +6,7 @@ const commands = [
   "em-os.openInbox",
   "em-os.whatNext",
   "em-os.draftWeeklyUpdate",
+  "em-os.captureEvidence",
 ];
 
 async function within(promise, label) {

@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   downloadAndUnzipVSCode,
   resolveCliArgsFromVSCodeExecutablePath,
-  runTests,
 } from "@vscode/test-electron";
 
 const root = resolve(import.meta.dirname, "..");
@@ -34,39 +33,13 @@ const successMarkers = [
  * when every explicit success marker has been observed; missing markers or
  * assertion failures still fail the job.
  */
-function captureOutput() {
-  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
-  const originalStderrWrite = process.stderr.write.bind(process.stderr);
-  let output = "";
-
-  function makeInterceptor(original) {
-    return function intercept(chunk, encoding, callback) {
-      const text = typeof chunk === "string" ? chunk : chunk.toString(encoding);
-      output += text;
-      return original(chunk, encoding, callback);
-    };
-  }
-
-  process.stdout.write = makeInterceptor(originalStdoutWrite);
-  process.stderr.write = makeInterceptor(originalStderrWrite);
-
-  return {
-    getOutput() {
-      return output;
-    },
-    restore() {
-      process.stdout.write = originalStdoutWrite;
-      process.stderr.write = originalStderrWrite;
-    },
-  };
-}
-
 function hasAllMarkers(output) {
   return successMarkers.every((marker) => output.includes(marker));
 }
 
-function isTeardownSegfault(error) {
-  const message = error instanceof Error ? error.message : String(error);
+function isTeardownSegfault(result) {
+  if (result.signal === "SIGSEGV") return true;
+  const message = String(result.error ?? "");
   return /SIGSEGV|signal SIGSEGV|Test run terminated with signal/i.test(message);
 }
 
@@ -96,13 +69,13 @@ function codeCli(args, capture = false) {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`VS Code CLI failed (${result.status}): ${result.stderr || result.stdout}`);
+    throw new Error(`VS Code: CLI failed (${result.status}): ${result.stderr || result.stdout}`);
   }
   return result.stdout ?? "";
 }
 
 const isolatedArgs = ["--user-data-dir", userDataDir, "--extensions-dir", extensionsDir, "--disable-gpu"];
-console.log(`Installing ${vsix} with VS Code ${version}`);
+console.log(`Installing ${vsix} with VS Code: ${version}`);
 codeCli([...isolatedArgs, "--install-extension", vsix, "--force"]);
 const installed = codeCli([...isolatedArgs, "--list-extensions", "--show-versions"], true)
   .split(/\r?\n/u)
@@ -112,56 +85,91 @@ assert.deepEqual(installed, [expected], `isolated extension inventory must conta
 console.log(`Verified isolated inventory: ${installed.join(", ")}`);
 
 console.log(`Extension Host logs: ${logsDir}`);
-const capture = captureOutput();
-let electronError;
-try {
-  await runTests({
-    vscodeExecutablePath,
-    extensionDevelopmentPath: resolve(root, "test/vscode-smoke/harness"),
-    extensionTestsPath: resolve(root, "test/vscode-smoke/suite/index.js"),
-    launchArgs: [
-      resolve(root, "test/vscode-smoke/workspace"),
-      ...isolatedArgs,
-      "--logsPath", logsDir,
-      "--disable-workspace-trust",
-      "--disable-telemetry",
-      "--skip-release-notes",
-      "--skip-welcome",
-    ],
-    extensionTestsEnv: {
-      EM_OS_EXPECTED_EXTENSION: "em-os.em-os-vscode",
-      HTTP_PROXY: "http://127.0.0.1:9",
-      HTTPS_PROXY: "http://127.0.0.1:9",
-      NO_PROXY: "",
+
+const runOptions = {
+  vscodeExecutablePath,
+  extensionDevelopmentPath: resolve(root, "test/vscode-smoke/harness"),
+  extensionTestsPath: resolve(root, "test/vscode-smoke/suite/index.js"),
+  launchArgs: [
+    resolve(root, "test/vscode-smoke/workspace"),
+    ...isolatedArgs,
+    "--logsPath", logsDir,
+    "--disable-workspace-trust",
+    "--disable-telemetry",
+    "--skip-release-notes",
+    "--skip-welcome",
+  ],
+  extensionTestsEnv: {
+    EM_OS_EXPECTED_EXTENSION: "em-os.em-os-vscode",
+    HTTP_PROXY: "http://127.0.0.1:9",
+    HTTPS_PROXY: "http://127.0.0.1:9",
+    NO_PROXY: "",
+  },
+};
+
+const runnerScript = resolve(stateRoot, "electron-runner.mjs");
+const runnerOptionsPath = resolve(stateRoot, "electron-runner-options.json");
+writeFileSync(
+  runnerScript,
+  `import { runTests } from "@vscode/test-electron";\nimport { readFileSync } from "node:fs";\nconst options = JSON.parse(readFileSync(process.argv[2], "utf8"));\nawait runTests(options);\n`,
+  "utf8"
+);
+writeFileSync(runnerOptionsPath, JSON.stringify(runOptions, null, 2), "utf8");
+
+const result = await new Promise((resolvePromise) => {
+  let output = "";
+  const child = spawn(process.execPath, [runnerScript, runnerOptionsPath], {
+    cwd: root,
+    env: {
+      ...process.env,
+      DONT_PROMPT_WSL_INSTALL: "1",
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
     },
+    stdio: ["ignore", "pipe", "pipe"],
   });
-} catch (error) {
-  electronError = error;
-}
-capture.restore();
 
-const output = capture.getOutput();
-const allMarkers = hasAllMarkers(output);
+  child.stdout.on("data", (chunk) => {
+    output += chunk;
+    process.stdout.write(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    output += chunk;
+    process.stderr.write(chunk);
+  });
 
-if (electronError) {
-  if (allMarkers && isTeardownSegfault(electronError)) {
+  child.on("error", (error) => {
+    resolvePromise({ ok: false, code: null, signal: null, error, output });
+  });
+  child.on("exit", (code, signal) => {
+    resolvePromise({ ok: code === 0 && signal === null, code, signal, output, error: null });
+  });
+});
+
+const allMarkers = hasAllMarkers(result.output);
+
+if (!result.ok) {
+  if (allMarkers && isTeardownSegfault(result)) {
     console.warn(
       "[packaged-vsix-smoke] Electron teardown segfault detected after all success markers were observed. Treating as PASS because the harness itself succeeded."
     );
-    console.warn(`[packaged-vsix-smoke] underlying error: ${electronError.message}`);
+    console.warn(`[packaged-vsix-smoke] child exit: code=${result.code}, signal=${result.signal}`);
   } else {
     if (!allMarkers) {
       console.error("[packaged-vsix-smoke] missing success markers; this is a real failure, not a teardown flake.");
       for (const marker of successMarkers) {
-        if (!output.includes(marker)) {
+        if (!result.output.includes(marker)) {
           console.error(`[packaged-vsix-smoke] missing marker: ${marker}`);
         }
       }
     }
-    throw electronError;
+    if (result.error) throw result.error;
+    const exitSummary = result.signal
+      ? `terminated by signal ${result.signal}`
+      : `exited with code ${result.code}`;
+    throw new Error(`Electron smoke runner ${exitSummary}.`);
   }
 } else if (!allMarkers) {
-  throw new Error("VS Code Extension Host smoke completed without error but required success markers were not observed.");
+  throw new Error("Electron smoke runner completed without error but required success markers were not observed.");
 }
 
 console.log("Packaged VSIX Extension Host smoke passed.");
