@@ -82,6 +82,24 @@ test("prompt injection remains inert bounded source data and never auto-approves
   } finally { await x.cleanup(); }
 });
 
+test("redacts emails and secret assignments from excerpts and proposal descriptions", async () => {
+  const x = await fixture();
+  try {
+    const basePage = x.pages[0] as {messages: Record<string,unknown>[]};
+    const adversarialMessage = {
+      ...basePage.messages[0],
+      text: "Email person@example.invalid and set token='synthetic-test' before the launch.",
+    };
+    const page = { ...(x.pages[0] as object), nextCursor: undefined, messages: [adversarialMessage] };
+    await new SlackReviewQueueAdapter(new FixtureSource([page]), x.store).sync({ ...baseScope, maxExcerptChars: 500 });
+    const row = x.store.db.prepare("SELECT description FROM review_queue_proposals WHERE kind='action'").get() as {description:string};
+    assert.doesNotMatch(row.description, /person@example\.invalid/);
+    assert.doesNotMatch(row.description, /synthetic-test/);
+    assert.match(row.description, /\[REDACTED-EMAIL\]/);
+    assert.match(row.description, /\[REDACTED-SECRET\]/);
+  } finally { await x.cleanup(); }
+});
+
 test("fails closed for excessive, write, private and non-allowlisted scope", async () => {
   const x = await fixture();
   try {

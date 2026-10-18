@@ -23,7 +23,7 @@ No release artifact or fixture contains work content, credentials, local databas
 | Claude-mediated MCP runner | UNVERIFIED / NO-GO | conditional discovery design only; no approved work-environment evidence |
 | Approved work-model route (Claude/LiteLLM/Ollama) | UNVERIFIED / NO-GO | G-MODEL-01; synthetic/fake adapters are not approval evidence |
 | Real work or personnel data | NO-GO | security/data-class approval has not been recorded |
-| Meeting-note import | NOT PROVIDED | PR #9 content was not carried into main by the stacked merge chain; no meeting-import implementation, docs, or fixtures exist on main; a re-land must honor SEC-05/SEC-07 (`docs/SECURITY_REVIEW.md`) |
+| Meeting-note import | SYNTHETIC GO | PR #29: `packages/core/src/meeting-import.ts` + `fixtures/connectors/meeting-notes.synthetic.json` + `docs/MEETING_IMPORT.md`; proposed-only queue; SEC-05/SEC-07 remediated (shared redaction, hashed document id + relative label); real file transport fail-closed pending gates |
 | Signed/marketplace VS Code package or native installer | NOT PROVIDED | extension smoke is source-based in an Extension Development Host |
 
 Open gates are authoritative in `docs/architecture/GATES.md` and `docs/SECURITY_CONNECTOR_DISCOVERY.md`. A green CI run proves only the synthetic prototype and repository controls. It must not be represented as a real MCP/model integration or as approval to process work data.
