@@ -18,12 +18,13 @@
     "demo": "npm run build && node packages/cli/dist/main.js attention --fixture fixtures/prs.synthetic.json --now 2026-10-09T09:00:00.000Z",
     "backup:drill": "node scripts/backup-restore-drill.mjs",
     "scan:repo": "node scripts/scan-repo-safety.mjs",
+    "scan:repo:self-test": "node scripts/scan-repo-safety.mjs --self-test",
     "verify:release": "node scripts/verify-release.mjs",
     "security:discovery": "node scripts/validate-security-discovery.mjs",
     "security:repository": "node scripts/validate-repository-safety.mjs",
     "security:repository:test": "node scripts/validate-repository-safety.mjs --self-test",
     "release:check": "npm run clean && npm run check && npm test && npm run demo && npm run backup:drill && npm run verify:release && npm run scan:repo && npm run security:repository:test && npm run security:repository",
-    "ci": "npm run check && npm test && npm run security:repository:test && npm run security:repository && npm run demo && npm run backup:drill && npm run verify:release && npm run scan:repo"
+    "ci": "npm run check && npm test && npm run security:repository:test && npm run security:repository && npm run demo && npm run backup:drill && npm run verify:release && npm run scan:repo && npm run scan:repo:self-test"
   },
   "devDependencies": {
     "@types/node": "^24.7.0",
