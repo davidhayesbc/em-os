@@ -14,12 +14,16 @@ No release artifact or fixture contains work content, credentials, local databas
 | OS-appropriate per-user app-data paths | SYNTHETIC GO | `settings.test.ts`; `node packages/cli/dist/main.js paths` |
 | Core/unit build on target architectures | SYNTHETIC GO | CI jobs `macOS-arm64` and `Windows-x64` |
 | Public-repository secret/PII/work-content controls | SYNTHETIC GO | `.gitignore`; `npm run scan:repo`; history scan CI job |
+| Read-only PR connector | SYNTHETIC GO | PR #4: `packages/core/src/pr-connector.ts` + `fixtures/connectors/pr-pages.synthetic.json`; real MCP Locker transport fail-closed pending G-MCP-01 |
+| Slack review-queue adapter | SYNTHETIC GO | PR #14: `packages/core/src/slack-connector.ts` + `fixtures/connectors/slack-pages.synthetic.json`; proposed-only queue; real Slack transport fail-closed pending G-MCP-01/G-SEC-01 |
+| Calendar/Jira review adapters | SYNTHETIC GO | PR #10: `packages/core/src/review-adapters.ts` + `fixtures/connectors/calendar-pages.synthetic.json`, `fixtures/connectors/jira-pages.synthetic.json`; proposed-only queue; real transports fail-closed pending gates |
 | Encrypted-backup mechanics | SYNTHETIC DRILL ONLY | `npm run backup:drill`; ephemeral synthetic JSON, AES-256-GCM |
 | SQLite production backup/key management | UNVERIFIED / NO-GO | G-SEC-02 and G-DB-01 remain open; no approved OS-keychain envelope |
 | Direct MCP Locker | UNVERIFIED / NO-GO | G-MCP-01; no approved transport/schema/credential evidence |
 | Claude-mediated MCP runner | UNVERIFIED / NO-GO | conditional discovery design only; no approved work-environment evidence |
 | Approved work-model route (Claude/LiteLLM/Ollama) | UNVERIFIED / NO-GO | G-MODEL-01; synthetic/fake adapters are not approval evidence |
 | Real work or personnel data | NO-GO | security/data-class approval has not been recorded |
+| Meeting-note import | NOT PROVIDED | PR #9 content was not carried into main by the stacked merge chain; no meeting-import implementation, docs, or fixtures exist on main; a re-land must honor SEC-05/SEC-07 (`docs/SECURITY_REVIEW.md`) |
 | Signed/marketplace VS Code package or native installer | NOT PROVIDED | extension smoke is source-based in an Extension Development Host |
 
 Open gates are authoritative in `docs/architecture/GATES.md` and `docs/SECURITY_CONNECTOR_DISCOVERY.md`. A green CI run proves only the synthetic prototype and repository controls. It must not be represented as a real MCP/model integration or as approval to process work data.
