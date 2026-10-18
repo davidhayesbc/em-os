@@ -87,9 +87,10 @@ const BINARY = /\0/;
 
 // Historical adversarial redaction fixtures in this PR branch contain
 // non-placeholder secret-like assignments. The assignment-secret rule skips
-// only these two exact paths so the full-history scan stays green while the
-// current working tree already uses scanner-allowed literals.
-const REDACTION_FIXTURE_PATH = /(^|\/)(?:packages\/core\/src\/redact\.test\.ts|fixtures\/connectors\/meeting-notes\.synthetic\.json)(\s+\(history\s+[a-f0-9]+\))?$/;
+// only these two exact paths *and only when they appear as historical blobs*
+// (`<path> (history <sha>)`) so the full-history scan stays green. Working-tree
+// copies are scanned normally because the current files use scanner-allowed literals.
+const REDACTION_FIXTURE_PATH = /(^|\/)(?:packages\/core\/src\/redact\.test\.ts|fixtures\/connectors\/meeting-notes\.synthetic\.json)\s+\(history\s+[a-f0-9]+\)$/;
 
 function listTrackedFiles() {
   return execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8" })
@@ -157,6 +158,23 @@ function runSelfTest() {
       throw new Error(`self-test: expected basic-auth-url to allow ${text}`);
     }
   }
+  // Verify the redaction-fixture exemption is history-only.
+  const secretKey = "password";
+  const secretValue = "abcdefghijklmnopqrstuvwx";
+  const secretLiteral = secretKey + "='" + secretValue + "'";
+  const fixturePath = "packages/core/src/redact.test.ts";
+  const historyFixturePath = fixturePath + " (history abcdef123456)";
+  const wtFindings = [];
+  scanText(secretLiteral, fixturePath, wtFindings);
+  if (!wtFindings.some((f) => f.rule === "assignment-secret")) {
+    throw new Error(`self-test: expected assignment-secret to flag working-tree ${fixturePath}`);
+  }
+  const histFindings = [];
+  scanText(secretLiteral, historyFixturePath, histFindings);
+  if (histFindings.some((f) => f.rule === "assignment-secret")) {
+    throw new Error(`self-test: expected assignment-secret to allow history location ${historyFixturePath}`);
+  }
+
   console.log("repository safety scan self-test: PASS");
 }
 
