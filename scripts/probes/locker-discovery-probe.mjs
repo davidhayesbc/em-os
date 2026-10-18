@@ -18,6 +18,8 @@
 
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { basename } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const SCHEMA_VERSION = 1;
 const ALLOWLIST = ["pull_requests.list"];
@@ -83,7 +85,29 @@ function assert(condition, message) {
 }
 
 function canonicalJson(value) {
-  return JSON.stringify(value, Object.keys(value).sort());
+  if (value === null) return "null";
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item) ?? "null").join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    const pairs = keys
+      .filter((key) => value[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`);
+    return `{${pairs.join(",")}}`;
+  }
+  if (value === undefined) return undefined;
+  return JSON.stringify(value);
+}
+
+function sanitizeErrorMessage(err) {
+  if (err instanceof ProbeRefusalError) return "Live Locker probe refused by policy gate; no connection attempted.";
+  if (err instanceof ProbeScopeError) return "Scope/tool allowlist violation.";
+  if (err instanceof ProbeAccessDeniedError) return "Access denied.";
+  if (err instanceof ProbeRateLimitError) return "Rate limited.";
+  if (err instanceof ProbeSchemaError) return "Schema/policy validation failed.";
+  if (err instanceof ProbeTransportError) return err.interrupted ? "Transport interrupted." : "Transport error.";
+  return "Probe failed.";
 }
 
 function fingerprint(value) {
@@ -91,6 +115,8 @@ function fingerprint(value) {
   hash.update(canonicalJson(value));
   return hash.digest("hex");
 }
+
+export { canonicalJson, fingerprint };
 
 function isRfc3339(value) {
   return typeof value === "string" && RFC3339.test(value) && Number.isFinite(Date.parse(value));
@@ -269,6 +295,9 @@ class InProcessReplayTransport {
       if (code === -32602 || /invalid|malformed|schema|cursor/i.test(message)) {
         throw new ProbeSchemaError(`Schema/validation error: ${message}`);
       }
+      if (code === -32601 || /not found|unimplemented|not supported|method not available/i.test(message)) {
+        throw new ProbeSchemaError(`Method not available: ${message}`);
+      }
       throw new ProbeTransportError(`RPC error ${code}: ${message}`);
     }
 
@@ -316,7 +345,7 @@ async function runCapabilityDiscovery(transport, findings) {
     await transport.call({ jsonrpc: "2.0", id: 2, method: "resources/list", params: {} });
     findings.push({ step: "resources/list", ok: true, note: "returned without denial (operator-approved in fixture)" });
   } catch (err) {
-    if (err instanceof ProbeAccessDeniedError || err instanceof ProbeSchemaError || err instanceof ProbeTransportError) {
+    if (err instanceof ProbeAccessDeniedError || err instanceof ProbeSchemaError) {
       findings.push({ step: "resources/list", ok: true, note: "correctly denied/unimplemented when not approved", errorType: err.type });
     } else {
       throw err;
@@ -344,13 +373,13 @@ async function invokeAllowlistedReadOnly(transport, repository, limit, cursor, u
 async function expectError(label, expectedType, fn) {
   try {
     await fn();
-    throw new ProbeSchemaError(`${label}: expected ${expectedType.name} but the call succeeded`);
   } catch (err) {
     if (err instanceof expectedType) {
       return { ok: true, errorType: err.type, retryAfter: err.retryAfter, interrupted: err.interrupted };
     }
     throw err;
   }
+  throw new Error(`${label}: expected ${expectedType.name} but the call succeeded`);
 }
 
 async function runProbe({ mode, transportPath, operatorApproved }) {
@@ -358,16 +387,17 @@ async function runProbe({ mode, transportPath, operatorApproved }) {
   const startedAt = Date.now();
 
   const fixture = loadTransportFixture(transportPath);
-  const transport = new InProcessReplayTransport(fixture);
 
   if (mode === "live") {
     const configApproved = fixture.transport?.operatorApproved === true;
-    if (!operatorApproved && !configApproved) {
+    if (!operatorApproved || !configApproved) {
       throw new ProbeRefusalError(
         "Live Locker probe refused: requires --operator-approved flag or EM_OS_PROBE_LOCKER_OPERATOR_APPROVED=1, plus an approved transport config. No connection was attempted."
       );
     }
   }
+
+  const transport = new InProcessReplayTransport(fixture);
 
   // Step 1-2: capability discovery.
   const { advertised, schemaPrints } = await runCapabilityDiscovery(transport, findings);
@@ -412,15 +442,26 @@ async function runProbe({ mode, transportPath, operatorApproved }) {
   // Fail-closed envelope validation (extra sensitive field).
   findings.push({
     step: "envelope-extra-field-rejected",
-    ...await expectError("envelope-extra-field-rejected", ProbeSchemaError, () =>
-      transport.call({ jsonrpc: "2.0", id: "extra-field", method: "tools/call", params: { name: "pull_requests.list" } })),
+    ...await expectError("envelope-extra-field-rejected", ProbeSchemaError, async () => {
+      const result = await transport.call({
+        jsonrpc: "2.0",
+        id: "extra-field",
+        method: "tools/call",
+        params: { name: "pull_requests.list" },
+      });
+      return extractEnvelope(result, "envelope-extra-field-rejected");
+    }),
   });
 
   const allRecords = [initial, continuation, delta].flatMap((p) => p.records);
   const summary = {
     ok: true,
     mode,
-    transport: transportPath,
+    transport: basename(transportPath),
+    transportKind: "in-process-replay",
+    note: mode === "live"
+      ? "Replay-only: no network connection was attempted; live transport is not yet configured."
+      : undefined,
     schemaVersion: SCHEMA_VERSION,
     approvedFields: APPROVED_RECORD_FIELDS,
     advertisedTools: advertised,
@@ -444,11 +485,13 @@ async function main() {
     const sanitized = {
       ok: false,
       errorType: err.type ?? err.name ?? "Error",
-      message: err.message,
+      message: sanitizeErrorMessage(err),
     };
     console.error(JSON.stringify(sanitized, null, 2));
     process.exit(err instanceof ProbeRefusalError || err.message?.includes("Usage") ? 2 : 1);
   }
 }
 
-main();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main();
+}

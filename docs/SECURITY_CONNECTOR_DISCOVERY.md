@@ -2,7 +2,7 @@
 
 Status: conditional / synthetic-only.  Date: 2026-10-09.
 
-This record is deliberately an inventory of verified facts and unverified integration requirements. It does not contain a Locker endpoint, credential, work artifact, private skill, model route, or captured response. The only checked-in probe is `fixtures/security/mcp-discovery-probe.synthetic.json`; it is a fabricated contract-shape fixture, not evidence of Locker behavior.
+This record is deliberately an inventory of verified facts and unverified integration requirements. It does not contain a Locker endpoint, credential, work artifact, private skill, model route, or captured response. The checked-in probes are `fixtures/security/mcp-discovery-probe.synthetic.json` (contract-shape fixture) and `fixtures/security/locker-probe-transport.synthetic.json` (in-process replay fixture for the executable harness); both use `example.invalid` identifiers only and are not evidence of Locker behavior. The fixture field `transport.approval.liveInvocation` is reserved for future live-transport wiring and is currently unused.
 
 ## Executive decision
 
@@ -60,13 +60,15 @@ npm run probe:locker
 
 The offline run is wired into `npm run check` and therefore `npm run ci`; it performs no outbound connection and uses `*.synthetic.json` fixtures containing `example.invalid` identifiers only.
 
-Future approved work-environment run:
+Future approved work-environment run (currently disabled pending a live transport implementation):
 
 ```text
 node scripts/probes/locker-discovery-probe.mjs --live --operator-approved --transport /path/to/approved-locker-transport-config.json
 ```
 
-`--live` performs the same step sequence but refuses to start unless `--operator-approved` is passed (or `EM_OS_PROBE_LOCKER_OPERATOR_APPROVED=1` is set) and the transport config is marked approved. Without that gate the script exits with a typed `ProbeRefusalError` and never attempts a connection. The harness records only pass/fail, tool names, schema fingerprints and approved field names; response content, credentials, endpoint URLs, tokens, prompts and source excerpts are never written to the repository or logs.
+`--live` currently exercises the same in-process replay transport after the approval gate; it makes no network connection and is not live evidence. The harness refuses to start unless both `--operator-approved` (or `EM_OS_PROBE_LOCKER_OPERATOR_APPROVED=1`) and `transport.operatorApproved: true` are present in the approved config. Without both approvals the script exits with a typed `ProbeRefusalError` and never attempts a connection. A real live transport, endpoint validation, and credential handling must be implemented and reviewed before `--live` can represent an actual operator-run probe.
+
+The harness records only pass/fail, tool names, schema fingerprints and approved field names; response content, credentials, endpoint URLs, tokens, prompts and source excerpts are never written to the repository or logs.
 
 Required output envelope (schema versioned and strict):
 
