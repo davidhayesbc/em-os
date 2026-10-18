@@ -47,6 +47,27 @@ The fixture defines expected fail-closed behavior, not a production invocation. 
 4. Exercise one initial page, one continuation page, a no-change/delta request, malformed cursor handling, access denial, rate-limit behavior and a simulated transport interruption.
 5. Persist a sanitized report outside the public repo or record only pass/fail, schema fingerprint, and approved field names in a public-safe ADR. Any tool/schema/scope drift invalidates approval.
 
+### Executable harness
+
+The probe is implemented as a dependency-free Node script: `scripts/probes/locker-discovery-probe.mjs`. It is driven by an injectable in-process JSON-RPC replay transport so the protocol can be exercised entirely offline with synthetic fixtures.
+
+Run the offline synthetic probe (no credentials, no network):
+
+```text
+node scripts/probes/locker-discovery-probe.mjs --offline --transport fixtures/security/locker-probe-transport.synthetic.json
+npm run probe:locker
+```
+
+The offline run is wired into `npm run check` and therefore `npm run ci`; it performs no outbound connection and uses `*.synthetic.json` fixtures containing `example.invalid` identifiers only.
+
+Future approved work-environment run:
+
+```text
+node scripts/probes/locker-discovery-probe.mjs --live --operator-approved --transport /path/to/approved-locker-transport-config.json
+```
+
+`--live` performs the same step sequence but refuses to start unless `--operator-approved` is passed (or `EM_OS_PROBE_LOCKER_OPERATOR_APPROVED=1` is set) and the transport config is marked approved. Without that gate the script exits with a typed `ProbeRefusalError` and never attempts a connection. The harness records only pass/fail, tool names, schema fingerprints and approved field names; response content, credentials, endpoint URLs, tokens, prompts and source excerpts are never written to the repository or logs.
+
 Required output envelope (schema versioned and strict):
 
 ```json
