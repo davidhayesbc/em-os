@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -39,10 +40,16 @@ function hasAllMarkers(output) {
   return successMarkers.every((marker) => output.includes(marker));
 }
 
+/**
+ * The @vscode/test-electron child prints `Exit code:   SIGSEGV` and rejects with
+ * `TestRunFailedError: Test run terminated with signal SIGSEGV`. That error is
+ * printed by the generated runner before it exits code 1, signal null. We must
+ * therefore classify the teardown crash from the captured runner output as well
+ * as from the Node runner's own signal.
+ */
 function isTeardownSegfault(result) {
   if (result.signal === "SIGSEGV") return true;
-  const message = String(result.error ?? "");
-  return /SIGSEGV|signal SIGSEGV|Test run terminated with signal/i.test(message);
+  return /Test run terminated with signal SIGSEGV|Exit code:\s+SIGSEGV/i.test(result.output);
 }
 
 rmSync(stateRoot, { recursive: true, force: true });
@@ -109,16 +116,9 @@ const runOptions = {
   },
 };
 
-const runnerScript = resolve(stateRoot, "electron-runner.mjs");
+const runnerScript = resolve(root, "scripts/vsix-smoke-electron-runner.mjs");
 const runnerOptionsPath = resolve(stateRoot, "electron-runner-options.json");
-writeFileSync(
-  runnerScript,
-  `import { runTests } from "@vscode/test-electron";\nimport { readFileSync } from "node:fs";\nconst options = JSON.parse(readFileSync(process.argv[2], "utf8"));\nawait runTests(options);\n`,
-  "utf8"
-);
 writeFileSync(runnerOptionsPath, JSON.stringify(runOptions, null, 2), "utf8");
-
-const { once } = await import("node:events");
 
 const result = await new Promise((resolvePromise, rejectPromise) => {
   let output = "";
@@ -150,7 +150,7 @@ const result = await new Promise((resolvePromise, rejectPromise) => {
 
   Promise.all([once(child.stdout, "end"), once(child.stderr, "end"), once(child, "close")])
     .then(([_, __, [code, signal]]) => {
-      resolvePromise({ ok: code === 0 && signal === null, code, signal, output, error: null });
+      resolvePromise({ ok: code === 0 && signal === null, code, signal, output });
     })
     .catch(rejectPromise);
 });
@@ -172,7 +172,6 @@ if (!result.ok) {
         }
       }
     }
-    if (result.error) throw result.error;
     const exitSummary = result.signal
       ? `terminated by signal ${result.signal}`
       : `exited with code ${result.code}`;
