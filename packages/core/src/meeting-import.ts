@@ -263,6 +263,7 @@ export class MeetingNoteReviewQueueAdapter {
       scope: scope.documentLabel,
       previousCursor,
       nextCursor,
+      cursorUpdate: nextCursor === undefined ? { kind: "clear" } : { kind: "set", value: nextCursor },
       observedAt,
       fetched,
       proposals,

@@ -141,6 +141,46 @@ test("SqliteReviewQueueStore persists meeting-note proposals, cursor and tombsto
   } finally { await x.cleanup(); }
 });
 
+test("terminal page explicitly clears a pre-existing SQLite cursor", async () => {
+  const x = await fixture();
+  try {
+    const store = new SqliteReviewQueueStore(x.store);
+    await store.commit({
+      connector: "meeting-notes",
+      scope: baseScope.documentLabel,
+      nextCursor: "resume-from-here",
+      cursorUpdate: { kind: "set", value: "resume-from-here" },
+      observedAt: "2026-10-09T08:00:00.000Z",
+      fetched: 0,
+      proposals: [],
+      deletions: [],
+    });
+    assert.equal(await store.getCursor("meeting-notes", baseScope.documentLabel), "resume-from-here");
+
+    const requested: (string | undefined)[] = [];
+    const source: MeetingNotePageSource = {
+      async fetchPage(cursor) {
+        requested.push(cursor);
+        return {
+          schemaVersion: 1,
+          documentId: "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847",
+          documentLabel: baseScope.documentLabel,
+          cursor,
+          observedAt: "2026-10-09T09:00:00.000Z",
+          items: [],
+        };
+      },
+    };
+    const adapter = new MeetingNoteReviewQueueAdapter(source, store);
+    await adapter.sync(baseScope);
+    assert.equal(requested[0], "resume-from-here");
+    assert.equal(await store.getCursor("meeting-notes", baseScope.documentLabel), undefined);
+
+    await adapter.sync(baseScope);
+    assert.equal(requested[1], undefined);
+  } finally { await x.cleanup(); }
+});
+
 test("retention deadline is computed from observedAt and scope classification is persisted", async () => {
   const store = new InMemoryReviewQueueStore();
   const page = {

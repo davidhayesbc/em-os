@@ -30,11 +30,17 @@ export interface ReviewProposal {
   classification?: "work" | "confidential";
 }
 export interface ReviewDeletion { provider: ReviewSource; sourceId: string; contentHash: string; deletedAt: string; reason: "source_deleted" | "retention_expired"; }
+export type CursorUpdate =
+  | Readonly<{ kind: "set"; value: string }>
+  | Readonly<{ kind: "clear" }>
+  | Readonly<{ kind: "preserve" }>;
 export interface AdapterCommit {
   connector: ReviewSource;
   scope: string;
   previousCursor?: string;
   nextCursor?: string;
+  /** Explicit cursor persistence semantics. Omit to retain legacy next/previous fallback behavior. */
+  cursorUpdate?: CursorUpdate;
   observedAt: string;
   fetched: number;
   proposals: readonly ReviewProposal[];
@@ -210,7 +216,7 @@ export class SqliteReviewQueueStore implements ReviewQueueStore {
       classification: p.classification,
     }));
     const deletions = batch.deletions.map(d => ({ provider: d.provider as string, sourceId: d.sourceId, contentHash: d.contentHash, deletedAt: d.deletedAt, reason: d.reason as string }));
-    this.store.commitAdapterBatch({ connector: batch.connector as string, scope: batch.scope, previousCursor: batch.previousCursor, nextCursor: batch.nextCursor, observedAt: batch.observedAt, fetched: batch.fetched, proposals, deletions });
+    this.store.commitAdapterBatch({ connector: batch.connector as string, scope: batch.scope, previousCursor: batch.previousCursor, nextCursor: batch.nextCursor, cursorUpdate: batch.cursorUpdate, observedAt: batch.observedAt, fetched: batch.fetched, proposals, deletions });
   }
 }
 
@@ -227,7 +233,10 @@ export class InMemoryReviewQueueStore implements ReviewQueueStore {
     if (this.failNextCommit) { this.failNextCommit = false; throw new Error("synthetic commit failure"); }
     for (const deletion of batch.deletions) { for (const [key, value] of this.proposals) if (value.provider === deletion.provider && value.sourceId === deletion.sourceId) this.proposals.delete(key); this.deletions.push(deletion); }
     for (const proposal of batch.proposals) this.proposals.set(proposal.id, proposal);
-    if (batch.nextCursor) this.cursors.set(`${batch.connector}:${batch.scope}`, batch.nextCursor);
+    const key = `${batch.connector}:${batch.scope}`;
+    if (batch.cursorUpdate?.kind === "clear") this.cursors.delete(key);
+    else if (batch.cursorUpdate?.kind === "set") this.cursors.set(key, batch.cursorUpdate.value);
+    else if (batch.cursorUpdate?.kind !== "preserve" && batch.nextCursor) this.cursors.set(key, batch.nextCursor);
   }
   applyRetention(now: string): number {
     const at = utc(now, "retention now"); let removed = 0;
