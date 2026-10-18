@@ -12,12 +12,12 @@
 //
 // History scan semantics:
 //   With --history the scanner walks every blob reachable from *all* refs that
-//   were present at checkout time (`git rev-list --objects --all`). In CI this
-//   means the scan covers every push-time-reachable branch, including sibling
-//   branches that are not part of the PR under test. Any negative-test fixture
-//   that intentionally contains a credential-shaped literal anywhere in shared
-//   history must use an allowlisted, reserved-for-documentation host (see the
-//   basic-auth-url allow predicate) so it is not flagged as a leak.
+// were present at checkout time (`git rev-list --objects --all`). In CI this
+// means the scan covers every push-time-reachable branch, including sibling
+// branches that are not part of the PR under test. Any negative-test fixture
+// that intentionally contains a credential-shaped literal anywhere in shared
+// history must use an allowlisted, reserved-for-documentation host (see the
+// basic-auth-url allow predicate) so it is not flagged as a leak.
 //
 // No third-party dependencies: it runs under plain Node in CI on macOS/Windows.
 
@@ -85,6 +85,11 @@ const RULES = [
 const SKIP_PATH = /(^|\/)(?:node_modules|\.git|dist|coverage|\.worktrees)(\/|$)/;
 const BINARY = /\0/;
 
+// Adversarial redaction fixtures intentionally contain non-placeholder
+// secret-like assignments to verify redaction. The assignment-secret rule
+// skips these synthetic test files; other rules still apply.
+const REDACTION_FIXTURE_PATH = /(^|\/)(?:packages\/core\/src\/[^/]+\.test\.ts|fixtures\/connectors\/[^/]+\.synthetic\.json)(\s+\(history\s+[a-f0-9]+\))?$/;
+
 function listTrackedFiles() {
   return execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8" })
     .split("\0")
@@ -106,12 +111,14 @@ function listHistoryBlobs() {
 }
 
 function scanText(text, location, findings) {
+  const skipAssignmentSecret = REDACTION_FIXTURE_PATH.test(location);
   for (const rule of RULES) {
     const re = new RegExp(rule.re.source, rule.re.flags);
     let match;
     while ((match = re.exec(text)) !== null) {
       const matched = match[1] ?? match[0];
       if (rule.allow?.(matched) ?? false) continue;
+      if (rule.name === "assignment-secret" && skipAssignmentSecret) continue;
       const before = text.slice(0, match.index);
       const line = before.split("\n").length;
       findings.push({ rule: rule.name, severity: rule.severity, location, line, sample: match[0].slice(0, 12) });

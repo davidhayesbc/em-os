@@ -57,7 +57,7 @@
         },
         {
           "id": "mn-3",
-          "title": "Confirm with person@example.invalid and api_key='synthetic-test'",
+          "title": "Confirm with person@example.invalid and api_key='hunter2xyz123'",
           "body": "This adversarial fixture verifies that emails and secret assignments are redacted before persistence.",
           "occurredAt": "2026-10-08T12:00:00.000Z",
           "proposalKind": "action"

@@ -64,16 +64,18 @@ test("paginates, deduplicates updates, applies deletion, classification, retenti
     assert.equal(result.fetched, 5);
     assert.equal(result.proposed, 4);
     assert.equal(result.deleted, 1);
-    assert.equal(result.cursor, "page-3");
+    assert.equal(result.cursor, undefined);
     assert.equal((x.store.db.prepare("SELECT count(*) n FROM source_records WHERE provider='meeting-notes' AND deleted_at IS NULL").get() as {n:number}).n, 2);
     const action = x.store.db.prepare("SELECT description,review_state FROM review_queue_proposals WHERE kind='action'").get() as {description:string;review_state:string};
     assert.equal(action.review_state, "proposed");
     assert.match(action.description, /revised synthetic launch checklist/);
     const redacted = x.store.db.prepare("SELECT description FROM review_queue_proposals WHERE description LIKE '%Confirm with%'").get() as {description:string};
     assert.doesNotMatch(redacted.description, /person@example\.invalid/);
-    assert.doesNotMatch(redacted.description, /synthetic-test/);
+    assert.doesNotMatch(redacted.description, /hunter2xyz123/);
     assert.match(redacted.description, /\[REDACTED-EMAIL\]/);
     assert.match(redacted.description, /\[REDACTED-SECRET\]/);
+    const classifications = x.store.db.prepare("SELECT DISTINCT classification FROM source_records WHERE provider='meeting-notes' AND deleted_at IS NULL").all() as {classification:string}[];
+    assert.deepEqual(classifications.map((r) => r.classification).sort(), ["confidential"]);
     const deleted = x.store.db.prepare("SELECT deleted_at,deletion_reason FROM source_records WHERE source_id LIKE '%:mn-2'").get() as {deleted_at:string|null;deletion_reason:string|null};
     assert.ok(deleted.deleted_at);
     assert.equal(deleted.deletion_reason, "source_deleted");
@@ -129,16 +131,17 @@ test("SqliteReviewQueueStore persists meeting-note proposals, cursor and tombsto
   try {
     const store = new SqliteReviewQueueStore(x.store);
     await new MeetingNoteReviewQueueAdapter(new FixtureSource(x.pages), store).sync(baseScope);
-    assert.equal(await store.getCursor("meeting-notes", "notes/team.md"), "page-3");
+    assert.equal(await store.getCursor("meeting-notes", "notes/team.md"), undefined);
     assert.equal((x.store.db.prepare("SELECT count(*) n FROM review_queue_proposals p INNER JOIN source_records s ON s.id=p.source_record_id WHERE s.provider='meeting-notes'").get() as {n:number}).n, 2);
     assert.equal((x.store.db.prepare("SELECT count(*) n FROM deletion_tombstones WHERE provider='meeting-notes'").get() as {n:number}).n, 1);
-    const source = x.store.db.prepare("SELECT id,source_id,stable_url,excerpt FROM source_records WHERE provider='meeting-notes' ORDER BY source_id").all() as {id:string;source_id:string;stable_url:string;excerpt:string|null}[];
+    const source = x.store.db.prepare("SELECT id,source_id,stable_url,excerpt,classification FROM source_records WHERE provider='meeting-notes' ORDER BY source_id").all() as {id:string;source_id:string;stable_url:string;excerpt:string|null;classification:string}[];
     assert.ok(source.every((row) => !row.stable_url.startsWith("file://") && !row.stable_url.includes("/tmp/")));
     assert.ok(source.every((row) => row.source_id.startsWith("76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847:")));
+    assert.ok(source.every((row) => row.classification === "confidential"));
   } finally { await x.cleanup(); }
 });
 
-test("retention deadline is computed from observedAt and classification is preserved", async () => {
+test("retention deadline is computed from observedAt and scope classification is persisted", async () => {
   const store = new InMemoryReviewQueueStore();
   const page = {
     schemaVersion: 1,
@@ -153,4 +156,158 @@ test("retention deadline is computed from observedAt and classification is prese
   await new MeetingNoteReviewQueueAdapter(source, store).sync(baseScope);
   const proposal = [...store.proposals.values()][0];
   assert.equal(proposal.retentionUntil, "2026-11-08T09:00:00.000Z");
+  assert.equal(proposal.classification, "confidential");
+});
+
+test("unquoted secret assignment is redacted before persistence", async () => {
+  const x = await fixture();
+  try {
+    const page = {
+      schemaVersion: 1,
+      documentId: "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847",
+      documentLabel: "notes/team.md",
+      observedAt: "2026-10-09T09:00:00.000Z",
+      items: [
+        { id: "mn-u", title: "Rotate deploy key password=hunter2xyz", body: "api_key=abcdef123456", occurredAt: "2026-10-08T10:00:00.000Z", proposalKind: "action" },
+      ],
+    };
+    const source: MeetingNotePageSource = { async fetchPage() { return page; } };
+    await new MeetingNoteReviewQueueAdapter(source, new SqliteReviewQueueStore(x.store)).sync(baseScope);
+    const record = x.store.db.prepare("SELECT excerpt FROM source_records WHERE source_id LIKE '%:mn-u'").get() as {excerpt:string};
+    assert.doesNotMatch(record.excerpt, /hunter2xyz/);
+    assert.doesNotMatch(record.excerpt, /abcdef123456/);
+    const proposal = x.store.db.prepare("SELECT description FROM review_queue_proposals WHERE source_record_id LIKE '%:mn-u'").get() as {description:string};
+    assert.doesNotMatch(proposal.description, /hunter2xyz/);
+  } finally { await x.cleanup(); }
+});
+
+test("pagination bounds fail closed and commit nothing", async () => {
+  const store = new InMemoryReviewQueueStore();
+  let pages = 0;
+  const source: MeetingNotePageSource = {
+    async fetchPage(cursor) {
+      pages += 1;
+      const next = `page-${pages + 1}`;
+      return {
+        schemaVersion: 1,
+        documentId: "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847",
+        documentLabel: "notes/team.md",
+        cursor,
+        nextCursor: next,
+        observedAt: "2026-10-09T09:00:00.000Z",
+        items: [{ id: `mn-${pages}`, title: `Page ${pages}`, occurredAt: "2026-10-08T10:00:00.000Z", proposalKind: "action" }],
+      };
+    },
+  };
+  await assert.rejects(() => new MeetingNoteReviewQueueAdapter(source, store, 100).sync(baseScope), /exceeded maxPages=100/);
+  assert.equal(store.proposals.size, 0);
+  assert.equal(store.deletions.length, 0);
+});
+
+test("cumulative item cap fails closed and commits nothing", async () => {
+  const store = new InMemoryReviewQueueStore();
+  let pageIndex = 0;
+  const source: MeetingNotePageSource = {
+    async fetchPage(cursor) {
+      pageIndex += 1;
+      return {
+        schemaVersion: 1,
+        documentId: "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847",
+        documentLabel: "notes/team.md",
+        cursor,
+        nextCursor: `page-${pageIndex + 1}`,
+        observedAt: "2026-10-09T09:00:00.000Z",
+        items: Array.from({ length: 100 }, (_, i) => ({ id: `mn-${pageIndex}-${i}`, title: `Item ${pageIndex}-${i}`, occurredAt: "2026-10-08T10:00:00.000Z", proposalKind: "action" })),
+      };
+    },
+  };
+  await assert.rejects(() => new MeetingNoteReviewQueueAdapter(source, store, 1000, 150).sync(baseScope), /exceeded maxTotalItems=150/);
+  assert.equal(store.proposals.size, 0);
+  assert.equal(store.deletions.length, 0);
+});
+
+test("second sync does not re-fetch the final page and does not rewrite the tombstone", async () => {
+  const x = await fixture();
+  try {
+    const store = new SqliteReviewQueueStore(x.store);
+    await new MeetingNoteReviewQueueAdapter(new FixtureSource(x.pages), store).sync(baseScope);
+    const firstTombstone = x.store.db.prepare("SELECT content_hash FROM deletion_tombstones WHERE provider='meeting-notes'").get() as {content_hash:string};
+    let requestedCursor: string | undefined = "initial";
+    const emptySource: MeetingNotePageSource = {
+      async fetchPage(cursor) {
+        requestedCursor = cursor;
+        return { schemaVersion: 1, documentId: "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847", documentLabel: "notes/team.md", observedAt: "2026-10-09T09:15:00.000Z", items: [] };
+      },
+    };
+    const second = await new MeetingNoteReviewQueueAdapter(emptySource, store).sync(baseScope);
+    assert.equal(second.fetched, 0);
+    assert.equal(second.proposed, 0);
+    assert.equal(second.deleted, 0);
+    assert.equal(requestedCursor, undefined);
+    const tombstones = x.store.db.prepare("SELECT content_hash,deleted_at FROM deletion_tombstones WHERE provider='meeting-notes'").all() as {content_hash:string;deleted_at:string}[];
+    assert.equal(tombstones.length, 1);
+    assert.equal(tombstones[0].content_hash, firstTombstone.content_hash);
+  } finally { await x.cleanup(); }
+});
+
+test("schemaVersion mismatch fails closed", async () => {
+  const page = JSON.parse(JSON.stringify((await fixture()).pages[0])) as Record<string, unknown>;
+  page.schemaVersion = 2;
+  await expectRejectedPage(page, baseScope, /unsupported meeting note page schema/);
+});
+
+test("page exceeding 200 items fails closed", async () => {
+  const page = JSON.parse(JSON.stringify((await fixture()).pages[0])) as Record<string, unknown>;
+  page.items = Array.from({ length: 201 }, (_, i) => ({ id: `mn-${i}`, title: "x", occurredAt: "2026-10-08T10:00:00.000Z" }));
+  await expectRejectedPage(page, baseScope, /at most 200 items/);
+});
+
+test("title or body exceeding configured caps fails closed", async () => {
+  const page = JSON.parse(JSON.stringify((await fixture()).pages[0])) as Record<string, unknown>;
+  (page.items as Record<string, unknown>[])[0].title = "x".repeat(201);
+  await expectRejectedPage(page, { ...baseScope, maxTitleChars: 200 }, /item.title is invalid or exceeds 200/);
+
+  const page2 = JSON.parse(JSON.stringify((await fixture()).pages[0])) as Record<string, unknown>;
+  (page2.items as Record<string, unknown>[])[0].body = "x".repeat(1001);
+  await expectRejectedPage(page2, { ...baseScope, maxBodyChars: 1000 }, /item.body is invalid or exceeds 1000/);
+});
+
+test("page-level unknown fields fail closed", async () => {
+  const page = JSON.parse(JSON.stringify((await fixture()).pages[0])) as Record<string, unknown>;
+  page.extra = "must-not-pass";
+  await expectRejectedPage(page, baseScope, /unsupported fields/);
+});
+
+test("page cursor echo mismatch fails closed", async () => {
+  const data = JSON.parse(await readFile(join(process.cwd(), "fixtures/connectors/meeting-notes.synthetic.json"), "utf8")) as MeetingFixture;
+  const page = JSON.parse(JSON.stringify(data.pages[1])) as Record<string, unknown>;
+  page.cursor = "wrong-cursor";
+  await expectRejectedPage(page, baseScope, /cursor does not match/);
+});
+
+test("wrapped fetch error preserves cause and commits nothing", async () => {
+  const store = new InMemoryReviewQueueStore();
+  const source: MeetingNotePageSource = {
+    async fetchPage() { throw new Error("network partition"); },
+  };
+  await assert.rejects(() => new MeetingNoteReviewQueueAdapter(source, store).sync(baseScope), /meeting note read failed: network partition/);
+  assert.equal(store.proposals.size, 0);
+});
+
+test("non-boolean deleted fails closed", async () => {
+  const page = JSON.parse(JSON.stringify((await fixture()).pages[0])) as Record<string, unknown>;
+  (page.items as Record<string, unknown>[])[0].deleted = "true";
+  await expectRejectedPage(page, baseScope, /item.deleted must be boolean/);
+});
+
+test("invalid proposalKind fails closed", async () => {
+  const page = JSON.parse(JSON.stringify((await fixture()).pages[0])) as Record<string, unknown>;
+  (page.items as Record<string, unknown>[])[0].proposalKind = "question";
+  await expectRejectedPage(page, baseScope, /unsupported proposal kind/);
+});
+
+test("offset-bearing timestamps fail closed", async () => {
+  const page = JSON.parse(JSON.stringify((await fixture()).pages[0])) as Record<string, unknown>;
+  (page.items as Record<string, unknown>[])[0].occurredAt = "2026-10-08T10:00:00+02:00";
+  await expectRejectedPage(page, baseScope, /must be UTC ISO-8601/);
 });

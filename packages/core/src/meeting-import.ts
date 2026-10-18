@@ -17,8 +17,8 @@ export interface MeetingNoteScope {
   windowEnd: string;
   classification: MeetingNoteClassification;
   retentionDays: number;
-  maxTitleChars: number;
-  maxBodyChars: number;
+  maxTitleChars?: number;
+  maxBodyChars?: number;
 }
 
 export interface MeetingNoteItem {
@@ -57,6 +57,10 @@ export interface MeetingNoteSyncResult {
 }
 
 const MAX_PAGE_ITEMS = 200;
+const DEFAULT_MAX_TITLE_CHARS = 200;
+const DEFAULT_MAX_BODY_CHARS = 1000;
+const DEFAULT_MAX_PAGES = 100;
+const DEFAULT_MAX_TOTAL_ITEMS = 20_000;
 const SOURCE_URL_BASE = "https://example.invalid/meeting-notes/";
 
 function documentId(label: string): string {
@@ -143,7 +147,7 @@ function parsePage(
   };
 }
 
-function validateScope(scope: MeetingNoteScope): { start: string; end: string; docId: string; docUrl: string } {
+function validateScope(scope: MeetingNoteScope): { start: string; end: string; docId: string; docUrl: string; maxTitleChars: number; maxBodyChars: number } {
   if (!scope.approvedRoot || typeof scope.approvedRoot !== "string" || !isAbsolute(scope.approvedRoot)) throw new Error("approvedRoot must be an absolute path");
   if (!scope.documentLabel || typeof scope.documentLabel !== "string") throw new Error("documentLabel is required");
   if (scope.documentLabel.startsWith("/") || scope.documentLabel.includes("..") || /[\\:*?"<>|]/.test(scope.documentLabel)) throw new Error("documentLabel must be a relative path without traversal");
@@ -153,10 +157,12 @@ function validateScope(scope: MeetingNoteScope): { start: string; end: string; d
   if (start > end) throw new Error("meeting note time window is invalid");
   if (scope.classification !== "work" && scope.classification !== "confidential") throw new Error("unsupported content classification");
   if (!Number.isInteger(scope.retentionDays) || scope.retentionDays < 1 || scope.retentionDays > 365) throw new Error("retentionDays must be between 1 and 365");
-  if (!Number.isInteger(scope.maxTitleChars) || scope.maxTitleChars < 1 || scope.maxTitleChars > 2_000) throw new Error("maxTitleChars must be between 1 and 2000");
-  if (!Number.isInteger(scope.maxBodyChars) || scope.maxBodyChars < 1 || scope.maxBodyChars > 12_000) throw new Error("maxBodyChars must be between 1 and 12000");
+  const maxTitleChars = scope.maxTitleChars ?? DEFAULT_MAX_TITLE_CHARS;
+  const maxBodyChars = scope.maxBodyChars ?? DEFAULT_MAX_BODY_CHARS;
+  if (!Number.isInteger(maxTitleChars) || maxTitleChars < 1 || maxTitleChars > 2_000) throw new Error("maxTitleChars must be between 1 and 2000");
+  if (!Number.isInteger(maxBodyChars) || maxBodyChars < 1 || maxBodyChars > 12_000) throw new Error("maxBodyChars must be between 1 and 12000");
   const docId = documentId(scope.documentLabel);
-  return { start, end, docId, docUrl: stableSourceUrl(scope.documentLabel) };
+  return { start, end, docId, docUrl: stableSourceUrl(scope.documentLabel), maxTitleChars, maxBodyChars };
 }
 
 function inWindow(value: string, start: string, end: string): boolean {
@@ -165,20 +171,27 @@ function inWindow(value: string, start: string, end: string): boolean {
 }
 
 export class MeetingNoteReviewQueueAdapter {
-  constructor(private readonly source: MeetingNotePageSource, private readonly store: ReviewQueueStore) {}
+  constructor(
+    private readonly source: MeetingNotePageSource,
+    private readonly store: ReviewQueueStore,
+    private readonly maxPages = DEFAULT_MAX_PAGES,
+    private readonly maxTotalItems = DEFAULT_MAX_TOTAL_ITEMS,
+  ) {}
 
   async sync(scope: MeetingNoteScope): Promise<MeetingNoteSyncResult> {
     const validated = validateScope(scope);
     const previousCursor = await this.store.getCursor(MEETING_CONNECTOR_ID, scope.documentLabel);
     let cursor: string | undefined = previousCursor;
     let fetched = 0, proposed = 0, deleted = 0;
+    let pageCount = 0;
     let observedAt = validated.end;
-    let nextCursor = previousCursor;
+    let nextCursor: string | undefined = previousCursor;
     const seenCursors = new Set<string | undefined>();
     const proposals: ReviewProposal[] = [];
     const deletions: ReviewDeletion[] = [];
 
     while (true) {
+      if (pageCount >= this.maxPages) throw new Error(`meeting-notes pagination exceeded maxPages=${this.maxPages}`);
       if (seenCursors.has(cursor)) throw new Error("meeting note pagination cursor repeated");
       seenCursors.add(cursor);
       let raw: unknown;
@@ -193,34 +206,35 @@ export class MeetingNoteReviewQueueAdapter {
       } catch (error) {
         throw new Error(`meeting note read failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
       }
-      const page = parsePage(raw, validated.docId, scope.documentLabel, scope.maxTitleChars, scope.maxBodyChars);
+      const page = parsePage(raw, validated.docId, scope.documentLabel, validated.maxTitleChars, validated.maxBodyChars);
       if (page.cursor !== cursor) throw new Error("meeting note response cursor does not match requested cursor");
+      pageCount += 1;
       observedAt = page.observedAt;
-      nextCursor = page.nextCursor ?? nextCursor;
 
       for (const item of page.items) {
+        if (fetched >= this.maxTotalItems) throw new Error(`meeting-notes pagination exceeded maxTotalItems=${this.maxTotalItems}`);
         fetched += 1;
         const sourceId = `${validated.docId}:${item.id}`;
+        const redactedTitle = redact(item.title).slice(0, validated.maxTitleChars);
+        const redactedBody = item.body === undefined ? undefined : redact(item.body).slice(0, validated.maxBodyChars);
         if (item.deleted) {
           deletions.push({
             provider: MEETING_CONNECTOR_ID,
             sourceId,
-            contentHash: contentHash({ id: item.id, title: item.title, body: item.body, occurredAt: item.occurredAt }),
+            contentHash: contentHash({ id: item.id, title: redactedTitle, body: redactedBody, occurredAt: item.occurredAt }),
             deletedAt: item.updatedAt ?? page.observedAt,
             reason: "source_deleted",
           });
           continue;
         }
         if (!inWindow(item.occurredAt, validated.start, validated.end)) continue;
-        const title = redact(item.title).slice(0, scope.maxTitleChars);
-        const body = item.body === undefined ? undefined : redact(item.body).slice(0, scope.maxBodyChars);
         const candidate: ReviewProposal = {
           id: id(sourceId),
           provider: MEETING_CONNECTOR_ID,
           sourceId,
           scope: scope.documentLabel,
           kind: item.proposalKind ?? "action",
-          title,
+          title: redactedTitle,
           occurredAt: item.occurredAt,
           observedAt: page.observedAt,
           sourceUrl: validated.docUrl,
@@ -228,12 +242,19 @@ export class MeetingNoteReviewQueueAdapter {
           reviewState: "proposed",
           retentionUntil: retention(page.observedAt, scope.retentionDays),
           dedupSuggestions: [],
+          classification: scope.classification,
         };
         candidate.dedupSuggestions = await this.store.findDedupSuggestions(candidate);
         proposals.push(candidate);
       }
 
-      if (!page.nextCursor) break;
+      if (!page.nextCursor) {
+        // Clear the cursor when the source reports no next page; a later completed
+        // sync starts from the beginning rather than re-fetching the final page.
+        nextCursor = undefined;
+        break;
+      }
+      nextCursor = page.nextCursor;
       cursor = page.nextCursor;
     }
 

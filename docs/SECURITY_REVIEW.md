@@ -136,11 +136,14 @@ production use and real-data ingestion.
   `packages/core/src/review-adapters.ts` (`CalendarReviewAdapter`/`JiraReviewAdapter` proposal titles),
   `packages/core/src/meeting-import.ts` (`MeetingNoteReviewQueueAdapter` titles/bodies).
 - **Evidence (remediated in this PR):** a shared `redact()` helper strips email addresses and secret-like
-  assignments (`token=...`, `api_key=...`, etc.) before excerpts, proposal descriptions and titles are
-  persisted. The Slack, Calendar/Jira and meeting-import adapters all call it before storing bounded text.
-  Adversarial fixture tests in `slack-connector.test.ts`, `review-adapters.test.ts` and
-  `meeting-import.test.ts` assert that raw emails and placeholder secrets are absent from stored output.
-- **Impact:** sensitive substrings are no longer indexed in FTS or surfaced in review items.
+  assignments before excerpts, proposal descriptions and titles are persisted. Covered forms are quoted,
+  backtick-quoted and unquoted assignments of `api_key`, `apikey`, `access_token`, `auth_token`,
+  `client_secret`, `password`, `passwd`, `secret` or `token`, where the value is 8 or more characters and
+  is not an obvious placeholder. The Slack, Calendar/Jira and meeting-import adapters all call it before
+  storing bounded text. Adversarial fixture tests in `slack-connector.test.ts`, `review-adapters.test.ts`
+  and `meeting-import.test.ts` assert that raw emails and non-placeholder secrets are absent from stored
+  output. Free-form high-entropy tokens that are not in an assignment form are not detected.
+- **Impact:** sensitive substrings matching the covered forms are no longer indexed in FTS or surfaced in review items.
 - **Remediation:** shared `redact()` helper applied to all connector excerpts/titles/descriptions; tests mirror
   the adversarial Slack token/email pattern.
 - **Owner:** coder (connectors) — remediated.
@@ -211,9 +214,10 @@ macOS arm64 and Windows x64 in the existing CI matrix.
 
 Reviewed fixtures are synthetic only and use reserved domains
 (`example.invalid`, `example.test`). Note for reviewers:
-`person@example.invalid` and `token=secret-value` appear only in the original
-union review scope, on the meeting-import line, as redaction inputs and are
-asserted to be removed from stored output.
+`person@example.invalid` and `token=hunter2xyz123` appear as redaction inputs in the
+adversarial fixtures/tests (`fixtures/connectors/meeting-notes.synthetic.json`,
+`packages/core/src/slack-connector.test.ts`, `packages/core/src/review-adapters.test.ts`)
+and are asserted to be removed from stored output.
 
 ## 5. Approved routes and read-only scopes (explicit)
 
@@ -222,7 +226,7 @@ asserted to be removed from stored output.
 | PR connector | `synthetic-fixture`; `approved-claude-runner` (opt-in, work-only) | `pull_requests:read` only; explicit `owner/repo` allowlist; canonical `https://<origin>` allowlist; canonical `/owner/repo/pull/<id>` URL | Synthetic GO; real route gated (G-MCP-01) |
 | Slack | injected `SlackPageSource` (no network client) | `channels:history` only; explicit public-channel allowlist; bounded UTC window; DMs/private/`chat:write` rejected | Synthetic GO; real route gated |
 | Calendar / Jira | independent `ReadPage` adapters | per-source `enabled` switch + scope allowlist; read pages only, no write op exists | Synthetic GO |
-| Meeting notes | approved-root local file adapter | absolute path must canonicalize inside an approved root | GO (local only) |
+| Meeting notes | injected `MeetingNotePageSource` (no network client); absolute `approvedRoot` validated but never persisted | synthetic-only; `allowedLabels` allowlist; read-only bounded UTC window; classification propagated | Synthetic GO; real file transport fail-closed pending gates |
 | Model routes | `ApprovedModelRouter` + `ModelAdapter` | per-route provider/model/capability/data-class ceiling/timeout/token/retry/approval; `approved:true` and `pre-approved` required; fail-closed with deterministic offline fallback | Only a synthetic `fake` provider exists; Claude/LiteLLM/Ollama are NO-GO (G-MODEL-01) |
 | Direct MCP Locker | — | — | NO-GO (G-MCP-01) |
 

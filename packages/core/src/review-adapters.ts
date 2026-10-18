@@ -27,6 +27,7 @@ export interface ReviewProposal {
   reviewState: "proposed";
   retentionUntil: string;
   dedupSuggestions: readonly string[];
+  classification?: "work" | "confidential";
 }
 export interface ReviewDeletion { provider: ReviewSource; sourceId: string; contentHash: string; deletedAt: string; reason: "source_deleted" | "retention_expired"; }
 export interface AdapterCommit {
@@ -206,6 +207,7 @@ export class SqliteReviewQueueStore implements ReviewQueueStore {
       retentionUntil: p.retentionUntil,
       dedupSuggestions: [...p.dedupSuggestions],
       owner: p.owner,
+      classification: p.classification,
     }));
     const deletions = batch.deletions.map(d => ({ provider: d.provider as string, sourceId: d.sourceId, contentHash: d.contentHash, deletedAt: d.deletedAt, reason: d.reason as string }));
     this.store.commitAdapterBatch({ connector: batch.connector as string, scope: batch.scope, previousCursor: batch.previousCursor, nextCursor: batch.nextCursor, observedAt: batch.observedAt, fetched: batch.fetched, proposals, deletions });

@@ -444,7 +444,7 @@ export class SqliteStorage implements Storage {
  } {
   type AdapterCommitLike = {
    connector: string; scope: string; previousCursor?: string; nextCursor?: string; observedAt: string; fetched: number;
-   proposals: readonly { id:string; provider:string; sourceId:string; scope:string; kind:string; title:string; occurredAt:string; observedAt:string; sourceUrl:string; sourceLinks:readonly string[]; reviewState:string; retentionUntil:string; dedupSuggestions:readonly string[]; owner?:{ sourceIdentity:string; resolvedPersonId?:string; candidates:readonly {personId:string;label:string;confidence:number}[]; prompt?:string } }[];
+   proposals: readonly { id:string; provider:string; sourceId:string; scope:string; kind:string; title:string; occurredAt:string; observedAt:string; sourceUrl:string; sourceLinks:readonly string[]; reviewState:string; retentionUntil:string; dedupSuggestions:readonly string[]; owner?:{ sourceIdentity:string; resolvedPersonId?:string; candidates:readonly {personId:string;label:string;confidence:number}[]; prompt?:string }; classification?:string }[];
    deletions: readonly { provider:string; sourceId:string; contentHash:string; deletedAt:string; reason:string }[];
   };
   const db=this.db; const ISO="strftime('%Y-%m-%dT%H:%M:%fZ','now')";
@@ -475,7 +475,7 @@ export class SqliteStorage implements Storage {
       const existingTombstone=(isTombstoned.get(proposal.provider,proposal.sourceId) as {tombstoned?:number}|undefined)?.tombstoned;
       const existingDeleted=(isDeleted.get(proposal.provider,proposal.sourceId) as {deleted_at?:string|null}|undefined)?.deleted_at;
       if(existingTombstone || existingDeleted) continue;
-      sourceStmt.run(recordId,proposal.provider,proposal.sourceId,proposal.sourceUrl,proposal.occurredAt,proposal.observedAt,proposal.title,`sha256:${proposal.id}`,proposal.provider,proposal.observedAt,proposal.retentionUntil);
+      sourceStmt.run(recordId,proposal.provider,proposal.sourceId,proposal.sourceUrl,proposal.occurredAt,proposal.observedAt,proposal.title,`sha256:${proposal.id}`,proposal.classification??proposal.provider,proposal.observedAt,proposal.retentionUntil);
       proposalStmt.run(proposal.id,proposal.kind,proposal.title,recordId,JSON.stringify({owner:proposal.owner,dedupSuggestions:proposal.dedupSuggestions}),JSON.stringify(proposal.sourceLinks),proposal.occurredAt,proposal.retentionUntil);
      }
      for(const deletion of b.deletions) {

@@ -88,13 +88,14 @@ test("redacts emails and secret assignments from excerpts and proposal descripti
     const basePage = x.pages[0] as {messages: Record<string,unknown>[]};
     const adversarialMessage = {
       ...basePage.messages[0],
-      text: "Email person@example.invalid and set token='synthetic-test' before the launch.",
+      text: "Email person@example.invalid and set token='hunter2xyz123' before the launch; also password=hunter2xyz.",
     };
     const page = { ...(x.pages[0] as object), nextCursor: undefined, messages: [adversarialMessage] };
     await new SlackReviewQueueAdapter(new FixtureSource([page]), x.store).sync({ ...baseScope, maxExcerptChars: 500 });
     const row = x.store.db.prepare("SELECT description FROM review_queue_proposals WHERE kind='action'").get() as {description:string};
     assert.doesNotMatch(row.description, /person@example\.invalid/);
-    assert.doesNotMatch(row.description, /synthetic-test/);
+    assert.doesNotMatch(row.description, /hunter2xyz123/);
+    assert.doesNotMatch(row.description, /hunter2xyz/);
     assert.match(row.description, /\[REDACTED-EMAIL\]/);
     assert.match(row.description, /\[REDACTED-SECRET\]/);
   } finally { await x.cleanup(); }
