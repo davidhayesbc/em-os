@@ -29,6 +29,12 @@ test("leaves placeholder and short secret assignments unchanged", () => {
   assert.equal(redact("secret=redacted"), "secret=redacted");
 });
 
+test("does not treat placeholder substrings inside real secrets as placeholders", () => {
+  assert.equal(redact("password=attest-actual-secret"), "password=[REDACTED-SECRET]");
+  assert.equal(redact("token=example-production-key-123"), "token=[REDACTED-SECRET]");
+  assert.equal(redact("token=synthetic-prod-secret-123"), "token=[REDACTED-SECRET]");
+});
+
 test("fails closed on non-string input", () => {
   assert.throws(() => redact(undefined as unknown as string), /redact input must be a string/);
   assert.throws(() => redact(123 as unknown as string), /redact input must be a string/);

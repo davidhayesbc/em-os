@@ -3,9 +3,9 @@ const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 // - keyword list plus "token" for connector text,
 // - optional single/double/backtick quoting or an unquoted value,
 // - value must be 8+ characters,
-// - obvious placeholders (test, synthetic, example, ...) are left unchanged.
+// - exact, well-defined placeholders are left unchanged.
 const SECRET_ASSIGNMENT_RE = /\b(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret|token)\b\s*[:=]\s*(?:"([^"\n]{8,})"|'([^'\n]{8,})'|`([^`\n]{8,})`|([^\s,;]{8,}))/gi;
-const PLACEHOLDER_RE = /redacted|example|placeholder|synthetic|test|dummy|change[_-]?me|xxx+|your[_-]|<.+>|\$\{|\.{3}/i;
+const PLACEHOLDER_RE = /^(?:\[?redacted\]?|example|placeholder|synthetic(?:[-_]test)?|test|dummy|change[-_]?me|x{3,}|your[-_][a-z0-9_-]+|<[^>\r\n]+>|\$\{[^}\r\n]+\}|\.{3})$/i;
 
 /**
  * Redact personal identifiers and secret-like assignments from connector text
