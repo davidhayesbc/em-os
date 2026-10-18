@@ -16,8 +16,10 @@ const extensionsDir = resolve(stateRoot, "extensions");
 const logsDir = resolve(stateRoot, "logs");
 const expected = "em-os.em-os-vscode@0.1.0";
 
+// Electron-run markers. The inventory marker ("Verified isolated inventory: ...")
+// is already asserted by the deepEqual check above, before the child runner is
+// spawned, so it is not included here.
 const successMarkers = [
-  "Verified isolated inventory: em-os.em-os-vscode@0.1.0",
   "[packaged-vsix-smoke] invoked em-os.sync",
   "[packaged-vsix-smoke] invoked em-os.openInbox",
   "[packaged-vsix-smoke] invoked em-os.whatNext",
