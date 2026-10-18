@@ -150,6 +150,15 @@ function scanText(text, location, findings, historySha = null) {
 }
 
 /**
+ * Resolve a path relative to a root directory. Kept as a separate helper so
+ * the self-test can assert it never reverts to URL resolution (which mishandles
+ * '#' and '?' in filenames).
+ */
+function resolveTrackedPath(rootPath, relPath) {
+  return join(rootPath, relPath);
+}
+
+/**
  * Read a single tracked file and scan it.
  * Returns { scanned: true } on success, { binary: true } for binary blobs,
  * or { unreadable: true, error } when the file cannot be read.
@@ -157,7 +166,7 @@ function scanText(text, location, findings, historySha = null) {
 function scanTrackedFile(rootPath, relPath, findings) {
   let buffer;
   try {
-    buffer = readFileSync(join(rootPath, relPath));
+    buffer = readFileSync(resolveTrackedPath(rootPath, relPath));
   } catch (err) {
     return { unreadable: true, error: err };
   }
@@ -175,11 +184,26 @@ function selfTestSpecialCharResolution() {
   // the '#'/'?' files will silently produce no finding and this test will fail.
   const tmpDir = mkdtempSync(join(tmpdir(), "scan-repo-safety-"));
   const secret = "aws = " + "AKIA" + "ABCDEFGHIJKLMNOP";
-  const files = ["plain.txt", "probe#file.txt", "probe?file.txt"];
+  // Win32 forbids '?' in filenames, so that probe is covered by the helper
+  // assertion below on Windows and by a real file on other platforms.
+  const files = ["plain.txt", "probe#file.txt"];
+  if (process.platform !== "win32") {
+    files.push("probe?file.txt");
+  }
   try {
     for (const f of files) {
       writeFileSync(join(tmpDir, f), secret + "\n");
     }
+
+    // The path resolver must not use URL semantics for '#' or '?'.
+    for (const f of ["plain.txt", "probe#file.txt", "probe?file.txt"]) {
+      const resolved = resolveTrackedPath(tmpDir, f);
+      const expected = join(tmpDir, f);
+      if (resolved !== expected) {
+        throw new Error(`self-test: resolveTrackedPath(${f}) = ${resolved}, expected ${expected}; special-char resolution regressed`);
+      }
+    }
+
     for (const f of files) {
       const fileFindings = [];
       const result = scanTrackedFile(tmpDir, f, fileFindings);
@@ -189,6 +213,17 @@ function selfTestSpecialCharResolution() {
       if (!fileFindings.some((finding) => finding.rule === "aws-access-key")) {
         throw new Error(`self-test: expected aws-access-key finding in ${f}; the special-char read path may have regressed`);
       }
+    }
+
+    // Verify that a missing tracked file is reported as unreadable, produces no
+    // findings, and is excluded from the scanned count.
+    const missingFindings = [];
+    const missing = scanTrackedFile(tmpDir, "definitely-missing.txt", missingFindings);
+    if (!missing.unreadable) {
+      throw new Error("self-test: expected scanTrackedFile to report an unreadable tracked file");
+    }
+    if (missingFindings.length !== 0) {
+      throw new Error("self-test: expected no findings for an unreadable tracked file");
     }
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
