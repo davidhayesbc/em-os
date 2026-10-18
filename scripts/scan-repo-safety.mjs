@@ -73,7 +73,7 @@ const RULES = [
   {
     name: "email-address",
     severity: "medium",
-    re: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+    re: /(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
     allow: (value) => /\.(?:invalid|test|example|localhost)$/i.test(value) || /@example\.(?:com|org|net)$/i.test(value),
   },
   {

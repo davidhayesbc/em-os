@@ -1,4 +1,4 @@
-const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+const EMAIL_RE = /(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 // Redact secret-like assignments from connector text. Based on the repository-safety
 // scanner's assignment-secret pattern, extended with "token", an optional
 // identifier prefix, and a prefixed-only `key` branch (bare `key` is not secret).
@@ -22,10 +22,9 @@ const PLACEHOLDER_RE = /^(?:\[?redacted\]?|example|placeholder|synthetic(?:[-_]t
 export function redact(text: string): string {
   if (typeof text !== "string") throw new Error("redact input must be a string");
   // Skip the email regex entirely when there is no '@' in the input.  The email
-  // pattern's local-part quantifier can take quadratic time on long, separator-dense
-  // runs (e.g. "a.".repeat(n)) because it backtracks while looking for an '@' that
-  // never appears.  This guard preserves exact redaction semantics while keeping
-  // redact() linear on the no-email separator-dense text that connectors can see.
+  // pattern's start is anchored by a zero-width lookbehind boundary so it stays
+  // linear and never matches a suffix of a long local part; this guard is a cheap
+  // fast path that preserves exact redaction semantics on the common no-email case.
   const withEmailRedacted = text.includes("@")
     ? text.replace(EMAIL_RE, "[REDACTED-EMAIL]")
     : text;
