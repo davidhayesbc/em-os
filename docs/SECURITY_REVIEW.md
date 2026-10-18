@@ -30,7 +30,7 @@
 | | |
 |---|---|
 | Current blocking issues from this review | **0** (SEC-01 and SEC-02 remediated) |
-| Remaining High / Medium / Low findings | 0 / 3 / 3 |
+| Remaining High / Medium / Low findings | 0 / 2 / 2 |
 | Verified positive controls | 9 |
 | Real work data, credentials or secrets in the public repo | **none found** (see §4) |
 | Approved-route / read-only-scope definition | explicit and consistent (see §5) |
@@ -130,22 +130,21 @@ production use and real-data ingestion.
   a synthetic prototype.
 - **Owner:** security + product-owner (gate closure); coder (implementation).
 
-### SEC-05 — Connector excerpts persist raw text without the meeting-import redaction (Medium)
+### SEC-05 — Connector excerpts persist raw text without the meeting-import redaction (Medium, remediated)
 
-- **Files:** `packages/core/src/slack-connector.ts` (`sync()` excerpt/proposal),
-  `packages/core/src/review-adapters.ts` (`CalendarReviewAdapter`/`JiraReviewAdapter`
-  proposal titles).
-- **Evidence:** `meeting-import.ts` applies `redact()` (secret assignments +
-  emails) before persisting, but the Slack and Calendar/Jira paths store the
-  bounded excerpt/title verbatim. Public-channel text and calendar/Jira titles can
-  contain inline secrets or personal identifiers.
-- **Impact:** sensitive substrings can be indexed in FTS and surfaced in review
-  items despite classification/retention controls.
-- **Remediation:** reuse the shared redaction helper before persisting excerpts,
-  proposal descriptions and titles (or document classification+retention as the
-  accepted control and record it in the risk register). Add a test mirroring the
-  Slack adversarial fixture with a token/email.
-- **Owner:** coder (connectors).
+- **Files:** `packages/core/src/redact.ts`, `packages/core/src/slack-connector.ts` (`sync()` excerpt/proposal),
+  `packages/core/src/review-adapters.ts` (`CalendarReviewAdapter`/`JiraReviewAdapter` proposal titles),
+  `packages/core/src/meeting-import.ts` (`MeetingNoteReviewQueueAdapter` titles/bodies).
+- **Evidence (remediated in this PR):** a shared `redact()` helper strips email addresses and secret-like
+  assignments (`token=...`, `api_key=...`, etc.) before excerpts, proposal descriptions and titles are
+  persisted. The Slack, Calendar/Jira and meeting-import adapters all call it before storing bounded text.
+  Adversarial fixture tests in `slack-connector.test.ts`, `review-adapters.test.ts` and
+  `meeting-import.test.ts` assert that raw emails and placeholder secrets are absent from stored output.
+- **Impact:** sensitive substrings are no longer indexed in FTS or surfaced in review items.
+- **Remediation:** shared `redact()` helper applied to all connector excerpts/titles/descriptions; tests mirror
+  the adversarial Slack token/email pattern.
+- **Owner:** coder (connectors) — remediated.
+- **Status:** remediated.
 
 ### SEC-06 — `saveFoamDraft` containment check does not resolve symlinks (Low)
 
@@ -157,15 +156,21 @@ production use and real-data ingestion.
   reject symlinked components. (Non-urgent: the workspace path is operator-chosen.)
 - **Owner:** coder (drafting).
 
-### SEC-07 — Meeting-import leaks the absolute local path into provenance (Low)
+### SEC-07 — Meeting-import leaks the absolute local path into provenance (Low, remediated)
 
-- **File:** `packages/core/src/meeting-import.ts` → `importFile()`
-  (`documentUri: file://${canonical}`).
-- **Evidence:** the canonical absolute path (user/account names, directory
-  structure) is stored in proposal provenance and can flow into drafts/exports.
+- **File:** `packages/core/src/meeting-import.ts` → `sync()`.
+- **Evidence (remediated in this PR):** the adapter accepts an absolute `approvedRoot`
+  for validation but never stores it in source records or proposals. Provenance uses a
+  stable SHA-256 hash of the relative `documentLabel` as the document id plus the
+  relative label itself. The source URL is a synthetic `https://example.invalid/meeting-notes/<label>`
+  placeholder. Tests assert that no `file://` URL and no `/tmp/` absolute path appear in the
+  stored proposal set or SQLite source records.
+- **Impact:** local directory structure and account names no longer flow into exports
+  or review items.
 - **Remediation:** store a stable hashed document id plus a relative label; keep
   the absolute path out of exported artifacts.
-- **Owner:** coder (meeting-import).
+- **Owner:** coder (meeting-import) — remediated.
+- **Status:** remediated.
 
 ### SEC-08 — In-memory reference stores are not the production persistence path (Low / informational)
 
@@ -257,7 +262,7 @@ asserted to be removed from stored output.
 | SEC-02 migration version collision | coder (task `t_7abfbd35`) | remediated |
 | SEC-03 importData key injection | coder (storage) | no |
 | SEC-04 encrypted backup/at-rest | security + product-owner | no (open gate G-SEC-02) |
-| SEC-05 connector redaction | coder (connectors) | no |
+| SEC-05 connector redaction | coder (connectors) | remediated |
 | SEC-06 Foam symlink containment | coder (drafting) | no |
-| SEC-07 meeting path disclosure | coder (meeting-import) | no |
+| SEC-07 meeting path disclosure | coder (meeting-import) | remediated |
 | SEC-08 wire audited persistence | coder/security | no |
