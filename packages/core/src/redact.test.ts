@@ -85,11 +85,15 @@ test("remains linear and unchanged on long separator-dense runs without a keywor
 });
 
 test("remains linear on '@'-bearing separator-dense input", () => {
-  // An '@' forces the email regex to run.  The bounded quantifiers must keep
-  // redaction linear even when a long separator-dense run follows a real address.
+  // An '@' forces the email regex to run.  A zero-width lookbehind start boundary
+  // keeps redaction linear and prevents partial suffix matches on long local parts.
   const prefix = "bob@example.invalid ";
   const separatorDense12k = prefix + "a.".repeat(6000); // ~12,020 characters
   assert.equal(redact(separatorDense12k), "[REDACTED-EMAIL] " + "a.".repeat(6000));
+
+  // Long local parts must still be fully redacted (no partial suffix match).
+  assert.equal(redact("a".repeat(65) + "@example.com"), "[REDACTED-EMAIL]");
+  assert.equal(redact("abcdefgh.".repeat(10) + "xyz@example.com"), "[REDACTED-EMAIL]");
 
   const start12k = performance.now();
   redact(separatorDense12k);
