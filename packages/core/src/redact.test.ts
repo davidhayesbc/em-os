@@ -18,6 +18,7 @@ test("redacts prefixed credential keys", () => {
   assert.equal(redact("github_token=`example-sec-3`"), "github_token=`[REDACTED-SECRET]`");
   assert.equal(redact("x-api-key=example-sec-4"), "x-api-key=[REDACTED-SECRET]");
   assert.equal(redact("stripe_secret=\"example-sec-5\""), "stripe_secret=\"[REDACTED-SECRET]\"");
+  assert.equal(redact("db_password: example_value3"), "db_password: [REDACTED-SECRET]");
 });
 
 test("redacts multiple occurrences in one string", () => {
@@ -52,6 +53,18 @@ test("leaves ordinary prose and non-credential words unchanged", () => {
   assert.equal(redact("the password is rotated monthly"), "the password is rotated monthly");
   assert.equal(redact("nottoken='synthetic'"), "nottoken='synthetic'");
   assert.equal(redact("mytoken=abc"), "mytoken=abc");
+  assert.equal(redact("Key: takeaways from the meeting"), "Key: takeaways from the meeting");
+  assert.equal(redact("The key: performance and reliability"), "The key: performance and reliability");
+  assert.equal(redact("key=value12345"), "key=value12345");
+});
+
+test("treats prefixed key identifiers conservatively as secret-like", () => {
+  // Any `key` preceded by an identifier prefix is treated as a credential key.
+  // This is intentionally conservative: it catches `aws_secret_access_key`
+  // and `private_key`, but also redacts common non-credential `_key` names.
+  assert.equal(redact("sort_key=example_value1"), "sort_key=[REDACTED-SECRET]");
+  assert.equal(redact("public_key=example_value2"), "public_key=[REDACTED-SECRET]");
+  assert.equal(redact("private_key=example_value4"), "private_key=[REDACTED-SECRET]");
 });
 
 test("fails closed on non-string input", () => {

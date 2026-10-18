@@ -138,12 +138,14 @@ production use and real-data ingestion.
 - **Evidence (remediated in this PR):** a shared `redact()` helper strips email addresses and secret-like
   assignments before excerpts, proposal descriptions and titles are persisted. Covered forms are quoted,
   backtick-quoted and unquoted assignments of `api_key`, `apikey`, `access_token`, `auth_token`,
-  `client_secret`, `password`, `passwd`, `secret`, `token` or `key`, optionally preceded by an identifier prefix (for example
-  `db_password`, `github_token`, `aws_secret_access_key`), where the value is 8 or more characters and is not an obvious placeholder.
-  The Slack, Calendar/Jira and meeting-import adapters all call it before
-  storing bounded text. Adversarial fixture tests in `slack-connector.test.ts`, `review-adapters.test.ts`
-  and `meeting-import.test.ts` assert that raw emails and non-placeholder secrets are absent from stored
-  output. Free-form high-entropy tokens that are not in an assignment form are not detected.
+  `client_secret`, `password`, `passwd`, `secret` or `token` (bare or preceded by an identifier prefix
+  ending in `_`, `.`, `/` or `-`, such as `db_password` or `github_token`), and of `key` only when it is
+  preceded by such a prefix (such as `aws_secret_access_key` or `private_key`). Bare `key`, identifiers
+  like `mypassword=` (no separator), and ordinary prose remain unchanged. The assigned value must be
+  8 or more characters and must not be an obvious placeholder. The Slack, Calendar/Jira and meeting-import
+  adapters all call it before storing bounded text. Adversarial fixture tests in `slack-connector.test.ts`,
+  `review-adapters.test.ts` and `meeting-import.test.ts` assert that raw emails and non-placeholder secrets
+  are absent from stored output. Free-form high-entropy tokens that are not in an assignment form are not detected.
 - **Impact:** sensitive substrings matching the covered forms are no longer indexed in FTS or surfaced in review items.
 - **Remediation:** shared `redact()` helper applied to all connector excerpts/titles/descriptions; tests mirror
   the adversarial Slack token/email pattern.
