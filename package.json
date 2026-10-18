@@ -11,6 +11,7 @@
     "build": "tsc -b",
     "package:vsix": "npm run build && node -e \"require('fs').mkdirSync('artifacts',{recursive:true})\" && npm run package --workspace em-os-vscode",
     "test:vsix-smoke": "node scripts/test-packaged-vsix.mjs",
+    "test:vsix-smoke:selftest": "node scripts/test-packaged-vsix-selftest.mjs",
     "check": "tsc -b --pretty false && node scripts/check-architecture-docs.mjs && node scripts/validate-security-discovery.mjs && npm run probe:locker && npm run test:locker-probe-gate",
     "probe:locker": "node scripts/probes/locker-discovery-probe.mjs --offline --transport fixtures/security/locker-probe-transport.synthetic.json",
     "test:locker-probe-gate": "node scripts/test-locker-probe-gate.mjs",
