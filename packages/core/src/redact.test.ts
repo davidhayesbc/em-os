@@ -71,3 +71,15 @@ test("fails closed on non-string input", () => {
   assert.throws(() => redact(undefined as unknown as string), /redact input must be a string/);
   assert.throws(() => redact(123 as unknown as string), /redact input must be a string/);
 });
+
+test("remains linear and unchanged on long separator-dense runs without a keyword", () => {
+  const separatorDense = "a.".repeat(6000); // 12,000 characters
+  assert.equal(redact(separatorDense), separatorDense);
+  const slashDense = "a/".repeat(6000);
+  assert.equal(redact(slashDense), slashDense);
+  // Generous wall-clock bound: the fix should be well under 10 ms for 12k chars.
+  const start = performance.now();
+  redact(separatorDense);
+  const elapsed = performance.now() - start;
+  assert.ok(elapsed < 10, `separator-dense redact took ${elapsed.toFixed(2)} ms`);
+});

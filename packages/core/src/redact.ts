@@ -7,7 +7,10 @@ const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 // - optional single/double/backtick quoting or an unquoted value,
 // - value must be 8+ characters,
 // - exact, well-defined placeholders are left unchanged.
-const SECRET_ASSIGNMENT_RE = /(?<![A-Za-z0-9_.-])(?:(?:[A-Za-z0-9_.-]*[_./-])?(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret|token)|(?:[A-Za-z0-9_.-]*[_./-])key)\b\s*[:=]\s*(?:"([^"\n]{8,})"|'([^'\n]{8,})'|`([^`\n]{8,})`|([^\s,;]{8,}))/gi;
+// The prefix is expressed as a zero-width boundary instead of a consuming optional
+// group so the engine never scans ahead for a separator; this keeps matching linear
+// on long, separator-dense runs with no keyword.
+const SECRET_ASSIGNMENT_RE = /(?:(?:(?<=[_./-])|(?<![A-Za-z0-9./-]))(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret|token)|(?<=[_./-])key)\b\s*[:=]\s*(?:"([^"\n]{8,})"|'([^'\n]{8,})'|`([^`\n]{8,})`|([^\s,;]{8,}))/gi;
 const PLACEHOLDER_RE = /^(?:\[?redacted\]?|example|placeholder|synthetic(?:[-_]test)?|test|dummy|change[-_]?me|x{3,}|your[-_][a-z0-9_-]+|<[^>\r\n]+>|\$\{[^}\r\n]+\}|\.{3})$/i;
 
 /**
@@ -18,13 +21,19 @@ const PLACEHOLDER_RE = /^(?:\[?redacted\]?|example|placeholder|synthetic(?:[-_]t
  */
 export function redact(text: string): string {
   if (typeof text !== "string") throw new Error("redact input must be a string");
-  return text
-    .replace(EMAIL_RE, "[REDACTED-EMAIL]")
-    .replace(SECRET_ASSIGNMENT_RE, (match, ...args) => {
-      const secretValue = [args[0], args[1], args[2], args[3]].find((g) => g !== undefined);
-      if (!secretValue || PLACEHOLDER_RE.test(secretValue)) return match;
-      const index = match.indexOf(secretValue);
-      if (index < 0) return match;
-      return match.slice(0, index) + "[REDACTED-SECRET]" + match.slice(index + secretValue.length);
-    });
+  // Skip the email regex entirely when there is no '@' in the input.  The email
+  // pattern's local-part quantifier can take quadratic time on long, separator-dense
+  // runs (e.g. "a.".repeat(n)) because it backtracks while looking for an '@' that
+  // never appears.  This guard preserves exact redaction semantics while keeping
+  // redact() linear on the no-email separator-dense text that connectors can see.
+  const withEmailRedacted = text.includes("@")
+    ? text.replace(EMAIL_RE, "[REDACTED-EMAIL]")
+    : text;
+  return withEmailRedacted.replace(SECRET_ASSIGNMENT_RE, (match, ...args) => {
+    const secretValue = [args[0], args[1], args[2], args[3]].find((g) => g !== undefined);
+    if (!secretValue || PLACEHOLDER_RE.test(secretValue)) return match;
+    const index = match.indexOf(secretValue);
+    if (index < 0) return match;
+    return match.slice(0, index) + "[REDACTED-SECRET]" + match.slice(index + secretValue.length);
+  });
 }
