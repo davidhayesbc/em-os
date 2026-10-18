@@ -22,8 +22,9 @@
 // No third-party dependencies: it runs under plain Node in CI on macOS/Windows.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = new URL("..", import.meta.url);
@@ -148,6 +149,52 @@ function scanText(text, location, findings, historySha = null) {
   }
 }
 
+/**
+ * Read a single tracked file and scan it.
+ * Returns { scanned: true } on success, { binary: true } for binary blobs,
+ * or { unreadable: true, error } when the file cannot be read.
+ */
+function scanTrackedFile(rootPath, relPath, findings) {
+  let buffer;
+  try {
+    buffer = readFileSync(join(rootPath, relPath));
+  } catch (err) {
+    return { unreadable: true, error: err };
+  }
+  if (BINARY.test(buffer.toString("latin1"))) {
+    return { binary: true };
+  }
+  scanText(buffer.toString("utf8"), relPath, findings);
+  return { scanned: true };
+}
+
+function selfTestSpecialCharResolution() {
+  // Create temp files whose names contain URL-fragment/query characters and
+  // prove they are read when the scanner resolves them with path.join() rather
+  // than URL resolution. If the read path ever reverts to new URL(file, repoRoot)
+  // the '#'/'?' files will silently produce no finding and this test will fail.
+  const tmpDir = mkdtempSync(join(tmpdir(), "scan-repo-safety-"));
+  const secret = "aws = " + "AKIA" + "ABCDEFGHIJKLMNOP";
+  const files = ["plain.txt", "probe#file.txt", "probe?file.txt"];
+  try {
+    for (const f of files) {
+      writeFileSync(join(tmpDir, f), secret + "\n");
+    }
+    for (const f of files) {
+      const fileFindings = [];
+      const result = scanTrackedFile(tmpDir, f, fileFindings);
+      if (result.unreadable) {
+        throw new Error(`self-test: unreadable ${f}: ${result.error.message}`);
+      }
+      if (!fileFindings.some((finding) => finding.rule === "aws-access-key")) {
+        throw new Error(`self-test: expected aws-access-key finding in ${f}; the special-char read path may have regressed`);
+      }
+    }
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runSelfTest() {
   // Build the probes by concatenation so the literal credential-bearing URLs do
   // not appear as contiguous strings in this file and trip the scanner itself.
@@ -209,6 +256,8 @@ function runSelfTest() {
     }
   }
 
+  selfTestSpecialCharResolution();
+
   console.log("repository safety scan self-test: PASS");
 }
 
@@ -218,15 +267,24 @@ if (selfTest) {
 }
 
 const findings = [];
+let treeCount = 0;
+let unreadableCount = 0;
 
 for (const file of listTrackedFiles()) {
   if (SKIP_PATH.test(file)) continue;
-  let buffer;
-  try { buffer = readFileSync(join(repoRootPath, file)); } catch { continue; }
-  if (BINARY.test(buffer.toString("latin1"))) continue;
-  scanText(buffer.toString("utf8"), file, findings);
+  const result = scanTrackedFile(repoRootPath, file, findings);
+  if (result.unreadable) {
+    unreadableCount += 1;
+    console.error(`WARN unreadable tracked file: ${file} — ${result.error.code ?? result.error.message}`);
+    continue;
+  }
+  // Binary files are readable but not scanned as text; still count as tracked.
+  treeCount += 1;
 }
-const treeCount = listTrackedFiles().filter((f) => !SKIP_PATH.test(f)).length;
+
+if (unreadableCount) {
+  console.error(`WARN ${unreadableCount} tracked file(s) could not be read and were excluded from the scan count.`);
+}
 
 let historyCount = 0;
 if (scanHistory) {
