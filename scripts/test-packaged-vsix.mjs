@@ -120,6 +120,16 @@ const runnerScript = resolve(root, "scripts/vsix-smoke-electron-runner.mjs");
 const runnerOptionsPath = resolve(stateRoot, "electron-runner-options.json");
 writeFileSync(runnerOptionsPath, JSON.stringify(runOptions, null, 2), "utf8");
 
+// The "Extension host test runner exit code: 0" marker is only emitted by VS
+// Code when it believes it is running in a CI environment. To keep the local
+// (non-CI) smoke judgement consistent with CI, inject CI=1 into the runner child
+// whenever the outer environment is not already CI. This does not relax the
+// marker gate; it merely makes the required marker deterministic.
+const isCiEnvironment =
+  !!process.env.CI ||
+  !!process.env.BUILD_ARTIFACTSTAGINGDIRECTORY ||
+  !!process.env.GITHUB_WORKSPACE;
+
 const result = await new Promise((resolvePromise, rejectPromise) => {
   let output = "";
   const child = spawn(process.execPath, [runnerScript, runnerOptionsPath], {
@@ -128,6 +138,7 @@ const result = await new Promise((resolvePromise, rejectPromise) => {
       ...process.env,
       DONT_PROMPT_WSL_INSTALL: "1",
       ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+      ...(isCiEnvironment ? {} : { CI: "1" }),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

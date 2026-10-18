@@ -21,6 +21,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run package:vsix
+      - name: Self-test packaged VSIX smoke judgement
+        run: npm run test:vsix-smoke:selftest
       - name: Run packaged VSIX smoke in Xvfb
         run: xvfb-run -a npm run test:vsix-smoke
       - name: Upload VS Code and Extension Host logs
