@@ -46,6 +46,8 @@ jobs:
           node-version: 22
       - name: Scan working tree and full history for secrets, PII or work content
         run: node scripts/scan-repo-safety.mjs --history
+      - name: Run repository safety scanner self-test
+        run: node scripts/scan-repo-safety.mjs --self-test
 
   backup-drill:
     name: backup-drill ${{ matrix.label }}

@@ -220,12 +220,21 @@ adversarial fixtures/tests (`fixtures/connectors/meeting-notes.synthetic.json`,
 `packages/core/src/review-adapters.test.ts`) and are asserted to be removed from stored
 output.
 
-The dedicated `repo-safety` CI job scans the full git history. Two paths contain
-historical adversarial redaction literals that pre-date this repair and are
-exempt from the `assignment-secret` rule only: `packages/core/src/redact.test.ts`
-and `fixtures/connectors/meeting-notes.synthetic.json`. The current working tree
-versions of both files already use scanner-allowed literals and do not rely on
-the exemption.
+The dedicated `repo-safety` CI job scans the full git history. Three historical
+blob revisions across two files contain adversarial redaction literals that
+pre-date the repaired `redact()` coverage and are exempt from the
+`assignment-secret` rule only when the exact (path, blob-SHA) pair is
+allowlisted:
+
+- `packages/core/src/redact.test.ts` — blobs
+  `5c3040a3c4f73b3ae701de4f39ca721f194bc710` and
+  `d3f6db95e890226cac33b5a9c1c6caf7971e4398`
+- `fixtures/connectors/meeting-notes.synthetic.json` — blob
+  `9565a1e4799cb14e977b7ecfab1ff8ff2f41e48f`
+
+The exemption is keyed on the full 40-character SHA, so any new historical blob
+at those paths is scanned normally. The current working-tree versions of both
+files already use scanner-allowed literals and do not rely on the exemption.
 
 ## 5. Approved routes and read-only scopes (explicit)
 

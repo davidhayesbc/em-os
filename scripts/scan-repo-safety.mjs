@@ -85,11 +85,28 @@ const RULES = [
 const SKIP_PATH = /(^|\/)(?:node_modules|\.git|dist|coverage|\.worktrees)(\/|$)/;
 const BINARY = /\0/;
 
-// Historical adversarial redaction fixtures in this PR branch contain
-// non-placeholder secret-like assignments. The assignment-secret rule skips
-// only these two exact paths so the full-history scan stays green while the
-// current working tree already uses scanner-allowed literals.
-const REDACTION_FIXTURE_PATH = /(^|\/)(?:packages\/core\/src\/redact\.test\.ts|fixtures\/connectors\/meeting-notes\.synthetic\.json)(\s+\(history\s+[a-f0-9]+\))?$/;
+// Historical adversarial redaction fixtures in this repo contain non-placeholder
+// secret-like assignments in three specific blob revisions. The assignment-secret
+// rule skips only those exact (path, blob-sha) pairs so the full-history scan
+// stays green. Working-tree versions of these paths are scanned normally.
+const REDACTION_FIXTURE_PATHS = new Set([
+  "packages/core/src/redact.test.ts",
+  "fixtures/connectors/meeting-notes.synthetic.json",
+]);
+
+const REDACTION_FIXTURE_HISTORY_BLOBS = new Set([
+  "9565a1e4799cb14e977b7ecfab1ff8ff2f41e48f",
+  "5c3040a3c4f73b3ae701de4f39ca721f194bc710",
+  "d3f6db95e890226cac33b5a9c1c6caf7971e4398",
+]);
+
+function isRedactionFixtureHistory(location, historySha) {
+  if (!historySha) return false;
+  const m = location.match(/^(.*)\s+\(history\s+[a-f0-9]+\)$/);
+  if (!m) return false;
+  const path = m[1].replace(/^\.\/?/, "");
+  return REDACTION_FIXTURE_PATHS.has(path) && REDACTION_FIXTURE_HISTORY_BLOBS.has(historySha.toLowerCase());
+}
 
 function listTrackedFiles() {
   return execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8" })
@@ -111,8 +128,8 @@ function listHistoryBlobs() {
   return out;
 }
 
-function scanText(text, location, findings) {
-  const skipAssignmentSecret = REDACTION_FIXTURE_PATH.test(location);
+function scanText(text, location, findings, historySha = null) {
+  const skipAssignmentSecret = isRedactionFixtureHistory(location, historySha);
   for (const rule of RULES) {
     const re = new RegExp(rule.re.source, rule.re.flags);
     let match;
@@ -157,6 +174,38 @@ function runSelfTest() {
       throw new Error(`self-test: expected basic-auth-url to allow ${text}`);
     }
   }
+  // Redaction-fixture exemption probes: the historical allowlist is keyed by
+  // exact (path, blob-sha) pairs, and working-tree copies are never exempt.
+  const fixturePath = "packages/core/src/redact.test.ts";
+  const syntheticSecret = "pass" + "word" + "='" + "abcdefghijklmnopqrstuvwx" + "'";
+  const allowedHistorySha = "5c3040a3c4f73b3ae701de4f39ca721f194bc710";
+  const nonAllowedHistorySha = "0000000000000000000000000000000000000000";
+  const historyLocationFor = (sha) => `${fixturePath} (history ${sha.slice(0, 12)})`;
+  const mustFlagHistory = [historyLocationFor(nonAllowedHistorySha), nonAllowedHistorySha];
+  const mustAllowHistory = [historyLocationFor(allowedHistorySha), allowedHistorySha];
+
+  {
+    const findings = [];
+    scanText(syntheticSecret, mustFlagHistory[0], findings, mustFlagHistory[1]);
+    if (!findings.some((f) => f.rule === "assignment-secret")) {
+      throw new Error("self-test: expected assignment-secret to flag a non-allowlisted history blob");
+    }
+  }
+  {
+    const findings = [];
+    scanText(syntheticSecret, mustAllowHistory[0], findings, mustAllowHistory[1]);
+    if (findings.some((f) => f.rule === "assignment-secret")) {
+      throw new Error("self-test: expected the exact-SHA allowlist to suppress the historical fixture");
+    }
+  }
+  {
+    const findings = [];
+    scanText(syntheticSecret, fixturePath, findings);
+    if (!findings.some((f) => f.rule === "assignment-secret")) {
+      throw new Error("self-test: expected assignment-secret to flag the working-tree fixture path");
+    }
+  }
+
   console.log("repository safety scan self-test: PASS");
 }
 
@@ -183,7 +232,7 @@ if (scanHistory) {
     try { text = execFileSync("git", ["cat-file", "-p", sha], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 }).toString("latin1"); } catch { continue; }
     if (BINARY.test(text)) continue;
     historyCount += 1;
-    scanText(text, `${name} (history ${sha.slice(0, 12)})`, findings);
+    scanText(text, `${name} (history ${sha.slice(0, 12)})`, findings, sha);
   }
 }
 
