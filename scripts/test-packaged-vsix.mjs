@@ -116,7 +116,9 @@ writeFileSync(
 );
 writeFileSync(runnerOptionsPath, JSON.stringify(runOptions, null, 2), "utf8");
 
-const result = await new Promise((resolvePromise) => {
+const { once } = await import("node:events");
+
+const result = await new Promise((resolvePromise, rejectPromise) => {
   let output = "";
   const child = spawn(process.execPath, [runnerScript, runnerOptionsPath], {
     cwd: root,
@@ -128,6 +130,9 @@ const result = await new Promise((resolvePromise) => {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+
   child.stdout.on("data", (chunk) => {
     output += chunk;
     process.stdout.write(chunk);
@@ -138,11 +143,14 @@ const result = await new Promise((resolvePromise) => {
   });
 
   child.on("error", (error) => {
-    resolvePromise({ ok: false, code: null, signal: null, error, output });
+    rejectPromise(error);
   });
-  child.on("exit", (code, signal) => {
-    resolvePromise({ ok: code === 0 && signal === null, code, signal, output, error: null });
-  });
+
+  Promise.all([once(child.stdout, "end"), once(child.stderr, "end"), once(child, "close")])
+    .then(([_, __, [code, signal]]) => {
+      resolvePromise({ ok: code === 0 && signal === null, code, signal, output, error: null });
+    })
+    .catch(rejectPromise);
 });
 
 const allMarkers = hasAllMarkers(result.output);
