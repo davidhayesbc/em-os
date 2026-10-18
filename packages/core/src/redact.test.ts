@@ -83,3 +83,28 @@ test("remains linear and unchanged on long separator-dense runs without a keywor
   const elapsed = performance.now() - start;
   assert.ok(elapsed < 10, `separator-dense redact took ${elapsed.toFixed(2)} ms`);
 });
+
+test("remains linear on '@'-bearing separator-dense input", () => {
+  // An '@' forces the email regex to run.  The bounded quantifiers must keep
+  // redaction linear even when a long separator-dense run follows a real address.
+  const prefix = "bob@example.invalid ";
+  const separatorDense12k = prefix + "a.".repeat(6000); // ~12,020 characters
+  assert.equal(redact(separatorDense12k), "[REDACTED-EMAIL] " + "a.".repeat(6000));
+
+  const start12k = performance.now();
+  redact(separatorDense12k);
+  const elapsed12k = performance.now() - start12k;
+  assert.ok(elapsed12k < 10, `12k @-bearing separator-dense redact took ${elapsed12k.toFixed(2)} ms`);
+
+  const separatorDense24k = prefix + "a.".repeat(12000);
+  const start24k = performance.now();
+  redact(separatorDense24k);
+  const elapsed24k = performance.now() - start24k;
+  assert.ok(elapsed24k < 20, `24k @-bearing separator-dense redact took ${elapsed24k.toFixed(2)} ms`);
+
+  const separatorDense48k = prefix + "a.".repeat(24000);
+  const start48k = performance.now();
+  redact(separatorDense48k);
+  const elapsed48k = performance.now() - start48k;
+  assert.ok(elapsed48k < 40, `48k @-bearing separator-dense redact took ${elapsed48k.toFixed(2)} ms`);
+});
