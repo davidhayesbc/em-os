@@ -1,10 +1,12 @@
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
-// Mirror the repository-safety scanner's assignment-secret pattern:
+// Redact secret-like assignments from connector text. Based on the repository-safety
+// scanner's assignment-secret pattern, extended with "token" and an optional
+// identifier prefix (e.g. db_password, github_token, aws_secret_access_key).
 // - keyword list plus "token" for connector text,
 // - optional single/double/backtick quoting or an unquoted value,
 // - value must be 8+ characters,
 // - exact, well-defined placeholders are left unchanged.
-const SECRET_ASSIGNMENT_RE = /\b(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret|token)\b\s*[:=]\s*(?:"([^"\n]{8,})"|'([^'\n]{8,})'|`([^`\n]{8,})`|([^\s,;]{8,}))/gi;
+const SECRET_ASSIGNMENT_RE = /(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9_.-]*[_./-])?(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret|token|key)\b\s*[:=]\s*(?:"([^"\n]{8,})"|'([^'\n]{8,})'|`([^`\n]{8,})`|([^\s,;]{8,}))/gi;
 const PLACEHOLDER_RE = /^(?:\[?redacted\]?|example|placeholder|synthetic(?:[-_]test)?|test|dummy|change[-_]?me|x{3,}|your[-_][a-z0-9_-]+|<[^>\r\n]+>|\$\{[^}\r\n]+\}|\.{3})$/i;
 
 /**
