@@ -155,7 +155,13 @@ try {
   // child exits 0 -> PASS. This is the regression guard for local runs.
   runCase(
     "Case 5: non-CI success (CI marker injected by runner)",
-    { FAKE_EXIT_MODE: "success", CI: "", VSCODE_SMOKE_STATE: makeStateDir() },
+    {
+      FAKE_EXIT_MODE: "success",
+      CI: "",
+      GITHUB_WORKSPACE: "",
+      BUILD_ARTIFACTSTAGINGDIRECTORY: "",
+      VSCODE_SMOKE_STATE: makeStateDir(),
+    },
     true,
   );
 
