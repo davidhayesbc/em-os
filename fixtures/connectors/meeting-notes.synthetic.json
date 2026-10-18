@@ -1,0 +1,68 @@
+{
+  "_synthetic": true,
+  "schemaVersion": 1,
+  "description": "Synthetic meeting-note pages for pagination, update, delete, redaction, and review proposals.",
+  "pages": [
+    {
+      "schemaVersion": 1,
+      "documentId": "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847",
+      "documentLabel": "notes/team.md",
+      "nextCursor": "page-2",
+      "observedAt": "2026-10-09T09:00:00.000Z",
+      "items": [
+        {
+          "id": "mn-1",
+          "title": "Prepare the synthetic launch checklist",
+          "body": "Please prepare the checklist and confirm the rollout date.",
+          "occurredAt": "2026-10-08T10:00:00.000Z",
+          "proposalKind": "action"
+        },
+        {
+          "id": "mn-2",
+          "title": "Decision: use the synthetic rollout plan",
+          "occurredAt": "2026-10-08T11:00:00.000Z",
+          "proposalKind": "decision"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "documentId": "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847",
+      "documentLabel": "notes/team.md",
+      "cursor": "page-2",
+      "nextCursor": "page-3",
+      "observedAt": "2026-10-09T09:05:00.000Z",
+      "items": [
+        {
+          "id": "mn-1",
+          "title": "Prepare the revised synthetic launch checklist",
+          "body": "Updated: use the revised checklist for the synthetic demo.",
+          "occurredAt": "2026-10-08T10:00:00.000Z",
+          "proposalKind": "action"
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "documentId": "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847",
+      "documentLabel": "notes/team.md",
+      "cursor": "page-3",
+      "observedAt": "2026-10-09T09:10:00.000Z",
+      "items": [
+        {
+          "id": "mn-2",
+          "title": "Decision: use the synthetic rollout plan",
+          "occurredAt": "2026-10-08T11:00:00.000Z",
+          "deleted": true
+        },
+        {
+          "id": "mn-3",
+          "title": "Confirm with person@example.invalid and api_key='example-sec-1'",
+          "body": "This adversarial fixture verifies that emails and secret assignments are redacted before persistence.",
+          "occurredAt": "2026-10-08T12:00:00.000Z",
+          "proposalKind": "action"
+        }
+      ]
+    }
+  ]
+}

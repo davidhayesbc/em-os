@@ -443,8 +443,8 @@ export class SqliteStorage implements Storage {
   commitAdapterBatch(batch:unknown): void;
  } {
   type AdapterCommitLike = {
-   connector: string; scope: string; previousCursor?: string; nextCursor?: string; observedAt: string; fetched: number;
-   proposals: readonly { id:string; provider:string; sourceId:string; scope:string; kind:string; title:string; occurredAt:string; observedAt:string; sourceUrl:string; sourceLinks:readonly string[]; reviewState:string; retentionUntil:string; dedupSuggestions:readonly string[]; owner?:{ sourceIdentity:string; resolvedPersonId?:string; candidates:readonly {personId:string;label:string;confidence:number}[]; prompt?:string } }[];
+   connector: string; scope: string; previousCursor?: string; nextCursor?: string; cursorUpdate?: {kind:"set";value:string}|{kind:"clear"}|{kind:"preserve"}; observedAt: string; fetched: number;
+   proposals: readonly { id:string; provider:string; sourceId:string; scope:string; kind:string; title:string; occurredAt:string; observedAt:string; sourceUrl:string; sourceLinks:readonly string[]; reviewState:string; retentionUntil:string; dedupSuggestions:readonly string[]; owner?:{ sourceIdentity:string; resolvedPersonId?:string; candidates:readonly {personId:string;label:string;confidence:number}[]; prompt?:string }; classification?:string }[];
    deletions: readonly { provider:string; sourceId:string; contentHash:string; deletedAt:string; reason:string }[];
   };
   const db=this.db; const ISO="strftime('%Y-%m-%dT%H:%M:%fZ','now')";
@@ -475,7 +475,7 @@ export class SqliteStorage implements Storage {
       const existingTombstone=(isTombstoned.get(proposal.provider,proposal.sourceId) as {tombstoned?:number}|undefined)?.tombstoned;
       const existingDeleted=(isDeleted.get(proposal.provider,proposal.sourceId) as {deleted_at?:string|null}|undefined)?.deleted_at;
       if(existingTombstone || existingDeleted) continue;
-      sourceStmt.run(recordId,proposal.provider,proposal.sourceId,proposal.sourceUrl,proposal.occurredAt,proposal.observedAt,proposal.title,`sha256:${proposal.id}`,proposal.provider,proposal.observedAt,proposal.retentionUntil);
+      sourceStmt.run(recordId,proposal.provider,proposal.sourceId,proposal.sourceUrl,proposal.occurredAt,proposal.observedAt,proposal.title,`sha256:${proposal.id}`,proposal.classification??proposal.provider,proposal.observedAt,proposal.retentionUntil);
       proposalStmt.run(proposal.id,proposal.kind,proposal.title,recordId,JSON.stringify({owner:proposal.owner,dedupSuggestions:proposal.dedupSuggestions}),JSON.stringify(proposal.sourceLinks),proposal.occurredAt,proposal.retentionUntil);
      }
      for(const deletion of b.deletions) {
@@ -488,9 +488,13 @@ export class SqliteStorage implements Storage {
       }
       db.prepare("INSERT INTO deletion_tombstones(provider,source_id,deleted_at,reason,content_hash) VALUES(?,?,?,?,?) ON CONFLICT(provider,source_id) DO UPDATE SET deleted_at=excluded.deleted_at,reason=excluded.reason,content_hash=excluded.content_hash").run(deletion.provider,deletion.sourceId,at,deletion.reason,deletion.contentHash);
      }
+     const persistedCursor=b.cursorUpdate?.kind==="clear" ? null
+      : b.cursorUpdate?.kind==="set" ? b.cursorUpdate.value
+      : b.cursorUpdate?.kind==="preserve" ? b.previousCursor??null
+      : b.nextCursor??b.previousCursor??null;
      db.prepare(`INSERT INTO sync_cursors(connector,scope,cursor,watermark,last_success_at,last_error,fetched_count) VALUES(?,?,?,?,?,NULL,?)
       ON CONFLICT(connector,scope) DO UPDATE SET cursor=excluded.cursor,watermark=excluded.watermark,last_success_at=excluded.last_success_at,last_error=NULL,fetched_count=excluded.fetched_count,updated_at=${ISO}`)
-      .run(b.connector,b.scope,b.nextCursor??b.previousCursor??null,b.nextCursor??b.previousCursor??null,utc(b.observedAt),b.fetched);
+      .run(b.connector,b.scope,persistedCursor,persistedCursor,utc(b.observedAt),b.fetched);
      db.exec("COMMIT");
     } catch(error) { db.exec("ROLLBACK"); throw error; }
    },
