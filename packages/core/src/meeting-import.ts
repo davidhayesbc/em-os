@@ -61,6 +61,8 @@ const DEFAULT_MAX_TITLE_CHARS = 200;
 const DEFAULT_MAX_BODY_CHARS = 1000;
 const DEFAULT_MAX_PAGES = 100;
 const DEFAULT_MAX_TOTAL_ITEMS = 20_000;
+const MAX_ALLOWED_PAGES = 100;
+const MAX_ALLOWED_TOTAL_ITEMS = 20_000;
 const SOURCE_URL_BASE = "https://example.invalid/meeting-notes/";
 
 function documentId(label: string): string {
@@ -176,7 +178,14 @@ export class MeetingNoteReviewQueueAdapter {
     private readonly store: ReviewQueueStore,
     private readonly maxPages = DEFAULT_MAX_PAGES,
     private readonly maxTotalItems = DEFAULT_MAX_TOTAL_ITEMS,
-  ) {}
+  ) {
+    if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > MAX_ALLOWED_PAGES) {
+      throw new Error(`maxPages must be an integer between 1 and ${MAX_ALLOWED_PAGES}`);
+    }
+    if (!Number.isInteger(maxTotalItems) || maxTotalItems < 1 || maxTotalItems > MAX_ALLOWED_TOTAL_ITEMS) {
+      throw new Error(`maxTotalItems must be an integer between 1 and ${MAX_ALLOWED_TOTAL_ITEMS}`);
+    }
+  }
 
   async sync(scope: MeetingNoteScope): Promise<MeetingNoteSyncResult> {
     const validated = validateScope(scope);

@@ -244,6 +244,62 @@ test("pagination bounds fail closed and commit nothing", async () => {
   assert.equal(store.deletions.length, 0);
 });
 
+test("invalid injected pagination caps fail closed before reads and preserve queue state", async () => {
+  const invalidCaps: ReadonlyArray<readonly [number, number, RegExp]> = [
+    [Number.POSITIVE_INFINITY, 20_000, /maxPages must be an integer between 1 and 100/],
+    [0, 20_000, /maxPages must be an integer between 1 and 100/],
+    [-1, 20_000, /maxPages must be an integer between 1 and 100/],
+    [1.5, 20_000, /maxPages must be an integer between 1 and 100/],
+    [101, 20_000, /maxPages must be an integer between 1 and 100/],
+    [100, Number.POSITIVE_INFINITY, /maxTotalItems must be an integer between 1 and 20000/],
+    [100, 0, /maxTotalItems must be an integer between 1 and 20000/],
+    [100, -1, /maxTotalItems must be an integer between 1 and 20000/],
+    [100, 1.5, /maxTotalItems must be an integer between 1 and 20000/],
+    [100, 20_001, /maxTotalItems must be an integer between 1 and 20000/],
+  ];
+
+  for (const [maxPages, maxTotalItems, pattern] of invalidCaps) {
+    const store = new InMemoryReviewQueueStore();
+    await store.commit({
+      connector: "meeting-notes",
+      scope: baseScope.documentLabel,
+      cursorUpdate: { kind: "set", value: "existing-cursor" },
+      observedAt: baseScope.windowStart,
+      fetched: 0,
+      proposals: [],
+      deletions: [],
+    });
+    let fetchCalls = 0;
+    const source: MeetingNotePageSource = { async fetchPage() { fetchCalls += 1; return {}; } };
+
+    assert.throws(() => new MeetingNoteReviewQueueAdapter(source, store, maxPages, maxTotalItems), pattern);
+    assert.equal(fetchCalls, 0);
+    assert.equal(store.proposals.size, 0);
+    assert.equal(store.deletions.length, 0);
+    assert.equal(await store.getCursor("meeting-notes", baseScope.documentLabel), "existing-cursor");
+  }
+});
+
+test("maximum injected pagination caps are accepted", async () => {
+  const store = new InMemoryReviewQueueStore();
+  let fetchCalls = 0;
+  const source: MeetingNotePageSource = {
+    async fetchPage() {
+      fetchCalls += 1;
+      return {
+        schemaVersion: 1,
+        documentId: "76c400ed6824c5561fd1eea689c07f6343f36c5a9fc81861cdd5ac87215ac847",
+        documentLabel: baseScope.documentLabel,
+        observedAt: "2026-10-09T09:00:00.000Z",
+        items: [],
+      };
+    },
+  };
+
+  await new MeetingNoteReviewQueueAdapter(source, store, 100, 20_000).sync(baseScope);
+  assert.equal(fetchCalls, 1);
+});
+
 test("cumulative item cap fails closed and commits nothing", async () => {
   const store = new InMemoryReviewQueueStore();
   let pageIndex = 0;
@@ -261,7 +317,7 @@ test("cumulative item cap fails closed and commits nothing", async () => {
       };
     },
   };
-  await assert.rejects(() => new MeetingNoteReviewQueueAdapter(source, store, 1000, 150).sync(baseScope), /exceeded maxTotalItems=150/);
+  await assert.rejects(() => new MeetingNoteReviewQueueAdapter(source, store, 100, 150).sync(baseScope), /exceeded maxTotalItems=150/);
   assert.equal(store.proposals.size, 0);
   assert.equal(store.deletions.length, 0);
 });
