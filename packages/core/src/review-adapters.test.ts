@@ -95,6 +95,19 @@ test("non-https and userinfo source links fail closed with field-named errors", 
   await assert.rejects(() => new CalendarReviewAdapter(baseConfig, async() => ({items:[{id:"ugly-cal",calendarId:"team-calendar",title:"Ugly",htmlLink:"not a url",start:"2026-11-01T00:00:00Z",updatedAt:"2026-11-01T00:00:00Z"}],observedAt:"2026-11-01T00:00:00Z"}), store).sync("team-calendar"), /calendar source URL must be an https URL/);
 });
 
+test("redacts emails and secret assignments from proposal titles", async () => {
+  const store = new InMemoryReviewQueueStore();
+  const items: CalendarItem[] = [
+    {id:"redact-cal",calendarId:"team-calendar",title:"Discuss token='synthetic-test' with person@example.invalid",htmlLink:"https://calendar.example.invalid/event/redact-cal",start:"2026-11-01T00:00:00Z",updatedAt:"2026-11-01T00:00:00Z"},
+  ];
+  await new CalendarReviewAdapter(baseConfig, async() => ({items,observedAt:"2026-11-01T00:00:00Z"}), store).sync("team-calendar");
+  const proposal = [...store.proposals.values()][0];
+  assert.doesNotMatch(proposal.title, /person@example\.invalid/);
+  assert.doesNotMatch(proposal.title, /synthetic-test/);
+  assert.match(proposal.title, /\[REDACTED-EMAIL\]/);
+  assert.match(proposal.title, /\[REDACTED-SECRET\]/);
+});
+
 test("SqliteReviewQueueStore persists calendar and jira proposals, cursors and tombstones transactionally", async () => {
   const dir = await mkdtemp(join(tmpdir(), "em-os-adapters-"));
   const storage = new SqliteStorage(join(dir, "store.sqlite"));

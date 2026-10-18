@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { redact } from "./redact.js";
 
 export const SLACK_CONNECTOR_ID = "slack-public-review-queue" as const;
 export const SLACK_REQUIRED_SCOPES = ["channels:history"] as const;
@@ -212,7 +213,7 @@ export class SlackReviewQueueAdapter {
           if (message.occurredAt < validated.start || message.occurredAt > validated.end) throw new Error("Slack response included a message outside the approved time window");
           const sourceId = `${message.channelId}:${message.id}`;
           if (message.deleted) { deletedSourceIds.push(sourceId); continue; }
-          const excerpt = (message.text ?? "").slice(0, scope.maxExcerptChars);
+          const excerpt = redact(message.text ?? "").slice(0, scope.maxExcerptChars);
           const sourceRecordId = `slack:message:${sourceId}`;
           records.push({ id: sourceRecordId, provider: "slack", sourceId, stableUrl: message.permalink, occurredAt: message.occurredAt, observedAt: page.observedAt, excerpt, contentHash: digest(excerpt), classification: scope.classification, lastSeenAt: page.observedAt, retentionUntil: retentionFrom(page.observedAt, scope.retentionDays) });
           if (message.proposalKind) proposals.push({ id: `slack:proposal:${sourceId}`, kind: message.proposalKind, description: excerpt, sourceRecordId });
