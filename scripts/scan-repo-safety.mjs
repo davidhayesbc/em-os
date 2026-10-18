@@ -177,6 +177,31 @@ function scanTrackedFile(rootPath, relPath, findings) {
   return { scanned: true };
 }
 
+function defaultReadHistoryBlob(sha) {
+  return execFileSync("git", ["cat-file", "-p", sha], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 }).toString("latin1");
+}
+
+/**
+ * Read a single git history blob and scan it.
+ * Returns { scanned: true } on success, { binary: true } for binary blobs,
+ * or { unreadable: true, error } when the blob cannot be read.
+ * The optional `readBlob` argument lets the self-test stub a failure without
+ * touching real git history.
+ */
+function scanHistoryBlob(sha, name, findings, readBlob = defaultReadHistoryBlob) {
+  let text;
+  try {
+    text = readBlob(sha);
+  } catch (err) {
+    return { unreadable: true, error: err };
+  }
+  if (BINARY.test(text)) {
+    return { binary: true };
+  }
+  scanText(text, `${name} (history ${sha.slice(0, 12)})`, findings, sha);
+  return { scanned: true };
+}
+
 function selfTestSpecialCharResolution() {
   // Create temp files whose names contain URL-fragment/query characters and
   // prove they are read when the scanner resolves them with path.join() rather
@@ -291,6 +316,23 @@ function runSelfTest() {
     }
   }
 
+  // Verify that an unreadable history blob is surfaced without touching real
+  // history and does not produce findings that could be counted as scanned.
+  {
+    const blobFindings = [];
+    const result = scanHistoryBlob("0000000000000000000000000000000000000000", "probe.txt", blobFindings, () => {
+      const err = new Error("ENOENT: no such file or directory");
+      err.code = "ENOENT";
+      throw err;
+    });
+    if (!result.unreadable || result.error.code !== "ENOENT") {
+      throw new Error("self-test: expected scanHistoryBlob to report an unreadable history blob");
+    }
+    if (blobFindings.length !== 0) {
+      throw new Error("self-test: expected no findings for an unreadable history blob");
+    }
+  }
+
   selfTestSpecialCharResolution();
 
   console.log("repository safety scan self-test: PASS");
@@ -322,14 +364,22 @@ if (unreadableCount) {
 }
 
 let historyCount = 0;
+let unreadableHistoryCount = 0;
 if (scanHistory) {
   for (const { sha, name } of listHistoryBlobs()) {
-    let text;
-    try { text = execFileSync("git", ["cat-file", "-p", sha], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 }).toString("latin1"); } catch { continue; }
-    if (BINARY.test(text)) continue;
+    const result = scanHistoryBlob(sha, name, findings);
+    if (result.unreadable) {
+      unreadableHistoryCount += 1;
+      console.error(`WARN unreadable history blob: ${name} (history ${sha.slice(0, 12)}) — ${result.error.code ?? result.error.message}`);
+      continue;
+    }
+    if (result.binary) continue;
     historyCount += 1;
-    scanText(text, `${name} (history ${sha.slice(0, 12)})`, findings, sha);
   }
+}
+
+if (unreadableHistoryCount) {
+  console.error(`WARN ${unreadableHistoryCount} history blob(s) could not be read and were excluded from the scan count.`);
 }
 
 for (const finding of findings) {
