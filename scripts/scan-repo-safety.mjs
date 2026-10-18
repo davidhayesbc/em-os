@@ -23,8 +23,11 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const repoRoot = new URL("..", import.meta.url);
+const repoRootPath = fileURLToPath(repoRoot);
 const scanHistory = process.argv.includes("--history");
 const selfTest = process.argv.includes("--self-test");
 
@@ -219,7 +222,7 @@ const findings = [];
 for (const file of listTrackedFiles()) {
   if (SKIP_PATH.test(file)) continue;
   let buffer;
-  try { buffer = readFileSync(new URL(file, repoRoot)); } catch { continue; }
+  try { buffer = readFileSync(join(repoRootPath, file)); } catch { continue; }
   if (BINARY.test(buffer.toString("latin1"))) continue;
   scanText(buffer.toString("utf8"), file, findings);
 }
