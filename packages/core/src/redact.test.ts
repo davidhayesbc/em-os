@@ -12,6 +12,15 @@ test("redacts email addresses and secret assignments", () => {
   assert.equal(redact("client_secret=`example-sec-3`"), "client_secret=`[REDACTED-SECRET]`");
 });
 
+test("redacts prefixed credential keys", () => {
+  assert.equal(redact("db_password=\"example-sec-1\""), "db_password=\"[REDACTED-SECRET]\"");
+  assert.equal(redact("aws_secret_access_key='example-sec-2'"), "aws_secret_access_key='[REDACTED-SECRET]'");
+  assert.equal(redact("github_token=`example-sec-3`"), "github_token=`[REDACTED-SECRET]`");
+  assert.equal(redact("x-api-key=example-sec-4"), "x-api-key=[REDACTED-SECRET]");
+  assert.equal(redact("stripe_secret=\"example-sec-5\""), "stripe_secret=\"[REDACTED-SECRET]\"");
+  assert.equal(redact("db_password: example_value3"), "db_password: [REDACTED-SECRET]");
+});
+
 test("redacts multiple occurrences in one string", () => {
   const input = "Email bob@example.invalid and charlie@example.invalid; token=\"example-sec-4\" and secret=\"example-sec-5\".";
   const output = redact(input);
@@ -27,6 +36,9 @@ test("leaves placeholder and short secret assignments unchanged", () => {
   assert.equal(redact("api_key=\"test\""), "api_key=\"test\"");
   assert.equal(redact("password=abc"), "password=abc");
   assert.equal(redact("secret=redacted"), "secret=redacted");
+  assert.equal(redact("db_password=abc"), "db_password=abc");
+  assert.equal(redact("github_token='test'"), "github_token='test'");
+  assert.equal(redact("aws_secret_access_key=\"redacted\""), "aws_secret_access_key=\"redacted\"");
 });
 
 test("does not treat placeholder substrings inside real secrets as placeholders", () => {
@@ -35,12 +47,39 @@ test("does not treat placeholder substrings inside real secrets as placeholders"
   assert.equal(redact("token=synthetic-key-1"), "token=[REDACTED-SECRET]");
 });
 
+test("leaves ordinary prose and non-credential words unchanged", () => {
+  const text = "Plan the synthetic launch checklist and confirm the rollout date.";
+  assert.equal(redact(text), text);
+  assert.equal(redact("the password is rotated monthly"), "the password is rotated monthly");
+  assert.equal(redact("nottoken='synthetic'"), "nottoken='synthetic'");
+  assert.equal(redact("mytoken=abc"), "mytoken=abc");
+  assert.equal(redact("Key: takeaways from the meeting"), "Key: takeaways from the meeting");
+  assert.equal(redact("The key: performance and reliability"), "The key: performance and reliability");
+  assert.equal(redact("key=value12345"), "key=value12345");
+});
+
+test("treats prefixed key identifiers conservatively as secret-like", () => {
+  // Any `key` preceded by an identifier prefix is treated as a credential key.
+  // This is intentionally conservative: it catches `aws_secret_access_key`
+  // and `private_key`, but also redacts common non-credential `_key` names.
+  assert.equal(redact("sort_key=example_value1"), "sort_key=[REDACTED-SECRET]");
+  assert.equal(redact("public_key=example_value2"), "public_key=[REDACTED-SECRET]");
+  assert.equal(redact("private_key=example_value4"), "private_key=[REDACTED-SECRET]");
+});
+
 test("fails closed on non-string input", () => {
   assert.throws(() => redact(undefined as unknown as string), /redact input must be a string/);
   assert.throws(() => redact(123 as unknown as string), /redact input must be a string/);
 });
 
-test("leaves ordinary work text unchanged", () => {
-  const text = "Plan the synthetic launch checklist and confirm the rollout date.";
-  assert.equal(redact(text), text);
+test("remains linear and unchanged on long separator-dense runs without a keyword", () => {
+  const separatorDense = "a.".repeat(6000); // 12,000 characters
+  assert.equal(redact(separatorDense), separatorDense);
+  const slashDense = "a/".repeat(6000);
+  assert.equal(redact(slashDense), slashDense);
+  // Generous wall-clock bound: the fix should be well under 10 ms for 12k chars.
+  const start = performance.now();
+  redact(separatorDense);
+  const elapsed = performance.now() - start;
+  assert.ok(elapsed < 10, `separator-dense redact took ${elapsed.toFixed(2)} ms`);
 });
