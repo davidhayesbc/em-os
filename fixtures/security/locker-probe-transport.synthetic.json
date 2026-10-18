@@ -1,0 +1,166 @@
+{
+  "transportVersion": 1,
+  "classification": "synthetic",
+  "purpose": "In-process JSON-RPC replay fixture for the Locker discovery probe harness. Uses example.invalid identifiers only; not a captured Locker response.",
+  "transport": {
+    "kind": "json-rpc-replay",
+    "operatorApproved": false,
+    "approval": {
+      "resourcesList": false,
+      "liveInvocation": false
+    }
+  },
+  "exchanges": [
+    {
+      "label": "tools/list",
+      "request": { "method": "tools/list", "params": {} },
+      "response": {
+        "result": {
+          "tools": [
+            {
+              "name": "pull_requests.list",
+              "description": "SYNTHETIC EXAMPLE ONLY: lists pull requests with cursor pagination.",
+              "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["repository", "limit"],
+                "properties": {
+                  "repository": { "type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+$" },
+                  "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
+                  "cursor": { "type": "string", "maxLength": 512 },
+                  "updatedSince": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "resources/list denied",
+      "request": { "method": "resources/list", "params": {} },
+      "response": {
+        "error": { "code": -32601, "message": "Method not found" }
+      }
+    },
+    {
+      "label": "initial page",
+      "request": {
+        "method": "tools/call",
+        "params": {
+          "name": "pull_requests.list",
+          "arguments": { "repository": "acme/widget", "limit": 50 }
+        }
+      },
+      "response": {
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"schemaVersion\":1,\"records\":[{\"sourceId\":\"synthetic-pr-1042\",\"url\":\"https://example.invalid/acme/widget/pull/1042\",\"repository\":\"acme/widget\",\"state\":\"open\",\"updatedAt\":\"2026-01-15T10:00:00Z\"}],\"nextCursor\":\"synthetic-next-page-token\",\"watermark\":\"2026-01-15T10:00:00Z\"}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "continuation page",
+      "request": {
+        "method": "tools/call",
+        "params": {
+          "name": "pull_requests.list",
+          "arguments": { "repository": "acme/widget", "limit": 50, "cursor": "synthetic-next-page-token" }
+        }
+      },
+      "response": {
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"schemaVersion\":1,\"records\":[{\"sourceId\":\"synthetic-pr-1043\",\"url\":\"https://example.invalid/acme/widget/pull/1043\",\"repository\":\"acme/widget\",\"state\":\"merged\",\"updatedAt\":\"2026-01-15T11:00:00Z\"}],\"nextCursor\":\"synthetic-final-cursor\",\"watermark\":\"2026-01-15T11:00:00Z\"}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "delta request",
+      "request": {
+        "method": "tools/call",
+        "params": {
+          "name": "pull_requests.list",
+          "arguments": { "repository": "acme/widget", "limit": 50, "updatedSince": "2026-01-15T11:00:00Z" }
+        }
+      },
+      "response": {
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"schemaVersion\":1,\"records\":[],\"watermark\":\"2026-01-15T11:00:00Z\"}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "malformed cursor",
+      "request": {
+        "method": "tools/call",
+        "params": {
+          "name": "pull_requests.list",
+          "arguments": { "repository": "acme/widget", "limit": 50, "cursor": "MALFORMED_CURSOR" }
+        }
+      },
+      "response": {
+        "error": { "code": -32602, "message": "Invalid cursor" }
+      }
+    },
+    {
+      "label": "access denial",
+      "request": {
+        "method": "tools/call",
+        "params": {
+          "name": "pull_requests.list",
+          "arguments": { "repository": "denied/repo", "limit": 50 }
+        }
+      },
+      "response": {
+        "error": { "code": -32001, "message": "Access denied for repository" }
+      }
+    },
+    {
+      "label": "rate limit",
+      "request": {
+        "method": "tools/call",
+        "params": {
+          "name": "pull_requests.list",
+          "arguments": { "repository": "acme/widget", "limit": 50 }
+        }
+      },
+      "rateLimit": { "remaining": 0, "retryAfter": "60" },
+      "response": {
+        "error": { "code": -32002, "message": "Rate limit exceeded" }
+      }
+    },
+    {
+      "label": "transport interruption",
+      "request": { "method": "tools/call", "params": { "name": "ping" } },
+      "transportError": { "message": "Simulated transport interruption", "interrupted": true, "retryable": true }
+    },
+    {
+      "label": "envelope extra field rejected",
+      "request": { "method": "tools/call", "params": { "name": "pull_requests.list" } },
+      "response": {
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"schemaVersion\":1,\"records\":[{\"sourceId\":\"synthetic-pr-9999\",\"url\":\"https://example.invalid/acme/widget/pull/9999\",\"repository\":\"acme/widget\",\"state\":\"open\",\"updatedAt\":\"2026-01-15T10:00:00Z\",\"body\":\"This sensitive field must be rejected, not retained.\"}]}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
