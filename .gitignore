@@ -48,3 +48,6 @@ dist/
 coverage/
 artifacts/
 .vscode-test/
+
+# Brainstorm / visual-companion scratch (local only)
+.superpowers/
