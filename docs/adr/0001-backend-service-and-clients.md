@@ -57,3 +57,69 @@ Choose based on install friction, the native-module ABI (ADR 0002), standalone m
   - an API contract to version;
   - loopback authentication.
 - **Upgrade rule:** clients and the service negotiate the API version on connect. An incompatible client shows "update EM OS" rather than failing obscurely.
+
+## Spike result (2026-10-19)
+
+**Decisions:**
+
+- **`RUNTIME`: `bundled-node`.** Ship the official Node.js 24 LTS binary (tested 24.22.0) inside a platform-specific VSIX (`vsce package --target darwin-arm64` and `--target win32-x64`). The extension, the `emos` CLI and standalone mode all run the service with that binary.
+- **`KEYCHAIN_LIB`: `@napi-rs/keyring`** (tested 2.1.1). It is an N-API addon, so it is not tied to a Node ABI. It has no install scripts and ships per-platform prebuilt packages, including `win32-x64-msvc` (Windows Credential Manager) and `darwin-arm64` (macOS Keychain).
+
+The SQLite driver is recorded in ADR 0002 (`node:sqlite`).
+
+**Evidence, macOS arm64** (the machine had VS Code 1.142.0, Electron 43.7.7, embedded Node 24.21.0, `process.versions.modules` 148):
+
+| Runtime candidate | Binary | `node:sqlite` (FTS5, WAL, `backup()`) | Third-party native addon (`better-sqlite3`, `@napi-rs/keyring`) | Keychain set/get/delete `em-os-spike` |
+|---|---|---|---|---|
+| `bundled-node` | official Node 24.22.0 (`modules` 137) | pass | pass | pass |
+| `electron-as-node` | `Code.app/Contents/MacOS/Code` | pass | **fail**: `dlopen` refused, "different Team IDs" (hardened runtime without `disable-library-validation`) | **fail** (same cause) |
+| `electron-as-node` | `Code Helper (Plugin)` (this is `process.execPath` inside the extension host) | pass | pass (this helper has `disable-library-validation`) | pass |
+
+- **Standalone simulation:** both passing binaries also passed under `env -i HOME=…`, which approximates launchd's empty environment. They ran as independent processes. A full test with VS Code quit is not recorded, because VS Code was in use on the test machine.
+- **Install:** none of the candidate packages has a `preinstall`, `install` or `postinstall` script. Everything ships pre-built inside the VSIX, so installing it needs no network and no postinstall step. `npm` runs only on the build machine.
+- **The keychain test secret** was deleted after each run. `security find-generic-password -s em-os-spike` confirmed nothing was left behind.
+
+**Comparison:**
+
+| Criterion | `bundled-node` | `electron-as-node` |
+|---|---|---|
+| Users install Node? | No | No |
+| VSIX size impact | About +39 MB on darwin-arm64 and about +35 MB on win32-x64 (`zip -9` of a 122.5 MB / 93.9 MB binary) | about 0 |
+| Platform-specific VSIX | Required (one binary per target) | Not required by the runtime |
+| Network or postinstall at user install | None | None |
+| Standalone with VS Code closed | Yes. No dependency on VS Code at all. | Yes, but only while VS Code stays installed at a known path. It breaks if VS Code is moved or uninstalled. |
+| Node version | Pinned by us | Changes whenever VS Code updates Electron, and differs in forks and Insiders. Open VSX users mostly run forks, whose Electron may predate `node:sqlite`. |
+| macOS native addons | Work (the official binary allows them) | Work only through the `Code Helper (Plugin)` path, not the main `Code` binary |
+| Windows updates | Independent of VS Code | Risk: a long-running `Code.exe` service may hold the file lock the VS Code updater needs |
+
+**Why `bundled-node`:**
+
+- It is the simplest option operationally: one pinned runtime for managed mode, standalone mode and the CLI, so there is one Node version to test.
+- It doesn't depend on which editor is installed or where.
+- The costs are about 35–39 MB per VSIX and building one VSIX per platform. ADR 0001 already accepts platform-specific VSIXs.
+
+**Residual risks:**
+
+- **Extension install paths are versioned.** The extension directory (`…/extensions/<id>-<version>-<target>/`) changes on every update, and the old one is deleted. `emos service install` must copy the runtime and service bundle to a stable per-user location, or re-register after each update (P0-13).
+- **Executable bit.** Confirm that the bundled `node` keeps its executable bit after VSIX install. If it doesn't, `chmod` it on activation (P0-13).
+- **Keychain access control.** macOS keychain items are bound to the signing identity of the binary that creates them. Any other official Node binary can read them without a prompt. This is acceptable under the "same local user" threat model (ADR 0012). Switching runtimes later would trigger a keychain prompt.
+- **Cross-target packaging.** Building the `win32-x64` VSIX on another OS must fetch `@napi-rs/keyring-win32-x64-msvc` and `node.exe` explicitly. That network access happens at build time only.
+- **Node maintenance.** Node 24 LTS needs security-patch bumps until its end of life. Move to Node 26 once it becomes LTS.
+
+**Windows x64: pending the first CI run.** From published package metadata only:
+
+- the official `node.exe` includes `node:sqlite`;
+- `@napi-rs/keyring` publishes `win32-x64-msvc`, which uses Credential Manager;
+- no build toolchain is needed.
+
+**Windows verification to run:**
+
+1. Run the spike checks under the official Node 24 LTS `node.exe`:
+   - `node:sqlite` creates a DB with WAL;
+   - `CREATE VIRTUAL TABLE t USING fts5(x)` succeeds;
+   - 10k FTS5 inserts in one transaction take under 100 ms;
+   - `backup()` to a second file succeeds, and the copy holds 10,000 rows.
+2. `@napi-rs/keyring`: set, get and delete `em-os-spike`, then check with `cmdkey /list` that no entry remains.
+3. Repeat step 1 with a data directory whose path has spaces and Unicode, e.g. `C:\Users\Zoë Q\AppData\Local\EM OS`.
+4. Run `vsce package --target win32-x64` with `node.exe`. Install the VSIX and spawn `node.exe` from the extension directory. Check that Defender and SmartScreen don't block it, and that the process outlives VS Code.
+5. Record the size of the `win32-x64` VSIX.
