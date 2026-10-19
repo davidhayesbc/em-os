@@ -63,6 +63,8 @@ Setup never needs hand-written mapping YAML:
 
 **Aggregator adapters** are optional plugins for gateways that expose their own discovery tools: provider grouping, per-tool access checks, health. They improve grouping, hide inaccessible tools, and ship gateway-specific known presets. They aren't required: without an adapter, discovery uses `tools/list` alone.
 
+Adapters for organisation-internal gateways are **external plugins** in private repositories, loaded through `plugins.json`. This repo contains only the `AggregatorAdapter` interface, the plugin loader, and a reference adapter for a synthetic `example-gateway`, whose fixtures use fake provider and tool names. No internal gateway's tool names, response shapes or provider lists may be committed here.
+
 ## Alternatives considered
 
 - **Hardcoding one MCP server's tool names:** rejected. It isn't portable.

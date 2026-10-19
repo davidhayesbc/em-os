@@ -128,7 +128,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 **Discovery, trust and distribution**
 
 - [ ] **P1-34** Tool discovery: server detection, catalog, read/write classification, capability matcher — deps: P1-13 — claim: —
-- [ ] **P1-35** Aggregator adapter interface + first gateway adapter — deps: P1-34 — claim: —
+- [ ] **P1-35** Plugin loader + aggregator adapter interface + synthetic reference adapter — deps: P1-34 — claim: —
 - [ ] **P1-36** Trust and exit: health panel, open data folder, export, delete all data — deps: P1-05, P1-12, P1-15 — claim: —
 - [ ] **P1-37** *manual + CI* Marketplace and Open VSX publishing — deps: P0-15, P1-36 — claim: —
 
@@ -1321,40 +1321,61 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 ---
 
-### Task P1-35: Aggregator adapter interface + first gateway adapter
+### Task P1-35: Plugin loader + aggregator adapter interface + reference adapter
 
 **Files:**
-- `packages/connectors/src/discovery/aggregator.ts` (interface + registry)
-- `packages/connectors/src/discovery/aggregators/generic.ts` (no-op)
-- the first gateway adapter, in a location the owner chooses (see Interfaces)
-- tests with synthetic fixtures
+- `packages/plugin-api/src/index.ts` — a new public package, `@emos/plugin-api`. It holds only types and the `register` contract, so external plugins depend on this alone.
+- `packages/service/src/plugins.ts` — the loader.
+- `packages/connectors/src/discovery/aggregator.ts` — the registry, plus discovery integration.
+- `packages/plugins/example-gateway/` — the reference adapter, with synthetic fixtures.
+- `docs/plugins/writing-an-aggregator-adapter.md`.
+- Tests beside each.
 
 **Interfaces:**
-- Produces:
+- Produces (in `@emos/plugin-api`):
   ```ts
   export interface AggregatorAdapter {
     id: string;
-    detect(tools: { name: string }[]): boolean;                         // e.g. presence of the gateway's own discovery tool names
+    detect(tools: { name: string }[]): boolean;                                   // e.g. presence of the gateway's own discovery tools
     enrich(invoker: CapabilityInvoker, catalog: ToolEntry[]): Promise<ToolEntry[]>; // fill group.provider/service, accessible, blockedReason
     health?(invoker: CapabilityInvoker): Promise<{ provider: string; errorRatePct: number; calls: number }[]>;
     knownPresets?(): PresetDef[];
   }
-  export function registerAggregator(a: AggregatorAdapter): void;
+  export interface PluginApi { apiVersion: 1; registerAggregator(a: AggregatorAdapter): void; registerPreset(p: PresetDef): void; log: Logger }
+  export interface EmosPlugin { name: string; version: string; register(api: PluginApi): void | Promise<void> }
   ```
-- **First adapter:** targets the owner's gateway. It uses that gateway's per-provider tool-access tool to fill `group` / `accessible` / `blockedReason`, and its provider-health tool for `health`. It ships known presets for calendar, mail, Meet transcripts, docs, chat, code host and tickets.
-  - **Location is the owner's decision:** in this public repo, as an optional plugin package, or in a separate repo loaded via config. Org-specific tool names must not leak into core packages either way.
-  - Tests use **synthetic** fixtures that mimic the gateway's discovery response shape, with fake provider names.
+  `ToolEntry`, `PresetDef`, `CapabilityInvoker` and `Logger` are re-exported from their owning packages.
+- **Loader:**
+  - Reads `<dataDir>/config/plugins.json`, shaped `{ "plugins": [{ "path": "/abs/path/or/package-name", "enabled": true }] }`.
+  - Imports each plugin and calls `register`, with a 5 s timeout per plugin.
+  - A throwing or slow plugin is disabled and recorded as `{ name, error }`.
+  - Plugins never receive `Store`, `SecretStore` or raw DB access.
+  - Op: `plugins.list → { name, version, path, enabled, error: string | null }[]`, shown in Settings.
+- **Reference adapter** `example-gateway`:
+  - `detect` checks for the tools `gateway_tool_access` and `gateway_provider_health`;
+  - `enrich` groups tools by the `provider` / `service` fields from the synthetic access response;
+  - it ships one known calendar preset.
+  - All names are fake. Fixtures pass `check-fixtures`.
+- **Guide:** the doc explains how an organisation writes a **private** adapter package (depending only on `@emos/plugin-api`), tests it against recorded responses, and points `plugins.json` at it.
 
 - [ ] **Step 1: Write the failing tests.**
-  - `detect` is true only when the gateway's discovery tool is present.
-  - `enrich` sets `group.service: "calendar"` and `accessible: false` with the reason from the fixture.
+  - The loader registers the example adapter from a fixture `plugins.json`.
+  - A plugin that throws in `register` → it's listed with its error and the service still starts.
+  - A plugin exceeding 5 s → disabled.
+  - The `PluginApi` object has no `store` / `secrets` keys.
+  - The example adapter's `detect` is true only with both gateway tools present.
+  - `enrich` sets `group.service: "calendar"` and `accessible: false` with the fixture's reason.
   - Known presets pass `Preset.parse`.
+  - Discovery (P1-34) uses an adapter when `detect` matches.
 - [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
+- [ ] **Step 3: Implement.** Use `import(pathToFileURL(path).href)` for paths and `import(name)` for packages.
 - [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-35): aggregator adapters for gateway-aware discovery`.
+- [ ] **Step 5: Commit** `feat(p1-35): plugin loader and aggregator adapter interface with reference adapter`.
 
-**Acceptance:** With the owner's gateway, the catalog is grouped by provider and service, inaccessible tools are hidden with reasons, and calendar setup is one click using the known preset.
+**Acceptance:**
+- An external adapter in a separate directory, depending only on `@emos/plugin-api`, loads via `plugins.json` and enriches discovery.
+- The public repo contains no real gateway's names.
+- The owner's internal adapter is built in their private repo. It's tracked there, not on this board.
 
 ---
 

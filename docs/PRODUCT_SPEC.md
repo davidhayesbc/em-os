@@ -475,7 +475,11 @@ Each entry records:
 
 ## 11. Pluggability
 
-All plugins are registered in-process in the service. Loading third-party plugins dynamically is a later item.
+Built-in plugins are registered in-process in the service.
+
+**External plugins** are loaded at startup from the user's `<dataDir>/config/plugins.json`. Each entry is a local path or an installed package name. A plugin module exports `register(api: PluginApi)`. In Phase 1 the API allows registering **aggregator adapters** and **known presets**; external connectors and widgets come later.
+
+This is how organisation-internal integrations stay **out of the public repo**: an org writes its adapter in its own private repository and points `plugins.json` at it. Plugins only load from paths the user configured, Settings lists every loaded plugin, and a failing plugin is disabled with its error shown.
 
 **Connector** (`ConnectorDefinition`, ADR 0005):
 
@@ -496,7 +500,7 @@ Connectors are written against **capabilities**, such as `searchMessages`, `read
 - show provider health;
 - ship known presets for that gateway's tool names.
 
-The core works without any adapter, using plain `tools/list`.
+The core works without any adapter, using plain `tools/list`. The public repo ships the adapter **interface** and a **reference adapter** for a synthetic example gateway. Adapters for real organisation-internal gateways are external plugins kept in private repositories (owner decision).
 
 **Widget** (`WidgetDefinition`, ADR 0010): id, title, default size, the service query it uses, and a client render component. Connectors may contribute widgets.
 
@@ -564,6 +568,7 @@ Each phase ends with the user working on real data. Detailed task plans are prod
 14. If the direct MCP spike fails for a server, the fallback order is `native` → `ingest_items` via a Claude Code skill → `mcp_via_agent`. Agent-mediated results are parsed from the verbatim tool-result blocks, never from model prose, and are only allowed when the Claude model used is approved for the source's provisional sensitivity.
 15. Distribution is via the VS Code Marketplace and Open VSX (owner decision), with no separate Node install. Windows is kept buildable and unit-tested, but manually tested only on macOS for now.
 16. Source setup uses discovery (detect servers → `tools/list` → read/write classification → capability matching → test preview), so users never write mapping YAML by hand. Gateway-specific discovery lives in optional aggregator adapters.
+17. Organisation-internal adapters, including the initial user's gateway adapter, live in a private repository and load as external plugins. The public repo holds only the interface, the plugin loader and a synthetic reference adapter (owner decision).
 
 ## 15. Builder's discretion
 
