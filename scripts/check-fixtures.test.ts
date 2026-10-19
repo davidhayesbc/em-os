@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -130,6 +130,22 @@ describe("check-fixtures CLI", () => {
     expect(code).toBe(1);
     expect(out).toContain("packages/core/fixtures/bad.json:1 email-domain x@acme.io");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "still fails (exit 1) when invoked through a symlinked path",
+    () => {
+      mkdirSync(join(dir, "fixtures"));
+      writeFileSync(join(dir, "fixtures", "bad.md"), "bob@acme.io\n");
+      const link = join(dir, "linked-check-fixtures.mjs");
+      symlinkSync(script, link);
+      const result = spawnSync(process.execPath, [link, "fixtures"], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("fixtures/bad.md:1 email-domain bob@acme.io");
+    },
+  );
 
   it("exits 0 with a note when the target directory does not exist", () => {
     const explicit = run("fixtures");

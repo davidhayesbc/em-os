@@ -7,7 +7,7 @@
 //   - without: scans `fixtures/` and `packages/*/fixtures/` under the cwd.
 // Prints `file:line rule match` per violation and exits 1 if there are any.
 // Missing directories are not an error (exit 0 with a note).
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -115,6 +115,18 @@ export function main(args, cwd = process.cwd()) {
   return 0;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node realpaths import.meta.url but not argv[1], so compare real paths: a symlinked
+// invocation must still run the scan (failing open here would silently pass the gate).
+function isEntryPoint() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
   process.exitCode = main(process.argv.slice(2));
 }
