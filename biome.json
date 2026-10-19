@@ -11,9 +11,25 @@
       "!package-lock.json"
     ]
   },
-  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
-  "linter": { "enabled": true, "rules": { "preset": "recommended" } },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended"
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
   "overrides": [
     {
       "includes": ["packages/core/**"],
@@ -30,8 +46,18 @@
                   "net": "@emos/core is pure: no network access (use a port).",
                   "node:http": "@emos/core is pure: no network access (use a port).",
                   "http": "@emos/core is pure: no network access (use a port).",
-                  "node:child_process": "@emos/core is pure: no process spawning (use a port).",
-                  "child_process": "@emos/core is pure: no process spawning (use a port).",
+                  "node:https": "@emos/core is pure: no network access (use a port).",
+                  "https": "@emos/core is pure: no network access (use a port).",
+                  "node:http2": "@emos/core is pure: no network access (use a port).",
+                  "http2": "@emos/core is pure: no network access (use a port).",
+                  "node:tls": "@emos/core is pure: no network access (use a port).",
+                  "tls": "@emos/core is pure: no network access (use a port).",
+                  "node:dgram": "@emos/core is pure: no network access (use a port).",
+                  "dgram": "@emos/core is pure: no network access (use a port).",
+                  "node:child_process": "@emos/core is pure: no process or thread spawning (use a port).",
+                  "child_process": "@emos/core is pure: no process or thread spawning (use a port).",
+                  "node:worker_threads": "@emos/core is pure: no process or thread spawning (use a port).",
+                  "worker_threads": "@emos/core is pure: no process or thread spawning (use a port).",
                   "vscode": "@emos/core must not depend on the VS Code API.",
                   "better-sqlite3": "@emos/core must not import SQLite drivers (use the storage port).",
                   "node:sqlite": "@emos/core must not import SQLite drivers (use the storage port).",
@@ -42,7 +68,60 @@
                   "@anthropic-ai/claude-agent-sdk": "@emos/core must not import LLM SDKs (use the LLM port).",
                   "openai": "@emos/core must not import LLM SDKs (use the LLM port).",
                   "ollama": "@emos/core must not import LLM SDKs (use the LLM port)."
-                }
+                },
+                "patterns": [
+                  {
+                    "group": ["node:fs/**", "fs/**"],
+                    "message": "@emos/core is pure: no filesystem access (use a port). (subpath)"
+                  },
+                  {
+                    "group": [
+                      "node:net/**",
+                      "net/**",
+                      "node:http/**",
+                      "http/**",
+                      "node:https/**",
+                      "https/**",
+                      "node:http2/**",
+                      "http2/**",
+                      "node:tls/**",
+                      "tls/**",
+                      "node:dgram/**",
+                      "dgram/**"
+                    ],
+                    "message": "@emos/core is pure: no network access (use a port). (subpath)"
+                  },
+                  {
+                    "group": [
+                      "node:child_process/**",
+                      "child_process/**",
+                      "node:worker_threads/**",
+                      "worker_threads/**"
+                    ],
+                    "message": "@emos/core is pure: no process or thread spawning (use a port). (subpath)"
+                  },
+                  {
+                    "group": ["vscode/**"],
+                    "message": "@emos/core must not depend on the VS Code API. (subpath)"
+                  },
+                  {
+                    "group": ["better-sqlite3/**", "node:sqlite/**", "sql.js/**", "wa-sqlite/**"],
+                    "message": "@emos/core must not import SQLite drivers (use the storage port). (subpath)"
+                  },
+                  {
+                    "group": ["@modelcontextprotocol/sdk/**"],
+                    "message": "@emos/core must not import the MCP SDK. (subpath)"
+                  },
+                  {
+                    "group": [
+                      "@anthropic-ai/sdk/**",
+                      "@anthropic-ai/claude-agent-sdk/**",
+                      "openai/**",
+                      "ollama/**"
+                    ],
+                    "message": "@emos/core must not import LLM SDKs (use the LLM port). (subpath)"
+                  }
+                ]
               }
             }
           }
