@@ -30,7 +30,7 @@ Commitments, person notes, goals and meeting notes can be captured by hand. Clau
 Everything in Phase 0's Global Constraints applies, plus:
 
 - **Ranking** is deterministic and explainable. No model call in ranking, planning, week load or prep (ADR 0008).
-- **Machine-made commitments** are never auto-activated. Imported open items land as `status: "proposed"`, `createdBy: "import"` until the import review keeps them (ADR 0011).
+- **Machine-made commitments** are never auto-activated. Imported and MCP-proposed items land as `status: "proposed"` (notes: `reviewState: "proposed"`) until the proposals review keeps them (ADR 0011, ADR 0013).
 - **Other attendees' action items** stay on the meeting (`meeting.actionItems`). They're never put on the user's list.
 - **Pronouns:** null means unknown. UI shows "pronouns: unknown, using they/them". Generated text never infers pronouns from a name.
 - **Sensitivity defaults:**
@@ -77,69 +77,72 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Slices (data + ops)**
 
-- [ ] **P1-01** People, identities and person notes slice — deps: Phase 0 — claim: —
-- [ ] **P1-02** Commitments + goals slice (CRUD, transitions, audit, pin/snooze) — deps: Phase 0 — claim: —
-- [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02 — claim: —
+- [ ] **P1-01** People, identities and person notes slice — deps: P1-05 — claim: —
+- [ ] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: —
+- [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: —
 - [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
 - [ ] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: —
 
 **Core logic (pure)**
 
-- [ ] **P1-06** Ranking engine `rank` + `selectTop` — deps: Phase 0 — claim: —
+- [ ] **P1-06** Ranking engine `rank` + `selectTop` — deps: P1-05 — claim: —
 - [ ] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: —
-- [ ] **P1-08** Week load `weekLoad` — deps: Phase 0 — claim: —
+- [ ] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: —
 - [ ] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: —
-- [ ] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09 — claim: —
+- [ ] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09, P1-12 — claim: —
 - [ ] **P1-11** End-of-day wrap use case + ops — deps: P1-02, P1-10 — claim: —
 
 **Connectors**
 
-- [ ] **P1-12** Connector runtime, sync orchestrator, scheduler, fixture invoker — deps: Phase 0 — claim: —
+- [ ] **P1-12** Connector runtime, registry, scheduler, offline handling, fixture invoker — deps: Phase 0 — claim: —
 - [ ] **P1-13** MCP direct transport + tool-mapping presets — deps: P1-12 — claim: —
-- [ ] **P1-14** Calendar connector (MCP capability + ICS native) — deps: P1-01, P1-04, P1-12, P1-13 — claim: —
+- [ ] **P1-14** Calendar connector (MCP capability + ICS native) — deps: P1-01, P1-04, P1-09, P1-12, P1-13 — claim: —
 
-**MCP server**
+**MCP server + Claude Code**
 
 - [ ] **P1-15** EM OS MCP server (read tools, per-client tokens, stdio launcher) — deps: P1-01, P1-02, P1-04, P1-10 — claim: —
+- [ ] **P1-38** MCP proposal + ingest tools, `proposals.*` ops — deps: P1-01, P1-02, P1-04, P1-15 — claim: —
+- [ ] **P1-39** Claude Code skills pack (`/emos-update`, `/emos-prep`, `/emos-capture`) + installer — deps: P1-38 — claim: —
 
 **Importer (ephemeral, `@emos/importer-em-template`)**
 
-- [ ] **P1-16** Synthetic em-template fixture workspace — deps: Phase 0 — claim: —
+- [ ] **P1-16** Synthetic em-template fixture workspace (with pinned mtimes) — deps: Phase 0 — claim: —
 - [ ] **P1-17** Importer framework + Markdown / todo-line parsers — deps: P1-16 — claim: —
 - [ ] **P1-18** People + Stakeholders import — deps: P1-01, P1-17 — claim: —
-- [ ] **P1-19** Meetings, notes and daily-log import — deps: P1-04, P1-18 — claim: —
-- [ ] **P1-20** Todo import + activation rule — deps: P1-02, P1-18 — claim: —
-- [ ] **P1-21** Risks, decisions, goals, growth and reference import — deps: P1-02, P1-17 — claim: —
-- [ ] **P1-22** Dry-run report, apply, `emos import`, import ops — deps: P1-18, P1-19, P1-20, P1-21 — claim: —
+- [ ] **P1-19** Meetings, notes and daily-log import — deps: P1-04, P1-09, P1-18 — claim: —
+- [ ] **P1-21** Risks, decisions, goals, growth and reference import — deps: P1-02, P1-04, P1-17 — claim: —
+- [ ] **P1-20** Todo import + activation rule — deps: P1-02, P1-18, P1-19, P1-21 — claim: —
+- [ ] **P1-22** Dry-run report, apply, self person, `emos import`, import ops — deps: P1-18, P1-19, P1-20, P1-21 — claim: —
 
 **UI (extension + webview)**
 
-- [ ] **P1-23** Header strip + week-load widgets + layout editing — deps: P1-05, P1-10 — claim: —
-- [ ] **P1-24** Today timeline widget — deps: P1-10 — claim: —
-- [ ] **P1-25** Do-these-5 + waiting-on widgets — deps: P1-10 — claim: —
-- [ ] **P1-26** Sidebar view — deps: P1-10 — claim: —
-- [ ] **P1-27** Commands: quick capture, note about person, refresh, sync — deps: P1-01, P1-03 — claim: —
-- [ ] **P1-28** Person page (minimal) + goals view — deps: P1-01, P1-02 — claim: —
-- [ ] **P1-29** Meeting prep panel + paste notes — deps: P1-04, P1-09 — claim: —
-- [ ] **P1-30** End-of-day wrap view + nudge — deps: P1-11 — claim: —
-- [ ] **P1-31** Onboarding wizard + settings view — deps: P1-01, P1-05, P1-14 — claim: —
-- [ ] **P1-32** Import review screen — deps: P1-22 — claim: —
+- [ ] **P1-23** Header strip + week-load widgets + layout editing + `useToday` — deps: P1-05, P1-10 — claim: —
+- [ ] **P1-24** Today timeline widget — deps: P1-23 — claim: —
+- [ ] **P1-25** Do-these-5 + waiting-on widgets — deps: P1-23 — claim: —
+- [ ] **P1-26** Sidebar view — deps: P1-23 — claim: —
+- [ ] **P1-40** People cadence widget — deps: P1-01, P1-04, P1-23 — claim: —
+- [ ] **P1-28** Person page (minimal), goals and commitment views + `openView` router — deps: P1-01, P1-02, P1-04 — claim: —
+- [ ] **P1-27** Commands: quick capture, note about person, refresh, sync — deps: P1-01, P1-03, P1-28 — claim: —
+- [ ] **P1-43** "Go to…" quick pick + `search.quick` — deps: P1-01, P1-02, P1-04, P1-28 — claim: —
+- [ ] **P1-29** Meeting prep panel + paste notes — deps: P1-04, P1-09, P1-28 — claim: —
+- [ ] **P1-30** End-of-day wrap view — deps: P1-11, P1-28 — claim: —
+- [ ] **P1-41** Notifications (meeting soon, morning digest, wrap nudge, connector trouble, quiet hours) — deps: P1-05, P1-10, P1-12, P1-28 — claim: —
+- [ ] **P1-32** Proposals review screen (import + MCP proposals) — deps: P1-22, P1-28, P1-38 — claim: —
+- [ ] **P1-31** Onboarding wizard + settings view — deps: P1-01, P1-05, P1-14, P1-15, P1-22, P1-34 — claim: —
 
 **Discovery, trust and distribution**
 
 - [ ] **P1-34** Tool discovery: server detection, catalog, read/write classification, capability matcher — deps: P1-13 — claim: —
 - [ ] **P1-35** Plugin loader + aggregator adapter interface + synthetic reference adapter — deps: P1-34 — claim: —
 - [ ] **P1-36** Trust and exit: health panel, open data folder, export, delete all data — deps: P1-05, P1-12, P1-15 — claim: —
+- [ ] **P1-42** Automatic daily backups with rotation — deps: Phase 0 — claim: —
 - [ ] **P1-37** *manual + CI* Marketplace and Open VSX publishing — deps: P0-15, P1-36 — claim: —
 
 **Close-out**
 
-- [ ] **P1-33** Phase 1 end-to-end synthetic test + owner dogfood checklist — deps: all above — claim: —
+- [ ] **P1-33** Phase 1 end-to-end synthetic test + owner dogfood checklist — deps: every P1 task except P1-37 — claim: —
 
-Starting lanes:
-
-- P1-01, P1-02, P1-04, P1-05, P1-06, P1-08, P1-12 and P1-16 have no Phase 1 dependencies;
-- UI tasks can build against a fake `rpc()` as soon as their ops exist in `api-contract`.
+Starting lanes (no Phase 1 dependencies): P1-02, P1-04, P1-05, P1-12, P1-16 and P1-42. UI tasks can build against a fake `rpc()` as soon as their ops exist in `api-contract`.
 
 ---
 
@@ -213,7 +216,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 ### Task P1-02: Commitments + goals slice
 
-**Files:** `core/src/commitments/{transitions.ts,index.ts}`, `core/src/goals/index.ts`, `core/src/ports/repos/{commitments,goals}.ts`, `store-sqlite/src/repos/{commitments,goals}.ts`, `api-contract/src/ops/{commitments,goals}.ts`, `service/src/handlers/{commitments,goals}.ts`.
+**Files:** `core/src/commitments/{transitions.ts,recurrence.ts,index.ts}`, `core/src/goals/index.ts`, `core/src/ports/repos/{commitments,goals,accomplishments}.ts`, `store-sqlite/src/repos/{commitments,goals,accomplishments}.ts`, `api-contract/src/ops/{commitments,goals}.ts`, `service/src/handlers/{commitments,goals}.ts`.
 
 **Interfaces:**
 - Produces:
@@ -233,10 +236,13 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   |---|---|
   | `proposed` | `activate`, `drop` |
   | `active` | `complete`, `snooze`, `drop`, `edit`, `pin`, `unpin` |
-  | `snoozed` | `activate` (also implicit once `snoozedUntil` passes), `complete`, `drop` |
+  | `snoozed` | `activate` (also implicit once `snoozedUntil` passes), `complete`, `drop`, `edit` |
   | `done` / `dropped` | `reopen` (user only) |
 
 - Ops: `commitments.list | get | create | update | complete | snooze {id, until} | drop {id, reason} | reopen | pin {id, pinned}`, and `goals.list | create | update`.
+- `commitments.get {id} → { commitment, sources: SourceItem[], audit: AuditEvent[] }`. Audit rows live in `audit_events` (P0-10).
+- **Recurrence:** `export function nextOccurrence(r: Recurrence, after: LocalDate): LocalDate` in `core/src/commitments/recurrence.ts`. Completing a commitment that has a `recurrence` also creates the next occurrence in the same transaction: same `seriesId`, `status: "active"`, and `due.date = nextOccurrence(recurrence, completed due date or today)`.
+- **Accomplishments repo** (owned here; P1-11 and P1-21 consume it): `interface AccomplishmentsRepo { create(a: NewAccomplishment, sourceIds?: string[]): Accomplishment; list(f?: { subjectPersonId?: string; from?: IsoDateTime; to?: IsoDateTime }): Accomplishment[] }`. Source links go in `record_sources`.
 
 - [ ] **Step 1: Write the failing tests.**
   - `complete` sets `completedAt` and `status: "done"`.
@@ -245,6 +251,11 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - Each save appends one audit row.
   - `list({ status: ["active"], direction: "owed_to_me" })` filters correctly.
   - The `snooze` op stores `snoozedUntil`.
+  - `edit` on a snoozed item is allowed.
+  - `nextOccurrence({freq:"weekly",interval:1,byWeekday:[5],byMonthDay:null}, "2026-10-23")` → `"2026-10-30"`.
+  - Monthly on day 31 after `"2026-01-31"` → `"2026-02-28"`.
+  - Completing a weekly item creates one new active item with the same `seriesId`.
+  - `commitments.get` returns sources and audit.
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -262,7 +273,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - Consumes: `resolvePerson` (P1-01), `CommitmentsRepo` (P1-02), `toLocalDate` / `addLocalDays` (P0-09).
 - Produces:
   ```ts
-  export interface ParsedCapture { title: string; direction: Direction; personQuery: string | null; due: { date: LocalDate; time: null; timeZone: string } | null; priority: 0|1|2|3|null; urgency: Urgency | null; tags: string[] }
+  export interface ParsedCapture { title: string; direction: Direction; personQuery: string | null; due: { date: LocalDate; time: null; timeZone: string } | null; priority: 0|1|2|3|null; urgency: Urgency | null; tags: string[]; recurrence: Recurrence | null }
   export function parseQuickCapture(text: string, now: Date, timeZone: string): ParsedCapture | { error: "empty_title" };
   ```
 - Grammar (tokens are whitespace-separated and may appear anywhere):
@@ -273,9 +284,10 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - `!today | !tomorrow | !mon … !sun` → the next occurrence, *including today*;
   - `!YYYY-MM-DD`;
   - `!+Nd` → due;
+  - `!every-day`, `!every-mon` … `!every-sun`, `!every-month` → `recurrence` (weekly items default their due date to the next such weekday; monthly items use the due day, or today);
   - `#tag` → tags;
   - the remaining words, single-spaced, form the title.
-- Op: `commitments.quickCapture { text, counterpartId?: string } → { status: "created", commitment } | { status: "needs_person", parsed: ParsedCapture, candidates: Person[] } | { status: "invalid", message: string }`. A `personQuery` with zero matches → `needs_person` with empty candidates (the UI offers "create person").
+- Op: `commitments.quickCapture { text, counterpartId?: string } → { status: "created", commitment } | { status: "needs_person", parsed: ParsedCapture, candidates: Person[] } | { status: "invalid", message: string }`. A `personQuery` with zero matches → `needs_person` with empty candidates (the UI offers "create person"). If `profile.selfPersonId` is null → `{ status: "invalid", message: "Finish setup first" }`.
 
 - [ ] **Step 1: Write the failing tests** (now `2026-10-20T16:00Z`, zone `America/Los_Angeles`, a Tuesday):
   ```ts
@@ -284,6 +296,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   expect(parseQuickCapture("x !tue", now, tz)).toMatchObject({ due: { date: "2026-10-20" } });
   expect(parseQuickCapture("x !+3d", now, tz)).toMatchObject({ due: { date: "2026-10-23" } });
   expect(parseQuickCapture("@sam !p1", now, tz)).toEqual({ error: "empty_title" });
+  expect(parseQuickCapture("EOW update !every-fri", now, tz)).toMatchObject({ recurrence: { freq: "weekly", interval: 1, byWeekday: [5] }, due: { date: "2026-10-23" } });
   // op: two Sams → needs_person with 2 candidates; with counterpartId → created
   ```
 - [ ] **Step 2: Run.** Expected: FAIL.
@@ -303,16 +316,16 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - Produces:
   ```ts
   interface MeetingsRepo {
-    upsertExternal(m: ExternalMeeting): { meeting: Meeting; created: boolean };   // key: (connectorId, externalId); preserves classification/personId set by user
-    get(id: string): Meeting | null; listRange(from: IsoDateTime, to: IsoDateTime, f?: { includeCancelled?: boolean }): Meeting[];
-    update(id: string, patch: Partial<Pick<Meeting, "classification" | "personId" | "actionItems">>): Meeting;
+    upsertExternal(m: ExternalMeeting): { meeting: Meeting; created: boolean };   // key: (connectorId, externalId); keeps classification/personId when classificationSource === "user"
+    get(id: string): Meeting | null; listRange(from: IsoDateTime, to: IsoDateTime, f?: { includeCancelled?: boolean; personId?: string; classification?: Classification }): Meeting[];
+    update(id: string, patch: Partial<Pick<Meeting, "classification" | "personId" | "actionItems">>): Meeting;   // a user classification change sets classificationSource = "user"
     attachNote(meetingId: string, sourceItemId: string): void; notes(meetingId: string): SourceItem[];
     previousOf(meeting: Meeting, f: { classification?: Classification; personId?: string }): Meeting | null; // latest earlier meeting matching
   }
   interface SourceItemsRepo { upsert(i: NewSourceItem): { item: SourceItem; created: boolean }; get(id: string): SourceItem | null; byIds(ids: string[]): SourceItem[] }
   ```
 - Ops:
-  - `meetings.list {from, to} → Meeting[]`
+  - `meetings.list {from, to, personId?, classification?} → Meeting[]`
   - `meetings.get {id} → { meeting, notes: SourceItem[] }`
   - `meetings.update {id, patch} → Meeting`
   - `meetings.attachNotes { meetingId, text, kind: "summary" | "transcript" } → SourceItem` — a `kind` of `note` or `transcript`, `origin: "manual"`, `occurredAt` = meeting start. Sensitivity is `people_sensitive` when the meeting is `one_on_one`, else `normal`.
@@ -346,7 +359,8 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
     rank: RankConfig, minFocusMinutes: z.number(), defaultEffortMinutes: z.number(), decayDays: z.number(), eodNudgeTime: z.string().nullable(), onboarded: z.boolean(),
   });
   export const RankConfig = z.object({ topN: z.number(), goalSlots: z.number(), timeCriticalHours: z.number(), weights: z.object({ timeCritical: z.number(), overduePerDay: z.number(), hardDated: z.number(), waitingPerDay: z.number(), goal: z.number(), pin: z.number(), priority: z.tuple([z.number(), z.number(), z.number(), z.number()]), urgencyNow: z.number() }) });
-  export const DEFAULT_PROFILE: Profile; // values from Global Constraints; displayTimeZone from Intl; rank weights: timeCritical 1000, overduePerDay 50, hardDated 400, waitingPerDay 30, goal 150, pin 300, priority [120,80,40,0], urgencyNow 100
+  // Profile also has notifications: { meetingLeadMinutes: 10, morningDigestTime: "08:45" | null, quietHours: { start: "19:00", end: "08:00" } | null, enabled: { meetingSoon: true, morningDigest: true, wrapNudge: true, connectorTrouble: true } }
+  export const DEFAULT_PROFILE: Profile; // values from Global Constraints; displayTimeZone from Intl; topN 5, goalSlots 1, timeCriticalHours 24; rank weights: timeCritical 1000, overduePerDay 50, hardDated 400, waitingPerDay 30, goal 150, pin 300, priority [120,80,40,0], urgencyNow 100
   interface SettingsRepo { getProfile(): Profile; setProfile(p: Profile): void; getLayout(surface: "dashboard" | "sidebar"): LayoutEntry[] | null; setLayout(surface, l: LayoutEntry[]): void }
   type LayoutEntry = { widgetId: string; w: number; h: number };
   ```
@@ -465,16 +479,16 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   export interface DayLoad { date: LocalDate; meetingMinutes: number; workingMinutes: number; loadRatio: number; overloaded: boolean; due: { commitmentId: string; title: string }[] }
   export function weekLoad(i: { weekOf: LocalDate; workWeek: number[]; timeZone: string; workingHours: { start: string; end: string }; meetings: Meeting[]; commitments: Commitment[] }): DayLoad[];
   ```
-- The week starts on the Monday on or before `weekOf`. The result has one entry per `workWeek` day, in order.
+- The week starts on the first `workWeek` day on or before `weekOf`, where `workWeek[0]` is the first day of the week. The result has one entry per `workWeek` day, in order.
 - `meetingMinutes` counts the busy minutes inside working hours, using the same busy rule as P1-07.
 - `overloaded` is `loadRatio ≥ 0.75`.
 - `due` holds the active `mine` commitments due that day.
 
 - [ ] **Step 1: Write the failing tests.**
   - 6h of meetings on Thu → `overloaded`.
-  - The DST week of `2026-11-02` in America/Los_Angeles assigns meetings to the right days.
+  - A Sun–Thu `workWeek` (`[0,1,2,3,4]`) for `weekOf: "2026-11-03"` returns 5 entries starting Sunday `2026-11-01`. That's the US DST fall-back day, and a 09:00 meeting that day lands on `2026-11-01`.
   - A due item on Wed shows under Wed.
-  - A Sun–Thu `workWeek` returns 5 entries starting Sunday.
+  - A Mon–Fri week of `2026-10-21` starts on `2026-10-19`.
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.** Reuse the busy-merging helper from `free-blocks.ts` (import it; don't copy it).
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -554,14 +568,14 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - **Behaviour:**
   - On the first `today.get` for a date, store the `selectTop` ids in `day_plans`. Later calls reuse that list, marking items `done` when completed. New urgent items do *not* displace it, and only `today.refresh` re-selects.
   - `toTriage` is `0` in Phase 1: it counts proposed commitments with `createdBy` ≠ `import`.
-  - `header.lastSyncAt` and `failingConnectors` come from `sync_state` (P1-12). Until P1-12 merges they read as null and `[]`.
+  - `header.lastSyncAt` and `failingConnectors` come from `sync_state` (P1-12). `offline` connectors are listed with state `offline`, not as failures.
 
 - [ ] **Step 1: Write the failing tests.**
   - **Empty store:** returns `onboarded: false`, empty arrays, `progress {0,0}`, and no throw.
   - **Day plan is stable:** after completing item 2 and adding a new due-today item, `top` ids are unchanged, item 2 is `done: true`, and progress is `{1,5}`. After `today.refresh`, the new item appears.
   - `waitingOn` is sorted by due date.
   - The header `freeMinutes` equals the sum of `plan.freeBlocks`.
-  - The 500 ms budget holds on the P1-16 fixture plus 200 synthetic meetings.
+  - A generated dataset (inside the test: 30 people, 500 commitments, 200 meetings) builds correctly. The timing check lives in a separate non-gating script, `npm run perf -w @emos/service`, which reports p50/p95 against the 500 ms budget.
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -583,7 +597,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
     - `redate` requires `date`;
     - `remember: true` on a `done` item creates an `Accomplishment { subject: self, summary: title, status: "accepted", sources: commitment sources }`;
     - `note` creates a `SourceItem { kind: "note", origin: "manual", occurredAt: now }`.
-  - The `Accomplishment` repo is minimal: `create` / `list`, in `store-sqlite/src/repos/accomplishments.ts` (owned here).
+  - It uses `AccomplishmentsRepo` from P1-02. `tomorrow` and `redate` on a snoozed item use the `edit` transition.
 
 - [ ] **Step 1: Write the failing tests.**
   - `tomorrow` on a Friday with a Mon–Fri week → Monday.
@@ -601,7 +615,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 ### Task P1-12: Connector runtime, orchestrator, scheduler
 
-**Files:** `packages/connectors/src/runtime/{types.ts,orchestrator.ts,appliers.ts,scheduler.ts,fixture-invoker.ts,errors.ts}`, `core/src/ports/repos/sync-state.ts`, `store-sqlite/src/repos/sync-state.ts`, `api-contract/src/ops/connectors.ts`, `service/src/handlers/connectors.ts` + tests.
+**Files:** `packages/connectors/src/runtime/{types.ts,orchestrator.ts,appliers.ts,scheduler.ts,fixture-invoker.ts,errors.ts,network.ts}`, `service/src/connectors/registry.ts` *(append-only: each connector task adds its definition)*, `service/src/main.ts` (start the scheduler after the service is listening), `core/src/ports/repos/sync-state.ts`, `store-sqlite/src/repos/sync-state.ts`, `api-contract/src/ops/connectors.ts`, `service/src/handlers/connectors.ts` + tests.
 
 **Interfaces:**
 - Produces:
@@ -613,14 +627,16 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   export interface SyncPage { items: ConnectorItem[]; nextCursor: string | null }
   export interface ConnectorDefinition<C> { id: string; kind: ConnectorKind; configSchema: z.ZodType<C>; requiredCapabilities: string[]; defaultIntervalMinutes: number;
     sync(ctx: ConnectorContext<C>, cursor: string | null, signal: AbortSignal): AsyncIterable<SyncPage> }
-  export class ConnectorError extends Error { kind: "transient" | "auth" | "permission" | "schema" | "config" }
+  export class ConnectorError extends Error { kind: "transient" | "offline" | "auth" | "permission" | "schema" | "config" }
+  export function classifyNetworkError(e: unknown): "offline" | "transient" | null; // network.ts: ENOTFOUND, EAI_AGAIN, ECONNREFUSED, ENETUNREACH, EHOSTUNREACH, ETIMEDOUT, undici "fetch failed" → offline; 429/5xx → transient
   export async function runSync(deps: { store: Store; def: ConnectorDefinition<unknown>; ctx: ConnectorContext<unknown>; appliers: Appliers; events: EventBus; clock: Clock }): Promise<{ pages: number; items: number }>;
   export function fixtureInvoker(responses: Record<string, unknown[]>): CapabilityInvoker; // returns successive responses per capability
   ```
 - **Orchestration:**
   - Each page's items plus `sync_state.cursor` are written in **one transaction**. A thrown applier rolls back the page and leaves the cursor unchanged.
   - Transient errors retry up to 3 times with exponential backoff (1 s, 4 s, 16 s, ±20 % jitter). `auth`, `permission`, `schema` and `config` errors never retry; they set `state: "error"`.
-  - `sync_state` holds `{ connectorId, cursor, state: "never" | "syncing" | "ok" | "error", lastSuccessAt, lastError (message only), itemCount }`.
+  - `sync_state` holds `{ connectorId, cursor, state: "never" | "syncing" | "ok" | "offline" | "error", lastAttemptAt, lastSuccessAt, lastError (message only), itemCount }`.
+  - **Offline:** an `offline` error isn't retried within the run. It sets `state: "offline"` and `lastError: "Can't reach <server> — check your network or VPN"`. The next attempt happens at the next interval, or immediately on `connectors.sync`. Cached data stays usable.
   - The scheduler runs each enabled connector every `defaultIntervalMinutes` (overridable) and never runs one connector concurrently with itself.
 - **Ops:**
   - `connectors.list → { id, kind, enabled, state, lastSuccessAt, lastError }[]`
@@ -635,6 +651,8 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - An `auth` error → no retry, `state: "error"`.
   - A concurrent `connectors.sync` on the same id → the second call gets `conflict`.
   - `configure` with a secret doesn't return it in `connectors.list`.
+  - An `ENOTFOUND` error → `state: "offline"` with the VPN hint, after 1 attempt.
+  - A connector added to `service/src/connectors/registry.ts` appears in `connectors.list`.
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -695,7 +713,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 **Files:** `packages/connectors/src/calendar/{definition.ts,dto.ts,apply.ts,ics.ts}`, `packages/connectors/fixtures/calendar/{events.page1.json,events.page2.json,sample.ics}` + tests.
 
 **Interfaces:**
-- Consumes: P1-12 runtime, P1-13 invoker, `MeetingsRepo` (P1-04), `PeopleRepo.findIdentity` (P1-01), `classifyMeeting` (P1-09; until it merges, the applier sets `"other"`).
+- Consumes: P1-12 runtime and registry (append `calendarConnector`), the P1-13 invoker, `MeetingsRepo` (P1-04), `PeopleRepo.findIdentity` (P1-01), and `classifyMeeting` (P1-09), which the applier calls on every upsert unless `classificationSource === "user"`.
 - Produces:
   ```ts
   export const CalendarEventDTO = z.object({ externalId: z.string(), title: z.string(), start: z.string(), end: z.string(), allDay: z.boolean(), status: z.enum(["confirmed", "cancelled", "tentative"]),
@@ -703,7 +721,15 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   export const calendarConnector: ConnectorDefinition<{ transport: "mcp"; server: string; preset: string } | { transport: "ics"; urlSecretKey?: string; filePath?: string }>; // id "calendar", interval 15
   ```
 - **Sync window:** `now−7d … now+14d`, re-fetched each run. The cursor is the provider page token within a run. Events that disappear from the window aren't deleted. Cancelled events set `status: "cancelled"`.
-- **Attendee resolution:** emails resolve via `identities(source: "email")`; `self: true` sets `selfResponse`.
+- **Attendee resolution:** emails resolve via `findIdentity("email", address)`.
+- **Status and response mapping:**
+
+  | Source | Maps to |
+  |---|---|
+  | DTO `status` `confirmed` / `tentative` | `Meeting.status: "confirmed"` |
+  | DTO `status` `cancelled` | `"cancelled"` |
+  | Self attendee `responseStatus` `accepted` / `tentative` / `declined` / `needsAction` (or `needs_action`) | `selfResponse` `accepted` / `tentative` / `declined` / `needs_action` |
+  | Anything else | null |
 - **ICS transport:**
   - fetch the URL (secret) or read the file;
   - expand RRULEs with `ical.js` inside the window;
@@ -724,7 +750,9 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(p1-14): calendar connector over mcp or ics`.
 
-**Acceptance:** The owner's real calendar syncs through whichever transport spike S2 approved. Meetings appear on the dashboard within one sync interval.
+**Acceptance:**
+- Fixture-driven tests pass for both transports.
+- *(owner, after merge)* The owner's real calendar syncs through whichever transport spike S2 approved, and meetings appear on the dashboard within one sync interval.
 
 ---
 
@@ -787,7 +815,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   | Other | a risk register with an inline corroboration, 1 workstream, 1 decision, `My-Growth/brag-doc.md`, 1 JD, `Acronyms.md`, 1 weekly summary |
   | Drift | one file with CRLF endings, one with a missing standard section, one unparseable todo line |
 
-- [ ] **Step 1: Author the files and `EXPECTED.md`** (counts per entity, active vs. archived todos, the expected merge and unknown-pronoun list).
+- [ ] **Step 1: Author the files, `EXPECTED.md`** (counts per entity, active vs. archived todos, the expected merge and unknown-pronoun list) **and `fixtures/mtimes.json`**. `mtimes.json` maps each fixture path to a fixed ISO modified time, because git checkouts reset real mtimes. Expected counts assume the import date `2026-10-20` and these mtimes. The self person in the fixture is the synthetic `Morgan Lee`.
 - [ ] **Step 2: Run `node scripts/check-fixtures.mjs packages/importer-em-template/fixtures`.** Expected: no violations.
 - [ ] **Step 3: Commit** `test(p1-16): synthetic em-template workspace fixture`.
 
@@ -807,15 +835,16 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   export interface TodoLine { done: boolean; date: LocalDate | null; owners: string[]; text: string; priority: 0|1|2|3|null; urgency: Urgency | null; due: LocalDate | null; blocked: boolean; waitingOn: string | null; tags: string[]; workstream: string | null; supersedes: string[]; ids: string[]; line: number }
   export function parseTodoLine(line: string, lineNo: number): TodoLine | null;   // null if not a checkbox line
   export interface ImportUnit { key: string; entity: string; describe: string; apply(store: Store, ctx: ImportCtx): { entityId: string; created: boolean } }
-  export interface ImportCtx { ids: IdGen; clock: Clock; selfPersonId: string; personByName(name: string): string | null; unparseable(file: string, line: number, reason: string): void }
-  export interface Importer { name: string; collect(root: string, read: (p: string) => string, list: (glob: string) => string[]): ImportUnit[] }
+  export interface ImportCtx { ids: IdGen; clock: Clock; timeZone: string; selfPersonId: string; selfName: string; personByName(name: string): string | null; goalBySlug(slug: string): string | null; unparseable(file: string, line: number, reason: string): void }
+  export interface SourceFs { read(p: string): string; list(glob: string): string[]; mtime(p: string): Date }   // tests pass a SourceFs backed by fixtures/mtimes.json
+  export interface Importer { name: string; collect(root: string, fs: SourceFs, ctx: ImportCtx): ImportUnit[] }
   export function runUnits(store: Store, units: ImportUnit[], ctx: ImportCtx, dryRun: boolean): ImportReportCounts;   // idempotent via import_keys; dryRun applies inside a rolled-back transaction
   ```
 
 - [ ] **Step 1: Write the failing tests.**
   - `parseMarkdown` on a CRLF file gives the same sections as on LF.
   - Nested `##` / `###` build a tree.
-  - `parseTodoLine("- [ ] 2026-09-22 — ([[People/Jane-Doe|Jane]] + David) **Share test matrix** !next #ws:proj-x #risk-R8 <!-- id:teamv2readpaths --> <!-- id:a1b2c3 -->", 3)` → owners `["Jane Doe", "David"]`, urgency `next`, workstream `proj-x`, tags `["risk-R8"]`, ids `["a1b2c3", "teamv2readpaths"]` (6-char first).
+  - `parseTodoLine("- [ ] 2026-09-22 — ([[People/Jane-Doe|Jane]] + Morgan) **Share test matrix** !next #ws:proj-x #risk-R8 <!-- id:teamv2readpaths --> <!-- id:a1b2c3 -->", 3)` → owners `["Jane Doe", "Morgan"]`, urgency `next`, workstream `proj-x`, tags `["risk-R8"]`, ids `["a1b2c3", "teamv2readpaths"]` (6-char first).
   - `!waiting-jordan` → `waitingOn: "jordan"`.
   - `!2026-10-30` → due.
   - A plain bullet → null.
@@ -840,7 +869,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - **Mapping:** per the format notes' People/Stakeholders rows:
   - `relationship`: People → `direct_report`; Stakeholders → `stakeholder`, unless a "manager" or "peer" keyword appears in the role line;
   - pronouns: `<!-- TODO: confirm -->` or absent → null;
-  - each dated bullet in Running contribution notes, Context on them, Six-month rollup, Comms preferences or How they like feedback → one `people_sensitive` note dated from the bullet (else the file's mtime).
+  - each dated bullet in Running contribution notes, Context on them, Six-month rollup, Comms preferences or How they like feedback → one `people_sensitive` note dated from the bullet (else `fs.mtime(file)`).
 - **Merge:** a People file and a Stakeholders file are the same human if a normalised display name, an alias or a chat handle matches. They merge into one person, People-file fields win, and the merge is listed in the report.
 
 - [ ] **Step 1: Write the failing tests** against the fixture.
@@ -898,13 +927,13 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - Produces `todosImporter: Importer`.
 - **Scope:** scan every non-skipped `.md` file. Skip `TODO.md`, the `Leadership-Dashboard.*` files, `.claude/`, `.github/`, `bin/`, templates and READMEs.
 - **Owner and direction:**
-  - no owner, or `David`, means self, i.e. `profile.selfPersonId` (the self name comes from the dry-run config);
+  - no owner, or an owner matching `ctx.selfName` (full or first name, case- and accent-insensitive), means self, i.e. `ctx.selfPersonId`;
   - self-owned → `direction: "mine"`, with `counterpart` = the other owner, or the file's subject person;
   - other-owned with `!waiting-<who>` or `!blocked`, or other-owned in a file about self → `owed_to_me`;
   - any other other-owned item isn't imported as a commitment. It stays on the meeting's `actionItems` (P1-19), or is reported as `skipped_not_mine`.
 - **Activation:**
-  - `[x]` → `done`, with `completedAt` = the file's mtime;
-  - `[ ]` + (due, priority or urgency tag, or file mtime within 30 days of the import date) → `proposed`, `createdBy: "import"` (activated by the review in P1-32);
+  - `[x]` → `done`, with `completedAt` = `fs.mtime(file)`;
+  - `[ ]` + (due, priority or urgency tag, or `fs.mtime(file)` within 30 days of `ctx.clock.now()`) → `proposed`, `createdBy: "import"` (activated on the proposals review screen, P1-32 / P1-38);
   - otherwise → `dropped`, `dropReason: "archived_on_import"`.
 - **Supersedes:** `#supersedes:<id>` → drop the referenced item with `dropReason: "merged"`.
 - **Keys:** `todo:<6-char id>`, falling back to `todo:<file>:<sha1(text)>`.
@@ -934,9 +963,9 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
   | Source | Becomes |
   |---|---|
-  | Risk register rows | `risk`; each inline `**YYYY-MM-DD** …` corroboration → a dated note source item linked to it |
+  | Risk register rows | `risk`; each inline `**YYYY-MM-DD** …` corroboration → a dated note source item, linked via `record_sources` |
   | Decisions | `decision` + a note source item |
-  | Workstreams | `goal { kind: "project", horizon: "ongoing" }`; the slug is remembered for `#ws:` resolution in P1-20 |
+  | Workstreams | `goal { kind: "project", horizon: "ongoing" }`; the slug is stored as `goal.slug`, and P1-20 resolves `#ws:` tags via `ctx.goalBySlug` |
   | `My-Growth/brag-doc.md` | one `accomplishment` (self, `accepted`) per dated bullet |
   | Development plan | `goal { kind: "personal_growth", subjectPersonId: self }` per goal heading |
   | Promotion path and `JobDescriptions/*` | `document { kind: "rubric" }` + a note source item |
@@ -972,15 +1001,15 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - **Ops:**
   - `import.dryRun { path, selfName } → ImportReport`
   - `import.apply { path, selfName } → ImportReport`
-  - `import.review.list → Commitment[]` (`status: "proposed"`, `createdBy: "import"`)
-  - `import.review.decide { keep: string[]; drop: string[] } → { kept, dropped }` — keep → `activate`; drop → `dropped`, `dropReason: "user"`
+  - Review of imported items uses the generic `proposals.list` / `proposals.decide` ops (P1-38).
+- **Self person:** `importEmTemplate` finds the person whose name matches `selfName` (relationship `self`), or creates one. It sets `profile.selfPersonId` if that's null, before any other unit runs.
 - **CLI:** `emos import em-template <path> --self "<name>" [--apply]`. It prints the report as a table; without `--apply` it's a dry run.
 - **Guards:** the importer only reads the source. The path must exist and must not be the data dir.
 
 - [ ] **Step 1: Write the failing tests.**
   - The fixture dry run equals `EXPECTED.md` counts, and the DB is unchanged.
   - Apply then apply again → the second report is all `skip` / `update`, with 0 creates.
-  - `review.decide` activates the kept items.
+  - Importing into an empty store creates exactly one `self` person and sets `profile.selfPersonId`. Re-importing doesn't create a second.
   - `proposedConfig.roster` lists the fixture's direct reports with handles.
   - The source files' mtimes and hashes are unchanged after apply.
 - [ ] **Step 2: Run.** Expected: FAIL.
@@ -1145,7 +1174,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - **Header:** name, role, relationship, and pronouns (`unknown, using they/them` when null, with a `Confirm pronouns` action → `people.update`).
   - **Columns:** *You owe* (`openMine`), *They owe* (`openTheirs`).
   - **Notes:** a dated list, newest first, with a sensitivity badge and an inline add-note form (text, date, tags).
-  - **Recent 1:1s:** links to the meeting prep view.
+  - **Recent 1:1s:** `meetings.list { personId, classification: "one_on_one", from: −90d, to: now }`, each linking to the meeting prep view.
 - **Goals view:** the goal list grouped by kind, with create / edit (title, horizon, kind, subject, target date, status) and a linked commitments count.
 - **Commitment detail view:** fields, audit trail, sources with links, and edit.
 
@@ -1190,9 +1219,9 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 ---
 
-### Task P1-30: End-of-day wrap view + nudge
+### Task P1-30: End-of-day wrap view
 
-**Files:** `webview/src/views/Wrap.tsx`, `extension/src/nudge.ts` + tests.
+**Files:** `webview/src/views/Wrap.tsx` + tests. The nudge belongs to P1-41.
 
 **Interfaces:**
 - Consumes: `wrap.get` / `wrap.apply` (P1-11), `settings.get` (`eodNudgeTime`).
@@ -1201,16 +1230,14 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - an "Anything else worth remembering?" textarea;
   - a tomorrow preview;
   - a single `Wrap up` button → `wrap.apply`.
-- **Nudge:** while VS Code is open, at `eodNudgeTime` local on work days, show an information message `Wrap up your day?` with an `Open` button, once per day.
 
 - [ ] **Step 1: Write the failing tests.**
   - Re-date shows a date input and blocks submit until it's set.
   - `Wrap up` sends one `wrap.apply` with all decisions.
-  - The nudge fires once at 17:30 on a Tuesday, and not on Saturday (fake timers).
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-30): end-of-day wrap view and nudge`.
+- [ ] **Step 5: Commit** `feat(p1-30): end-of-day wrap view`.
 
 **Acceptance:** The wrap takes about two minutes and leaves tomorrow's list clean.
 
@@ -1247,18 +1274,20 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(p1-31): onboarding wizard and settings`.
 
-**Acceptance:** A fresh install reaches a populated dashboard in one guided sitting.
+**Acceptance:**
+- A fresh install, using fake connectors, completes the wizard and lands on a populated dashboard (component tests plus smoke).
+- *(owner, after merge)* The owner completes onboarding against their real calendar.
 
 ---
 
-### Task P1-32: Import review screen
+### Task P1-32: Proposals review screen
 
-**Files:** `webview/src/views/ImportReview.tsx` + test.
+**Files:** `webview/src/views/Proposals.tsx`, `webview/src/views/ImportReport.tsx` + tests.
 
 **Interfaces:**
-- Consumes: `import.dryRun` / `import.apply` / `import.review.list` / `import.review.decide` (P1-22).
+- Consumes: `import.dryRun` / `import.apply` (P1-22), `proposals.list` / `proposals.decide` (P1-38).
 - **Report:** counts per entity, merges, unknown pronouns (with links to confirm on the person page), unparseable lines (file:line), and proposed config (checkboxes to apply each value via `settings.update` / `people.update`).
-- **Review list:** proposed imported commitments grouped by counterpart, each with Keep / Drop. Bulk `Keep all shown` / `Drop all shown`, and filters (has due date, priority, person). Submit → `import.review.decide`.
+- **Review list:** all proposals, meaning imported commitments, MCP-proposed commitments and MCP-proposed person notes, grouped by source (`import`, or the MCP client name) and then by counterpart. Each has Keep / Drop. Bulk `Keep all shown` / `Drop all shown`, and filters (source, has due date, priority, person). Submit → `proposals.decide`. The header badge shows the proposal count; this screen is the Phase 1 stand-in for triage.
 - **Keyboard:** `k` keep, `d` drop, `j` / `↓` next.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -1269,7 +1298,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-32): import review screen`.
+- [ ] **Step 5: Commit** `feat(p1-32): proposals review screen`.
 
 **Acceptance:** About 100 imported items can be reviewed in under 5 minutes.
 
@@ -1283,7 +1312,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - Consumes: `McpServerDef`, `loadServers` and `createMcpInvoker` (P1-13).
 - Produces:
   ```ts
-  export function detectServers(env: { home: string; cwd: string | null; platform: NodeJS.Platform }, exists: (p: string) => boolean, read: (p: string) => string): { source: "claude-user" | "claude-project" | "vscode"; server: McpServerDef }[];
+  export function detectServers(env: { home: string; cwd: string | null; platform: NodeJS.Platform; appData: string | null }, exists: (p: string) => boolean, read: (p: string) => string): { source: "claude-user" | "claude-project" | "vscode"; server: McpServerDef }[];
   export interface ToolEntry { server: string; name: string; description: string; inputSchema: unknown; access: "read" | "write"; accessReason: "annotation" | "verb" | "unknown"; group: { provider: string | null; service: string | null }; accessible: boolean | null; blockedReason: string | null }
   export function classifyTool(t: { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }): { access: "read" | "write"; reason: ToolEntry["accessReason"] };
   export interface CapabilitySpec { id: string; keywords: string[]; params: string[] }   // e.g. calendar.listEvents: keywords [calendar, event, list|get], params [time|start, end|max]
@@ -1317,7 +1346,9 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(p1-34): mcp tool discovery, read/write classification and capability matching`.
 
-**Acceptance:** On the owner's machine, onboarding lists their MCP servers and tools. It proposes a correct read tool for `calendar.listEvents`, and offers no write tools.
+**Acceptance:**
+- Fixture-based tests pass.
+- *(owner, after merge)* On the owner's machine, onboarding lists their MCP servers and tools. It proposes a correct read tool for `calendar.listEvents`, and offers no write tools.
 
 ---
 
@@ -1337,10 +1368,11 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   export interface AggregatorAdapter {
     id: string;
     detect(tools: { name: string }[]): boolean;                                   // e.g. presence of the gateway's own discovery tools
-    enrich(invoker: CapabilityInvoker, catalog: ToolEntry[]): Promise<ToolEntry[]>; // fill group.provider/service, accessible, blockedReason
-    health?(invoker: CapabilityInvoker): Promise<{ provider: string; errorRatePct: number; calls: number }[]>;
+    enrich(callReadTool: ReadToolCaller, catalog: ToolEntry[]): Promise<ToolEntry[]>; // fill group.provider/service, accessible, blockedReason
+    health?(callReadTool: ReadToolCaller): Promise<{ provider: string; errorRatePct: number; calls: number }[]>;
     knownPresets?(): PresetDef[];
   }
+  export type ReadToolCaller = (toolName: string, args: Record<string, unknown>) => Promise<unknown>; // raw MCP call, refused unless classifyTool() says "read"
   export interface PluginApi { apiVersion: 1; registerAggregator(a: AggregatorAdapter): void; registerPreset(p: PresetDef): void; log: Logger }
   export interface EmosPlugin { name: string; version: string; register(api: PluginApi): void | Promise<void> }
   ```
@@ -1375,7 +1407,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 **Acceptance:**
 - An external adapter in a separate directory, depending only on `@emos/plugin-api`, loads via `plugins.json` and enriches discovery.
 - The public repo contains no real gateway's names.
-- The owner's internal adapter is built in their private repo. It's tracked there, not on this board.
+- *(owner, after merge)* The owner's internal adapter is built in their private repo. It's tracked there, not on this board.
 
 ---
 
@@ -1388,7 +1420,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - Produces:
   - **Ops:**
     - `health.checks → { id: string; label: string; ok: boolean; detail: string }[]`;
-    - `data.export { dest } → { path; bytes }` — a zip containing `entities/<entity>.json`, plus `markdown/people/<name>.md`, `markdown/commitments.md` and `markdown/meetings/<date>.md`;
+    - `data.export { dest, includePrivate?: boolean } → { path; bytes }` — a zip containing `entities/<entity>.json`, plus `markdown/people/<name>.md`, `markdown/commitments.md` and `markdown/meetings/<date>.md`;
     - `data.deleteAll { confirm: "delete" } → { deleted: true }`.
   - **Commands:** `emos.health`, `emos.openDataFolder`, `emos.exportData` (save dialog), `emos.deleteAllData`. The delete command asks for `delete` in an InputBox, warns that it can't be undone and suggests exporting first, then calls the op, and the extension shows "EM OS data deleted".
 - **`deleteAll`:**
@@ -1434,6 +1466,216 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 ---
 
+### Task P1-38: MCP proposal + ingest tools, `proposals.*` ops
+
+**Files:** `packages/mcp-server/src/tools-write.ts`, `core/src/proposals/index.ts`, `api-contract/src/ops/proposals.ts`, `service/src/handlers/proposals.ts` + tests.
+
+**Interfaces:**
+- Consumes: the P1-15 server and policy, plus the repos from P1-01, P1-02 and P1-04.
+- Produces MCP tools. Each is tagged with the calling client's name in `createdBy: "mcp"` plus an audit note `client:<name>`:
+  - `propose_commitment { title, direction?: "mine" | "owed_to_me", person?: string, due?: LocalDate, source_url?: string, quote?: string, occurred_at?: IsoDateTime }`
+    - `person` is resolved via `resolvePerson`. If ambiguous, the result is `{ status: "needs_person", candidates }` and nothing is created.
+    - With a source, a `source_item` (`origin: "mcp_ingest"`) is created and linked.
+    - It creates a commitment with `status: "proposed"`.
+  - `propose_person_note { person, text, date?: LocalDate, source_url?: string }` → `PersonNote { origin: "mcp", reviewState: "proposed" }`, which is only accepted if the client has `allowSensitive`.
+  - `ingest_items { items: { external_id: string; kind: "transcript" | "note" | "message" | "email" | "doc_section"; title?: string; text: string; url?: string; occurred_at: IsoDateTime; calendar_event_id?: string; meeting_title?: string }[] }` → per item `{ external_id, sourceItemId, meetingId: string | null, created: boolean }`.
+    - Items are upserted on `(connectorId: "mcp:<client>", external_id)`.
+    - **Meeting attach:** by `calendar_event_id` (the meeting's `externalId`), else by `occurred_at` within the meeting window, ±15 min, with a case-insensitive title match. 1:1-attached items are `people_sensitive`. At most 50 items per call.
+- Ops:
+  - `proposals.list { source?: "import" | "mcp" | "all" } → { commitments: Commitment[]; notes: PersonNote[] }`
+  - `proposals.decide { keep: string[]; drop: string[] } → { kept: number; dropped: number }`
+    - commitments: keep → `activate`; drop → `dropped`, `dropReason: "user"`;
+    - notes: keep → `reviewState: "accepted"`; drop → delete.
+- `today.get`'s `header.toTriage` counts every proposal (commitments plus notes), whatever its source.
+
+- [ ] **Step 1: Write the failing tests.**
+  - A `propose_commitment` from client `claude` appears in `proposals.list` with audit note `client:claude`.
+  - `person: "sam"` with two Sams → `needs_person`, and nothing is created.
+  - `ingest_items` with a matching `calendar_event_id` attaches the item to that meeting.
+  - The same `external_id` twice → `created: false`.
+  - A 1:1 transcript is `people_sensitive`.
+  - `propose_person_note` from a client without sensitive access → an MCP error, and nothing is stored.
+  - `proposals.decide` activates a commitment and accepts a note.
+  - 51 items → an `invalid_input` error.
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-38): mcp proposal and ingest tools with proposals review ops`.
+
+**Acceptance:** An MCP client can feed EM OS dated material and proposals, and nothing reaches the trusted list without the user's keep.
+
+---
+
+### Task P1-39: Claude Code skills pack + installer
+
+**Files:** `integrations/claude-code/skills/{emos-update,emos-prep,emos-capture}/SKILL.md`, `integrations/claude-code/README.md`, `cli/src/commands/claude.ts`, `scripts/lint-skills.test.ts`.
+
+**Interfaces:**
+- Consumes: the P1-15 read tools and the P1-38 write tools (MCP server name `emos`).
+- Produces:
+  - `emos claude install-skills [--project <dir>]` copies the skills into `~/.claude/skills/` (or `<dir>/.claude/skills/`). It never overwrites a modified file without `--force`, and prints what it did.
+  - `emos claude status` reports whether the `emos` MCP server is registered with Claude Code (`claude mcp list`) and whether the skills are installed.
+- Each skill's frontmatter has a `name` and a `description` with trigger phrases. The bodies are org-agnostic: they tell Claude to look for suitable tools among those available and never name a specific MCP server.
+  - **`emos-update [period] [audience]`**:
+    1. Call `today` / `list_commitments(status: done, period)` / `list_meetings` / `get_meeting` for notes.
+    2. Optionally search live sources the user has (merged PRs, closed tickets).
+    3. Draft Markdown with a citation (record id or URL) on every claim.
+    4. Return the draft without sending it.
+    5. Never infer pronouns; use `get_person` pronouns, or they/them when they're null.
+  - **`emos-prep <meeting|person>`**: resolve the meeting via `list_meetings` and the person via `get_person` (asking the user if there are several matches). Combine EM OS prep with recent chat threads involving that person, if a chat search tool exists, into an agenda.
+  - **`emos-capture [since]`**:
+    1. **Find capture tools** among the available tools: chat **saved-for-later items**, chat **reminders**, chat **lists / to-dos**, starred or flagged emails, and meeting **transcripts or smart notes**. Default `since` is the last run, recorded in an EM OS note tagged `emos-capture-run`, else 3 days.
+    2. **Saved items, reminders and to-dos** → `propose_commitment`, with the message permalink as `source_url` and the message text as `quote`. Direction is `mine` unless the item is clearly someone else's promise.
+    3. **Transcripts and notes** → `ingest_items` with `calendar_event_id` where available.
+    4. Report the counts and remind the user to review proposals in EM OS.
+    5. Never call write tools on external systems.
+
+- [ ] **Step 1: Write the failing test.** `lint-skills.test.ts` parses each `SKILL.md`:
+  - the frontmatter has a non-empty `name` and `description`;
+  - the body references only `emos` tools by exact name, and those names exist in the P1-15 / P1-38 tool lists;
+  - the body contains no server-specific tool names (it uses the P0-02 `scan` rules plus a deny-list of vendor-prefixed tool patterns).
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Write the three skills, the README and the CLI commands.** `install-skills` is unit-tested against a temp home.
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-39): claude code skills pack for emos`.
+
+**Acceptance:**
+- Lint and installer tests pass.
+- *(owner, after merge)* In Claude Code, `/emos-capture` turns the owner's Slack saved items and reminders into proposals, and attaches the day's Meet transcripts to meetings. `/emos-update 1w` produces a cited draft.
+
+---
+
+### Task P1-40: People cadence widget
+
+**Files:** `core/src/people/cadence.ts`, `api-contract/src/ops/cadence.ts`, `service/src/handlers/cadence.ts`, `webview/src/widgets/Cadence.tsx` + tests.
+
+**Interfaces:**
+- Consumes: the people and notes repos (P1-01), meetings (P1-04), `useToday` (P1-23, for refresh), and the widgets registry.
+- Produces:
+  ```ts
+  export interface CadenceRow { personId: string; name: string; cadenceDays: number; daysSinceLast1on1: number | null; next1on1: IsoDateTime | null; status: "on_track" | "due" | "overdue" | "no_history"; daysSinceLastNote: number | null; noteBand: "fresh" | "aging" | "stale" | "none" }
+  export function cadence(i: { now: Date; timeZone: string; people: Person[]; oneOnOnes: Meeting[]; lastNoteAt: Map<string, IsoDateTime> }): CadenceRow[];
+  ```
+- **Rows:** active `direct_report`s only. `cadenceDays` defaults to 14 when `oneOnOneCadenceDays` is null.
+- **1:1 status:**
+  - `on_track` if days ≤ cadence;
+  - `due` if ≤ 1.5 × cadence;
+  - otherwise `overdue`.
+  - A next 1:1 that's already scheduled within the cadence keeps the row `on_track`.
+- **Note band:** `fresh` 0–7 days, `aging` 8–14, `stale` ≥ 15, `none` if there are no notes.
+- Sort order: `overdue` first, then most days.
+- Op: `cadence.get → CadenceRow[]`.
+- **Widget:** one row per report showing name, a status pill, `12d since 1:1 · next Thu`, and a note-band dot. Clicking a row opens the person.
+
+- [ ] **Step 1: Write the failing tests.**
+  - 20 days on a 14-day cadence → `due`.
+  - 22 days → `overdue`.
+  - 20 days, but a 1:1 scheduled tomorrow → `on_track`.
+  - Never met → `no_history`.
+  - A note 9 days ago → `aging`.
+  - Stakeholders are excluded.
+  - The widget renders the overdue row first.
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-40): people cadence widget`.
+
+**Acceptance:** At a glance, the manager sees who they owe time to. No per-person performance signal is shown.
+
+---
+
+### Task P1-41: Notifications
+
+**Files:** `extension/src/notify/{scheduler.ts,rules.ts,index.ts}` + tests.
+
+**Interfaces:**
+- Consumes:
+  - `settings.get` (`notifications`, `eodNudgeTime`, `workWeek`, `displayTimeZone`; P1-05);
+  - `today.get` (P1-10) and `connectors.list` (P1-12);
+  - the `sync.status` events;
+  - `openView` (P1-28).
+- Produces `export function dueNotifications(i: { now: Date; profile: Profile; today: Today; connectors: ConnectorStatus[]; sent: Set<string> }): { key: string; message: string; action?: { label: string; command: string; args?: unknown[] } }[]`. It's a pure function, and the scheduler calls it every 60 s.
+- **Rules.** Each `key` fires at most once:
+
+  | Rule | Key | Fires | Message (exact copy) | Action |
+  |---|---|---|---|---|
+  | Meeting soon | `meeting:<id>` | `meetingLeadMinutes` before a confirmed, not-declined meeting | `<title> in 10 min — prep ready` / `— prep needed` / no suffix when nothing is linked | `Open prep` |
+  | Morning digest | `digest:<date>` | `morningDigestTime`, work days only | `3 due today · first meeting 9:30am` | `Open dashboard` |
+  | Wrap nudge | `wrap:<date>` | `eodNudgeTime`, work days only | `Wrap up your day?` | `Open` |
+  | Connector trouble | `conn:<id>:<date>` | a connector enters `error` or `offline` | `Calendar offline — check your network or VPN` (or the error message) | — |
+
+- **Suppression:** quiet hours suppress everything, as do the per-type `enabled` flags. `sent` persists in `context.globalState` per day.
+
+- [ ] **Step 1: Write the failing tests** (pure `dueNotifications` with fixed clocks).
+  - A meeting at 10:00 with a 10-min lead → fires at 09:50, not at 09:49.
+  - The same key isn't repeated.
+  - The digest doesn't fire on Saturday.
+  - Quiet hours 19:00–08:00 suppress a 07:55 meeting reminder.
+  - An `offline` connector produces the VPN message once per day.
+  - A declined meeting never fires.
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Implement.** The scheduler uses `vscode.window.showInformationMessage` and runs actions via `vscode.commands.executeCommand`.
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-41): local notifications`.
+
+**Acceptance:** Notifications are helpful, never repeated, and fully controllable. Nothing is sent outside VS Code.
+
+---
+
+### Task P1-42: Automatic daily backups
+
+**Files:** `service/src/backup-scheduler.ts`, `service/src/main.ts` (start it) + test.
+
+**Interfaces:**
+- Consumes: `Db.backup` (P0-10) and the data paths.
+- Produces `export function startBackupScheduler(deps: { db: Db; dataDir: string; clock: Clock; log: Logger; keep?: number }): { stop(): void; runNow(): Promise<string> }`.
+- **Schedule:** on service start, and every 6 h, check whether today's backup exists. If not, write `<dataDir>/backups/daily-YYYY-MM-DD.db`.
+- **Rotation:** keep the newest `keep` (default 7) `daily-*` files. `pre-*` migration backups are never rotated away automatically.
+- **Status:** `health.checks` (P1-36) shows the last backup date when present.
+
+- [ ] **Step 1: Write the failing tests** (fake clock, temp dir).
+  - A first start creates today's file.
+  - A second start on the same day does nothing.
+  - After 9 simulated days, 7 `daily-*` files remain.
+  - `pre-*` files are untouched.
+  - The backup file opens with `openDb` and has the same row counts.
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-42): automatic daily backups with rotation`.
+
+**Acceptance:** A week of restorable snapshots always exists, without the user doing anything.
+
+---
+
+### Task P1-43: "Go to…" quick pick
+
+**Files:** `core/src/search/quick.ts`, `api-contract/src/ops/search-quick.ts`, `service/src/handlers/search-quick.ts`, `extension/src/commands/goTo.ts` + tests.
+
+**Interfaces:**
+- Consumes: the repos from P1-01, P1-02 and P1-04 (goals included), plus `openView` (P1-28).
+- Produces:
+  - `search.quick { query: string; limit?: number } → { kind: "person" | "meeting" | "commitment" | "goal"; id: string; label: string; detail: string }[]` (default limit 20);
+  - the command `emos.goTo` (`cmd/ctrl+alt+g`), a QuickPick grouped by kind with live querying.
+- **Scope:** people (name, aliases, handles), meetings within ±30 days (title), active, snoozed and proposed commitments (title), and active goals (title, slug).
+- **Matching:** case- and accent-insensitive, prefix matches ranked above substring matches, ties broken by recency.
+- **Details:** for a meeting, `Tue Oct 20 · 1:00pm`; for a commitment, `due Fri · @Sam`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `"zoe"` finds `Zoë Quinn`.
+  - `"road"` ranks the meeting "Roadmap review" (prefix) above "Q4 roadmap" (substring).
+  - A meeting from 40 days ago isn't returned.
+  - Dropped commitments aren't returned.
+  - Selecting an item calls `openView` with the right kind and id.
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Implement** with SQL `LIKE` over normalised columns. Add a migration `p1-43_search_norm.sql` with normalised-name columns or indexes if needed.
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-43): go to quick pick`.
+
+**Acceptance:** Any person, meeting, commitment or goal is reachable in under three keystrokes plus a name.
+
+---
+
 ### Task P1-33: Phase 1 end-to-end synthetic test + dogfood checklist
 
 **Files:** `test/e2e/phase1.test.ts`, `docs/plans/phase-1-dogfood.md`.
@@ -1443,7 +1685,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 - [ ] **Step 1: Write the e2e test.** On a temp data dir:
   1. `startService`;
-  2. `import.apply` on the P1-16 fixture; `review.decide` keeps all;
+  2. `import.apply` on the P1-16 fixture (self `Morgan Lee`, fixed clock `2026-10-20`); `proposals.decide` keeps all;
   3. `connectors.configure("calendar", ics: fixtures/calendar/sample.ics)`, then `connectors.sync`;
   4. `today.get` for a fixed date.
 
@@ -1453,7 +1695,8 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - `waitingOn` contains the imported `owed_to_me` item;
   - `prep.get` for the 1:1 returns last notes;
   - the MCP `get_person` returns open items;
-  - `wrap.apply` completes one item and `today.get` shows progress `1/5`.
+  - `wrap.apply` completes one item and `today.get` shows progress `1/5`;
+  - an MCP `ingest_items` of a synthetic transcript attaches it to the matching meeting, and a `propose_commitment` appears in `proposals.list`.
 - [ ] **Step 2: Run `npx vitest run test/e2e`.** Expected: PASS on both OS jobs.
 - [ ] **Step 3: Write `phase-1-dogfood.md`.** It's an owner checklist (with checkboxes) covering:
   - real import dry run and apply;
@@ -1465,4 +1708,6 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - a "pain points" log feeding the Phase 2 plan.
 - [ ] **Step 4: Commit** `test(p1-33): phase 1 end-to-end and dogfood checklist`.
 
-**Acceptance (the Phase 1 done criterion):** The e2e test is green in CI, and the owner has completed the dogfood checklist, planning every morning in EM OS for a week.
+**Acceptance (the Phase 1 done criterion):**
+- The e2e test is green in CI.
+- *(owner, after merge)* The owner has completed the dogfood checklist, planning every morning in EM OS for a week, including `/emos-capture` pulling Slack saved items and reminders.

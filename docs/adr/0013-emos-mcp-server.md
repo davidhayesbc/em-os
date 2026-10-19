@@ -26,12 +26,12 @@ The service exposes an **MCP server**:
 
 Each result carries record ids, dates and stored source URLs. The server also exposes MCP **resources**: today's plan and person profiles as Markdown.
 
-**Proposal tools** (Phase 2), which never write trusted records directly:
+**Proposal tools** (Phase 1, so Claude Code skills can feed EM OS before native capture exists), which never write trusted records directly:
 
 - `propose_commitment`, `propose_person_note`, `propose_accomplishment`;
-- `ingest_items(items[])` — dated source items with URLs from an agent that fetched them (e.g. a Claude Code skill reading the user's MCP servers). They're stored with `origin = mcp_ingest` and go through the normal extraction and triage pipeline.
+- `ingest_items(items[])` — dated source items with URLs from an agent that fetched them (e.g. a Claude Code skill reading the user's MCP servers). They're stored with `origin = mcp_ingest` and attached to meetings. From Phase 2 they also go through the normal extraction and triage pipeline.
 
-Proposals land in triage tagged with the client name.
+Proposals land in the proposals review screen (Phase 1), and later in triage, tagged with the client name. Ingested items attach to a meeting when they carry a matching calendar event id, or when their timestamp falls inside a meeting that has the same title.
 
 **Policy:**
 

@@ -92,6 +92,7 @@ A grid of **widgets** that the user can add, remove and rearrange. The layout pe
 - **Today timeline:** meetings as blocks with prep chips (*prep*, *slides missing*, *ready*), free gaps as hatched focus blocks with a suggested task, and a "now" line.
 - **Do these 5:** numbered cards, each with a source icon, a title and a *why* chip ("meeting 1pm", "you promised Mon", "waiting on you 4d", "advances Q4 goal"). A progress ring shows done/5. One click checks off, snoozes or opens the source.
 - **Waiting on others:** person, item, due/overdue.
+- **People cadence:** one row per direct report showing days since the last 1:1 against that person's cadence (*on track* / *due* / *overdue*), the next scheduled 1:1, and days since your last note about them. It measures the manager's attention, not the report's performance.
 - **PR health:** the team's open PRs grouped by state (needs review / CI failing / changes requested / stale) with age bars. Review requested from me comes first.
 - **Ticket health:** the team's in-flight tickets by state, blocked and stale items, sprint/iteration progress if available, and my assigned tickets.
 - **Observability:** plugin-provided graphs, e.g. error rate for configured services.
@@ -164,7 +165,32 @@ Triggered by a command or a configurable nudge time. The steps are:
 
 Promotion packages for a report draw on approved evidence *and* that person's own brag doc entries. They require a rubric document, and gaps against the rubric are reported.
 
-### 5.9 Settings and onboarding
+### 5.9 Notifications
+
+These are local VS Code notifications, shown only while VS Code is open, and each type can be turned off:
+
+- **Meeting soon:** "1:1 with Sam in 10 min — prep ready" (or "prep needed"). Clicking it opens the prep. The lead time defaults to 10 min.
+- **Morning digest:** at a set time (default 08:45 on work days): "3 due today · first meeting 9:30".
+- **End-of-day wrap nudge** (§5.7).
+- **Connector trouble:** at most once per connector per day, e.g. "Calendar offline — check your network or VPN".
+
+Quiet hours suppress all of them. Nothing is sent outside the machine.
+
+### 5.10 Go to…
+
+A command-palette quick pick (`EM OS: Go to…`) searches people, meetings (±30 days), active commitments and goals by name. It opens the matching view.
+
+### 5.11 Claude Code skills
+
+EM OS ships a small set of Claude Code skills that use EM OS through its MCP server (§6), alongside any other MCP servers the user has:
+
+- **`/emos-update`** drafts a team or project update for a period from EM OS data: completed work, commitments and meeting notes. It can add live sources the user's Claude Code can reach. The draft is cited and returned for the user to edit; it's never sent.
+- **`/emos-prep <meeting or person>`** prepares a meeting from EM OS prep plus recent context.
+- **`/emos-capture`** pulls explicit capture signals and meeting artefacts through the user's own MCP servers, and pushes them into EM OS as proposals and dated source items via `propose_commitment` and `ingest_items`. Examples: chat **saved-for-later items**, **reminders** and **to-do lists**, starred emails, and meeting transcripts or smart notes since the last run.
+
+The skills are org-agnostic: they discover suitable tools among those Claude Code has, and don't name specific servers. `emos claude install-skills` installs them. Organisations can ship tuned variants alongside their private adapters.
+
+### 5.12 Settings and onboarding
 
 The first-run wizard covers:
 
@@ -245,16 +271,16 @@ Settings views include **Models** (job → selected model, why, override) and **
 
 | Entity | Key fields (beyond the common date/retention fields) |
 |---|---|
-| `person` | display name, relationship (`self`, `direct_report`, `manager`, `peer`, `stakeholder`, `other`), role, pronouns (nullable = unknown), time zone, active/archived |
+| `person` | display name, relationship (`self`, `direct_report`, `manager`, `peer`, `stakeholder`, `other`), role, pronouns (nullable = unknown), time zone, 1:1 cadence in days (nullable), active/archived |
 | `identity` | person, source (`chat`, `code_host`, `email`, `calendar`, `tickets`, `docs`…), handle/external id, confirmed flag. People are never auto-merged by display name alone. |
 | `source_item` | connector, external id (unique per connector), kind (`message`, `thread`, `email`, `event`, `transcript`, `doc_section`, `pr`, `ticket`, `note`), url, author identity, text/excerpt, content hash, origin (`connector`, `import`, `mcp_ingest`, `manual`) |
-| `commitment` | title, notes, direction (`mine`, `owed_to_me`), owner, counterpart, due (date or datetime + tz), priority (p0–p3), urgency (`now`, `next`, `soon`, `later`, `someday`; nullable), tags, status (`proposed`, `active`, `snoozed`, `done`, `dropped`), drop_reason (`user`, `stale`, `archived_on_import`, `merged`), completed_at, goal, meeting, linked tickets/PRs, sources (many-to-many), created_by (`user`, `extractor`, `import`, `mcp`), audit trail |
+| `commitment` | title, notes, direction (`mine`, `owed_to_me`), owner, counterpart, due (date or datetime + tz), priority (p0–p3), urgency (`now`, `next`, `soon`, `later`, `someday`; nullable), tags, status (`proposed`, `active`, `snoozed`, `done`, `dropped`), drop_reason (`user`, `stale`, `archived_on_import`, `merged`), recurrence (`daily` / `weekly` on weekdays / `monthly` on a day, with an interval; nullable — completing a recurring item creates the next occurrence), completed_at, goal, meeting, linked tickets/PRs, sources (many-to-many), created_by (`user`, `extractor`, `import`, `mcp`), audit trail |
 | `goal` | title, subject person (default self; a direct report for their growth goals), horizon (`quarter`, `half`, `ongoing`), kind (`team`, `project`, `personal_growth`), status, target date, sensitivity |
 | `meeting` | calendar event id, title, start/end, attendees, classification (`one_on_one`, `standup`, `team`, `external`, `other`), person (1:1s), notes (source items), prep status, other attendees' action items (stored here, not on the user's list) |
 | `pr` | code host, repo, number, url, author, reviewers requested, state, draft, CI status, review state, created/updated/last-activity, waiting-on, linked ticket keys |
 | `ticket` | system, key, url, title, type, status + status category (`todo`, `in_progress`, `done`), assignee, reporter, priority, due date, sprint/iteration, epic/parent, labels, blocked flag/links, created/updated/resolved, last status change |
 | `document` | connector, url, title, owner person, kind (`brag_doc`, `design_doc`, `rubric`, `other`), shared_with_me flag, last modified; content lives in `doc_section` source items, each with its own date |
-| `person_note` | subject person, date (user-settable), text, tags, sensitivity (default `people_sensitive`), origin (`manual`, `import`, `mcp`), optional source link |
+| `person_note` | subject person, date (user-settable), text, tags, sensitivity (default `people_sensitive`), origin (`manual`, `import`, `mcp`), review state (`proposed`, `accepted`; MCP-proposed notes start `proposed`), optional source link |
 | `accomplishment` | subject (self or report), summary, impact, date, goal/competency tags, sources, sensitivity, status (`proposed`, `accepted`) |
 | `risk`, `decision` | title, status, owner, date, links, corroborating source items |
 | `triage_decision` | proposal snapshot, action, reason chip, edits diff, date — training signal |
@@ -468,6 +494,7 @@ Each entry records:
 
   Importers map known section headings to levels. A classification job labels unstructured text, and the user can relabel anything. A record's effective level is the maximum of its chunks.
 - **Prompt injection.** Source text is delimited as data. Outputs are schema-validated, and models have no external write tools.
+- **Backups.** A daily local snapshot is kept in `<dataDir>/backups/`, with the last 7 retained. A backup is also taken before any schema migration runs. `emos backup <dest>` makes an on-demand copy.
 - **Secrets.** The service holds connector and provider secrets in the OS keychain. No secrets are kept in config files, and none are sent to clients.
 - **Remote hosting** (if ever enabled) would require TLS, real authentication and a fresh look at this section. That's why it's out of scope.
 - **Public repo hygiene.** The repo holds code, docs and synthetic fixtures only. CI runs a secret scanner and a fixture check (reserved example domains and names).
@@ -528,11 +555,21 @@ Each phase ends with the user working on real data. Detailed task plans are prod
 | Phase | Ships | Done when |
 |---|---|---|
 | **0. Foundations + spikes** | Monorepo, CI (macOS arm64 + Windows x64), `api-contract`, service skeleton with store + migrations, extension that starts/attaches to the service and opens a dashboard tab. Spikes, each recorded in its ADR: **(a)** service runtime (bundled Node vs. VS Code's Electron-as-Node vs. a required system Node) and SQLite driver; **(b)** direct MCP client against the user's MCP servers vs. agent-mediated; **(c)** headless `claude -p` structured output + tool restriction, plus a re-check of the terms; **(d)** LiteLLM gateway model discovery + structured output; **(e)** Ollama embedding throughput | Dashboard tab renders data served by the service on both OSes; spike decisions recorded |
-| **1. Daily driver** | One-time personal-notes importer with an **import review** screen (bulk keep/drop of the active set; this review is the user's approval of imported items); manual commitments + one-line quick-capture; manual person notes; paste meeting notes into a meeting; goals; calendar connector; dashboard (header, week load, today timeline, do-these-5, waiting-on) + sidebar; deterministic ranking + planner; minimal meeting prep (1:1 open items both ways + last notes; standup open items); end-of-day wrap; onboarding; **read-only MCP server** (today, commitments, people, meetings) so Claude Code can query EM OS from day one | The user plans every morning in EM OS |
-| **2. Capture + triage** | Meeting-notes, chat and email connectors; commitment extraction (back-processing pasted notes); triage inbox + keyboard flow; triage learning + rule suggestions; done detection + decay; MCP `propose_*` and `ingest_items` tools; provisional sensitivity + classification; **model registry and automatic routing** with overrides (Phase 2 is the first phase with model jobs) | The user no longer captures commitments by hand; accept rate is tracked |
+| **1. Daily driver** | One-time personal-notes importer; a **proposals review** screen (bulk keep/drop for imported items and MCP proposals; this review is the user's approval until Phase 2 triage); MCP **`propose_commitment`, `propose_person_note` and `ingest_items`** tools; **Claude Code skills** (`/emos-update`, `/emos-prep`, `/emos-capture`, the last of which includes chat saved items, reminders and to-do lists); recurring commitments; people cadence widget; notifications; offline/VPN-aware sync; automatic daily and pre-migration backups; "Go to…" quick pick; manual commitments + one-line quick-capture; manual person notes; paste meeting notes into a meeting; goals; calendar connector; dashboard (header, week load, today timeline, do-these-5, waiting-on) + sidebar; deterministic ranking + planner; minimal meeting prep (1:1 open items both ways + last notes; standup open items); end-of-day wrap; onboarding; **read-only MCP server** (today, commitments, people, meetings) so Claude Code can query EM OS from day one | The user plans every morning in EM OS |
+| **2. Capture + triage** | Meeting-notes, chat and email connectors; commitment extraction (back-processing pasted notes); triage inbox + keyboard flow; triage learning + rule suggestions; done detection + decay; the proposals review screen grows into the full triage inbox; provisional sensitivity + classification; **model registry and automatic routing** with overrides (Phase 2 is the first phase with model jobs) | The user no longer captures commitments by hand; accept rate is tracked |
 | **3. Semantic layer + Ask** | Chunking, Ollama embeddings, date-first hybrid retrieval, retention/exclusion policies + settings UI; Ask panel with citations and date-scope chip; live MCP tools in Ask; MCP `search` tool; docs connector including **brag docs shared with me**; "plan my day" | "What did we decide about X last month?" answered with links, in the ask box and via Claude Code |
 | **4. People + work tracking** | Full person profiles (brag doc panel, themes, raise-next-time); full meeting prep; code-host connector + PR health widget; **tickets connector (Jira) + ticket health widget**, ticket↔PR↔commitment↔goal links; observability widget | 1:1 prep comes from profiles; stuck PRs and blocked tickets surface on the dashboard |
 | **5. Writing + evals** | Accomplishments ledger, update/brag/promotion drafting with citation UI (promo uses reports' brag docs), per-job model eval sets | Weekly update in under 10 minutes; brag doc current without manual effort |
+
+### 12.1 Planned additions for Phase 2 (owner-approved backlog)
+
+1. **Weekly review ritual.** On Friday: goal progress, slipped items, overdue waiting-on items, and next week's load. It feeds update drafting.
+2. **Explicit capture signals in the native chat and email connectors.** Chat **saved-for-later items**, **reminders** and **to-do / list items**, plus email stars and email-to-self. These are high-precision signals, proposed in triage at maximum confidence (until then, they arrive via `/emos-capture`).
+3. **Follow-up chasers.** For overdue waiting-on items, draft a polite nudge to the clipboard, with a deep link that opens the conversation. It's never sent automatically.
+4. **Identity suggestions.** Propose linking each person's chat, code-host and email identities, using directory or search tools from the user's MCP servers, with confirmation in triage.
+5. **Meeting ↔ commitment auto-linking.** Suggest the link when a commitment's title matches an upcoming meeting (e.g. "slides for roadmap review"), with confirmation in triage.
+
+Noted for later phases: incident/on-call connector, hiring pipeline tracking, exporting a 1:1 agenda as a shareable doc.
 
 ## 13. Quality bar
 
@@ -569,6 +606,9 @@ Each phase ends with the user working on real data. Detailed task plans are prod
 15. Distribution is via the VS Code Marketplace and Open VSX (owner decision), with no separate Node install. Windows is kept buildable and unit-tested, but manually tested only on macOS for now.
 16. Source setup uses discovery (detect servers → `tools/list` → read/write classification → capability matching → test preview), so users never write mapping YAML by hand. Gateway-specific discovery lives in optional aggregator adapters.
 17. Organisation-internal adapters, including the initial user's gateway adapter, live in a private repository and load as external plugins. The public repo holds only the interface, the plugin loader and a synthetic reference adapter (owner decision).
+
+18. MCP proposal and ingest tools, a proposals review screen and a Claude Code skills pack move into Phase 1. They bridge capture (chat saved items, reminders and to-do lists; meeting transcripts) until native connectors arrive in Phase 2 (owner decision).
+19. Phase 1 adds recurring commitments, a people cadence widget, local notifications, offline/VPN-aware sync, automatic backups and "Go to…". A risks/decisions UI is deferred (owner decision).
 
 ## 15. Builder's discretion
 

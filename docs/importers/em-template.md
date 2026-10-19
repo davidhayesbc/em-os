@@ -48,7 +48,7 @@ Tests use a **synthetic** workspace fixture in this layout. No real content ever
 **Activation rule:**
 
 - `[x]` → `done` (history).
-- `[ ]` → `active` only if both hold:
+- `[ ]` → `proposed` (`createdBy: import`; activated on the review screen) only if both hold:
   - it's owned by or owed to the user;
   - it has a due date, priority or urgency tag, *or* its source file changed in the last 30 days.
 - All other open items → `dropped` (`drop_reason = archived_on_import`), still searchable and restorable.

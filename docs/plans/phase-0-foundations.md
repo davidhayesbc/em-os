@@ -184,7 +184,7 @@ Parallel lanes once P0-01 merges:
   - connect;
   - `listTools()`, and print only the count and a hash of the names;
   - call one read tool twice with a pagination cursor, and print only the item counts.
-- [ ] **Step 2: The owner runs it** against each of their servers: calendar, mail, docs, chat, code host, tickets.
+- [ ] **Step 2: The owner runs it** against each of their servers: calendar, mail, meeting notes, docs, chat, code host, tickets, observability.
 - [ ] **Step 3: Record the verdicts and the fallback order** (`native` → `ingest_items` → `mcp_via_agent`) per server in ADR 0005.
 - [ ] **Step 4: Commit** `docs(p0-04): record direct MCP feasibility per server class`.
 
@@ -264,16 +264,17 @@ Parallel lanes once P0-01 merges:
 
   | Entity | Details |
   |---|---|
-  | `Person` | `relationship` enum, `pronouns: z.string().nullable()`, `aliases: z.array(z.string())`, `role: z.string().nullable()`, `timeZone: z.string().nullable()`, `archived: z.boolean()` |
+  | `Person` | `relationship` enum, `pronouns: z.string().nullable()`, `aliases: z.array(z.string())`, `role: z.string().nullable()`, `timeZone: z.string().nullable()`, `archived: z.boolean()`, `oneOnOneCadenceDays: z.number().int().positive().nullable()` |
   | `Identity` | |
-  | `PersonNote` | `sensitivity` default `"people_sensitive"`, `origin` enum `manual \| import \| mcp` |
-  | `Goal` | `subjectPersonId` |
-  | `Commitment` | `direction`, `status`, `dropReason`, `urgency`, `priority: z.number().int().min(0).max(3).nullable()`, `due: { date: LocalDate, time: z.string().nullable(), timeZone: z.string() }.nullable()`, `tags: string[]`, `createdBy`, `ownerId`, `counterpartId: string \| null`, `goalId: string \| null`, `meetingId: string \| null`, `title`, `notes`, `pinned: boolean`, `effortMinutes: number \| null`, `snoozedUntil: IsoDateTime \| null`, `completedAt: IsoDateTime \| null` |
-  | `Meeting` | `connectorId`, `externalId`, `title`, `start`, `end` (IsoDateTime), `allDay`, `status: "confirmed" \| "cancelled"`, `selfResponse: "accepted" \| "tentative" \| "declined" \| "needs_action" \| null`, `classification` enum, `personId` (1:1s), `attendees: { identityId: string \| null, personId: string \| null, displayName, email: string \| null }[]`, `actionItems: { text: string, ownerName: string \| null, done: boolean }[]` (other attendees' items, spec §7.1), `url: string \| null` |
+  | `PersonNote` | `personId`, `text`, `tags`, `sourceUrl: string \| null`, `sensitivity` default `"people_sensitive"`, `origin` enum `manual \| import \| mcp`, `reviewState: "proposed" \| "accepted"` (default `"accepted"`; MCP notes start `"proposed"`) |
+  | `Goal` | `title`, `slug: string \| null` (unique; used to resolve `#ws:` tags), `subjectPersonId`, `horizon`, `kind`, `status`, `targetDate: LocalDate \| null`, `sensitivity` |
+  | `Commitment` | `direction`, `status`, `dropReason`, `urgency`, `priority: z.number().int().min(0).max(3).nullable()`, `due: { date: LocalDate, time: z.string().nullable(), timeZone: z.string() }.nullable()`, `tags: string[]`, `createdBy`, `ownerId`, `counterpartId: string \| null`, `goalId: string \| null`, `meetingId: string \| null`, `title`, `notes`, `pinned: boolean`, `effortMinutes: number \| null`, `snoozedUntil: IsoDateTime \| null`, `completedAt: IsoDateTime \| null`, `recurrence: { freq: "daily" \| "weekly" \| "monthly", interval: number, byWeekday: number[] \| null, byMonthDay: number \| null } \| null`, `seriesId: string \| null` (shared by all occurrences of a recurring item) |
+  | `Meeting` | `connectorId`, `externalId`, `title`, `start`, `end` (IsoDateTime), `allDay`, `status: "confirmed" \| "cancelled"`, `selfResponse: "accepted" \| "tentative" \| "declined" \| "needs_action" \| null`, `classification` enum, `classificationSource: "auto" \| "user"`, `personId` (1:1s), `attendees: { identityId: string \| null, personId: string \| null, displayName, email: string \| null }[]`, `actionItems: { text: string, ownerName: string \| null, done: boolean }[]` (other attendees' items, spec §7.1), `url: string \| null` |
   | `SourceItem` | `connectorId`, `externalId`, `kind`, `origin`, `url: string \| null`, `authorIdentityId: string \| null`, `text`, `contentHash`, `sensitivity`, `sections: { heading: string, sensitivity, startLine: number }[] \| null` |
   | `Risk`, `Decision`, `Document`, `Accomplishment` | as spec §7.1 |
 
 - Produces exported enum schemas: `Relationship`, `Direction` (`mine \| owed_to_me`), `CommitmentStatus`, `DropReason`, `Urgency`, `CreatedBy`, `Classification`, `GoalStatus`, `SourceKind` and `Origin`. Their values are exactly as listed in spec §7.1.
+- Produces `AuditEvent = { id, entity: string, entityId: string, action: string, actor: "user" | "import" | "system" | "mcp", at: IsoDateTime, note: string | null, diff: Record<string, { from: unknown; to: unknown }> }`.
 - Produces creation types: for each entity `X`, `NewX = Omit<X, "id" | "capturedAt" | "updatedAt">` with `occurredAt` and `retentionState` optional. They default to now and `"active"`. Also `ExternalMeeting = NewMeeting` with `connectorId` and `externalId` required.
 - Produces, in `op.ts`:
   ```ts
@@ -369,13 +370,15 @@ Parallel lanes once P0-01 merges:
   - `paths.ts`, `driver.ts` (adapter for `SQLITE_DRIVER` from P0-03), `migrate.ts`;
   - `migrations/0001_initial.sql`, `migrations/index.ts` *(append-only)*;
   - `open.ts`, `index.ts`
+  - `store.ts`: `createStore(db)`. Each later slice adds its repo here *(append-only)*
 - Test: `packages/store-sqlite/src/{paths,migrate,open}.test.ts`
 
 **Interfaces:**
 - Consumes: `Store` from `@emos/core`.
 - Produces:
   ```ts
-  export function resolveDataDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, homedir: string): string;
+  export function resolveDataDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, homedir: string): string; // EMOS_DATA_DIR overrides (tests/dev)
+  export function createStore(db: Db): Store;            // store.ts — implements the core Store port; repos are appended by slices
   export function assertNotInGitCheckout(dir: string, exists: (p: string) => boolean): void; // walks parents for ".git"; throws Error("EM OS data directory is inside a git checkout: <dir>")
   export interface Db { exec(sql: string): void; prepare(sql: string): { run(...p: unknown[]): { changes: number }; get<T>(...p: unknown[]): T | undefined; all<T>(...p: unknown[]): T[] }; transaction<T>(fn: () => T): T; backup(toPath: string): Promise<void>; close(): void }
   export function openDb(file: string): Db;          // WAL, foreign_keys=ON, busy_timeout=5000, then migrate()
@@ -383,20 +386,25 @@ Parallel lanes once P0-01 merges:
   ```
 - `0001_initial.sql` creates the Phase 1 tables:
   - `schema_migrations`
-  - `people`, `identities`, `person_notes`
-  - `goals`
-  - `commitments`, `commitment_sources`, `commitment_audit`
-  - `meetings`, `meeting_attendees`
+  - `people`, `identities` (`handle TEXT COLLATE NOCASE`), `person_notes`
+  - `goals` (`slug UNIQUE`)
+  - `commitments`, `commitment_sources (commitment_id, source_item_id)`
+  - `audit_events` (id, entity, entity_id, action, actor, at, note, diff JSON), which records audit for every entity
+  - `meetings` (including `classification_source`), `meeting_attendees`, `meeting_notes (meeting_id, source_item_id)`
   - `source_items`
+  - `record_sources (entity, entity_id, source_item_id)`: source links for risks, decisions, documents and accomplishments
   - `risks`, `decisions`, `documents`, `accomplishments`
   - `settings` (key TEXT PK, value JSON)
   - `layouts`
   - `day_plans` (local_date TEXT PK, commitment_ids JSON, created_at) — the day's stable top list
-  - `sync_state`
-  - `mcp_clients`
+  - `layouts` (surface TEXT PK, entries JSON)
+  - `sync_state` (connector_id TEXT PK, cursor, state, last_attempt_at, last_success_at, last_error, item_count)
+  - `mcp_clients` (id, name UNIQUE, token_hash, allow_sensitive, created_at, revoked_at)
   - `import_keys` (key TEXT PK, entity, entity_id)
 
-  Columns mirror the P0-08 entity schemas in snake_case. Every dated table has `occurred_at, captured_at, updated_at, retention_state` and an index on `(occurred_at, retention_state)`. Also: `UNIQUE(connector_id, external_id)` on `source_items`, and `UNIQUE(source, handle)` on `identities`.
+  Columns mirror the P0-08 entity schemas in snake_case. Every dated table has `occurred_at, captured_at, updated_at, retention_state` and an index on `(occurred_at, retention_state)`. Also: `UNIQUE(connector_id, external_id)` on `source_items` and `meetings`, and `UNIQUE(source, handle)` on `identities`.
+- **Later migrations:** a task that needs schema changes adds `migrations/<task-id>_<area>.sql` (e.g. `p1-41_recurrence.sql`) and appends it to `migrations/index.ts` *(append-only)*. Order is the order in `index.ts`.
+- **Pre-migration backup:** when `openDb` opens an existing database with pending migrations, it first writes `<dataDir>/backups/pre-<first-pending-name>.db` using `Db.backup`.
 
 - [ ] **Step 1: Write the failing tests.**
   ```ts
@@ -408,6 +416,9 @@ Parallel lanes once P0-01 merges:
     expect(() => assertNotInGitCheckout("/r/proj/data", p => p === "/r/proj/.git")).toThrow(/inside a git checkout/);
   });
   it("migrates idempotently", () => { const db = openDb(tmp()); expect(migrate(db).applied).toEqual([]); });
+  it("EMOS_DATA_DIR overrides the platform default", () => { expect(resolveDataDir({ EMOS_DATA_DIR: "/tmp/x" }, "darwin", "/Users/a")).toBe("/tmp/x"); });
+  it("identity handles are unique case-insensitively", () => { /* insert ("chat","@Alex") then ("chat","@alex") → throws */ });
+  it("backs up before applying a pending migration to an existing db", async () => { /* add a test migration → backups/pre-<name>.db exists */ });
   it("enforces source item uniqueness", () => { /* second insert with same (connector_id, external_id) throws */ });
   it("has occurred_at index on every dated table", () => { /* PRAGMA index_list per table includes an index whose first column is occurred_at */ });
   it("backup produces a readable copy", async () => { /* backup → openDb(copy) → same row counts */ });
@@ -434,6 +445,7 @@ Parallel lanes once P0-01 merges:
 - Consumes: `ops` and `ApiError` (P0-08); `openDb`, `resolveDataDir` and `assertNotInGitCheckout` (P0-10); the core ports (P0-09).
 - Produces:
   ```ts
+  // context.ts builds store via createStore(db) (P0-10)
   export interface ServiceContext { db: Db; store: Store; clock: Clock; ids: IdGen; log: Logger; secrets: SecretStore; events: EventBus; config: ServiceConfig }
   export type Handler<N extends OpName> = (ctx: ServiceContext, input: OpParsedInput<N>) => OpOutput<N> | Promise<OpOutput<N>>;
   export const handlers: { [N in OpName]?: Handler<N> };          // handlers/index.ts

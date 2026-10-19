@@ -22,7 +22,7 @@ New users arrive with history in personal notes systems: Markdown or Foam worksp
 - **Sensitivity:** known sections map to sensitivity levels (e.g. career, wellbeing, feedback and contribution notes → `people_sensitive`).
 - **Todo activation:**
   - done items import as history;
-  - open items owned by or owed to the user, which are dated, prioritised or recently touched, import as `active`;
+  - open items owned by or owed to the user, which are dated, prioritised or recently touched, import as `proposed` (`createdBy: import`) and become `active` when kept on the review screen;
   - everything else imports as `dropped` with `drop_reason = archived_on_import`, still searchable and restorable.
 
   An **import review** screen (Phase 1) lists the active set for bulk keep/drop before it feeds ranking. Because the import is user-initiated and reviewed, that review counts as the user's approval, and imported items don't go through the Phase 2 triage inbox.

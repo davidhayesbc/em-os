@@ -17,7 +17,7 @@ Each plan opens with a **task board**: one checkbox line per task. The task sect
 6. **Finish.** Open one PR per task. The PR must:
    - tick the task's board line `[x]`;
    - pass CI on both OS jobs;
-   - meet every **Acceptance** bullet;
+   - meet every **Acceptance** bullet, except bullets marked *(owner, after merge)*. The owner verifies those on real accounts after merge, and a failure becomes a new bug task;
    - contain synthetic data only.
 
    A task is *done* when its PR merges.
@@ -26,6 +26,8 @@ Each plan opens with a **task board**: one checkbox line per task. The task sect
 ## Conventions every task follows
 
 - **Packages:** `packages/<name>`, npm name `@emos/<name>`. Code goes in `src/`, tests sit beside the code as `*.test.ts`.
+- **New packages:** the first task that creates files in a package also creates its `package.json`, `tsconfig.json` and `src/index.ts`, copying the P0-01 package template. That's implicitly part of its Files list. `src/index.ts` is append-only for everyone after that.
+- **Schema changes:** add `packages/store-sqlite/src/migrations/<task-id>_<area>.sql` and append it to `migrations/index.ts`. Never edit a merged migration.
 - **Commits:** Conventional Commits with the task id in the scope, e.g. `feat(p1-06): rank time-critical items first`.
 - **Spike results** go in the cited ADR under a `## Spike result (YYYY-MM-DD)` heading. Results contain no work data, real names or org-specific values.
 - **No real data, ever.** Fixtures use synthetic people (Alex Rivera, Sam Chen, Jordan Patel, Priya Nair, …) and the `example.com` / `example.org` domains.
