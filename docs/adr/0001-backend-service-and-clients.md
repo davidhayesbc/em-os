@@ -34,11 +34,11 @@ Sync, extraction and embedding are long-running and should continue when VS Code
 
 - a Node runtime bundled with the extension or CLI;
 - VS Code's own Electron binary run as Node (`ELECTRON_RUN_AS_NODE`);
-- requiring a system Node 22+.
+- ~~requiring a system Node 22+~~ — ruled out by the distribution requirement below.
 
 Choose based on install friction, the native-module ABI (ADR 0002), standalone mode working without VS Code, and package size. Record the result here.
 
-**Distribution:** a VSIX, from GitHub Releases first and the Marketplace later, that bundles the service and the CLI. Standalone mode uses the runtime chosen by the spike.
+**Distribution:** published to the VS Code Marketplace and Open VSX, which also handle auto-update, with the same VSIX on GitHub Releases. The VSIX bundles the service and the CLI. A hard requirement: users never install Node.js separately. If native modules are needed, publish platform-specific VSIXs (`vsce package --target darwin-arm64|win32-x64`). Standalone mode uses the runtime chosen by the spike.
 
 ## Alternatives considered
 

@@ -125,6 +125,13 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [ ] **P1-31** Onboarding wizard + settings view — deps: P1-01, P1-05, P1-14 — claim: —
 - [ ] **P1-32** Import review screen — deps: P1-22 — claim: —
 
+**Discovery, trust and distribution**
+
+- [ ] **P1-34** Tool discovery: server detection, catalog, read/write classification, capability matcher — deps: P1-13 — claim: —
+- [ ] **P1-35** Aggregator adapter interface + first gateway adapter — deps: P1-34 — claim: —
+- [ ] **P1-36** Trust and exit: health panel, open data folder, export, delete all data — deps: P1-05, P1-12, P1-15 — claim: —
+- [ ] **P1-37** *manual + CI* Marketplace and Open VSX publishing — deps: P0-15, P1-36 — claim: —
+
 **Close-out**
 
 - [ ] **P1-33** Phase 1 end-to-end synthetic test + owner dogfood checklist — deps: all above — claim: —
@@ -1214,14 +1221,15 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 **Files:** `webview/src/views/{Onboarding.tsx,Settings.tsx}`, `extension/src/onboarding.ts` (opens the wizard on first activation when `onboarded: false`) + tests.
 
 **Interfaces:**
-- Consumes: `settings.*` (P1-05); `people.create` / `people.addIdentity` (P1-01); `connectors.list` / `configure` / `sync` (P1-12); the calendar connector config shape (P1-14); `import.dryRun` (P1-22, optional step).
+- Consumes: `settings.*` (P1-05); `people.create` / `people.addIdentity` (P1-01); `connectors.list` / `configure` / `sync` (P1-12); the calendar connector config shape (P1-14); `discovery.*` ops (P1-34); `import.dryRun` (P1-22, optional step).
 - **Wizard steps:**
   1. **You:** name; chat / code-host / email handles → self person + identities; `selfPersonId`.
   2. **Time:** display time zone (default from `Intl`), work week, working hours, end-of-day nudge time.
   3. **Team:** add people (name, relationship, handles, pronouns optional), or "I'll import them" (skips to step 6).
   4. **Meetings:** title rules (pre-filled examples `^standup`, `1:1|1-1|one on one`).
   5. **Calendar:**
-     - choose `MCP server` (pick from the loaded servers file, then a preset) or `ICS` (URL stored as a secret, or a file);
+     - choose `MCP server` or `ICS` (URL stored as a secret, or a file);
+     - for MCP, **discovery** (P1-34): detected servers → tool catalog grouped by server (and by provider/service with an aggregator adapter) → suggested read tool per capability with the top-3 alternatives → `Test` shows the mapped preview → save as preset;
      - `Test` runs `connectors.sync` and shows the meeting count.
   6. **Import (optional):** the em-template path → dry-run report → `Review import` (P1-32).
   7. **Done:** set `onboarded: true` and open the dashboard.
@@ -1231,6 +1239,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [ ] **Step 1: Write the failing tests.**
   - The wizard can't finish without a self name and a time zone.
   - The calendar `Test` shows `Found 12 meetings` from a fake `connectors.sync`.
+  - Write tools in the catalog render disabled, with the label `write — not used by EM OS`.
   - Settings shows a red error row for a connector in `error` state with its message.
   - Creating an MCP client shows the token once, and it's absent after re-render.
 - [ ] **Step 2: Run.** Expected: FAIL.
@@ -1263,6 +1272,144 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [ ] **Step 5: Commit** `feat(p1-32): import review screen`.
 
 **Acceptance:** About 100 imported items can be reviewed in under 5 minutes.
+
+---
+
+### Task P1-34: Tool discovery
+
+**Files:** `packages/connectors/src/discovery/{detect.ts,catalog.ts,classify.ts,match.ts}`, `api-contract/src/ops/discovery.ts`, `service/src/handlers/discovery.ts`, `packages/connectors/fixtures/discovery/{claude.json,vscode-mcp.json,tools-list.json}` + tests.
+
+**Interfaces:**
+- Consumes: `McpServerDef`, `loadServers` and `createMcpInvoker` (P1-13).
+- Produces:
+  ```ts
+  export function detectServers(env: { home: string; cwd: string | null; platform: NodeJS.Platform }, exists: (p: string) => boolean, read: (p: string) => string): { source: "claude-user" | "claude-project" | "vscode"; server: McpServerDef }[];
+  export interface ToolEntry { server: string; name: string; description: string; inputSchema: unknown; access: "read" | "write"; accessReason: "annotation" | "verb" | "unknown"; group: { provider: string | null; service: string | null }; accessible: boolean | null; blockedReason: string | null }
+  export function classifyTool(t: { name: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }): { access: "read" | "write"; reason: ToolEntry["accessReason"] };
+  export interface CapabilitySpec { id: string; keywords: string[]; params: string[] }   // e.g. calendar.listEvents: keywords [calendar, event, list|get], params [time|start, end|max]
+  export function suggestTools(cap: CapabilitySpec, catalog: ToolEntry[]): { tool: ToolEntry; score: number }[]; // read tools only, top 3, deterministic
+  ```
+- **Detection sources:**
+  - `~/.claude.json` (`mcpServers` at the top level and per-project);
+  - `<cwd>/.mcp.json`;
+  - VS Code user `mcp.json`, at `~/Library/Application Support/Code/User/mcp.json` on macOS and `%APPDATA%\Code\User\mcp.json` on Windows.
+- **Classification:** the `readOnlyHint` annotation wins. Otherwise the first verb token of the name, after stripping any provider prefix, decides:
+  - read: `get`, `list`, `search`, `read`, `fetch`, `query`, `find`, `describe`, `summarize`;
+  - write: `create`, `update`, `delete`, `send`, `post`, `share`, `move`, `trash`, `untrash`, `set`, `respond`, `book`, `edit`, `merge`, `transition`, `upload`, `add`, `remove`, `mark`, `schedule`, `restore`, `revoke`;
+  - anything else is `write` with reason `unknown`.
+- **Ops:**
+  - `discovery.servers → detected servers`;
+  - `discovery.tools { server } → ToolEntry[]`;
+  - `discovery.suggest { server, capabilities: string[] } → Record<capability, suggestions>`;
+  - `discovery.test { server, preset } → { items: unknown[]; mappedPreview: unknown[] }`;
+  - `discovery.savePreset { preset }`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `detectServers` finds servers in all three fixture configs.
+  - `classifyTool({ name: "google_calendar_get_events" })` → `read`.
+  - `chat_post_message` → `write`.
+  - `jira_transition_ticket` → `write`.
+  - `foo_frobnicate` → `write` with reason `unknown`.
+  - `readOnlyHint: true` on a `create_x` name → `read` with reason `annotation`.
+  - `suggestTools(calendar.listEvents)` over the fixture `tools-list.json` ranks a `*_calendar_get_events` tool first and never returns a write tool.
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-34): mcp tool discovery, read/write classification and capability matching`.
+
+**Acceptance:** On the owner's machine, onboarding lists their MCP servers and tools. It proposes a correct read tool for `calendar.listEvents`, and offers no write tools.
+
+---
+
+### Task P1-35: Aggregator adapter interface + first gateway adapter
+
+**Files:**
+- `packages/connectors/src/discovery/aggregator.ts` (interface + registry)
+- `packages/connectors/src/discovery/aggregators/generic.ts` (no-op)
+- the first gateway adapter, in a location the owner chooses (see Interfaces)
+- tests with synthetic fixtures
+
+**Interfaces:**
+- Produces:
+  ```ts
+  export interface AggregatorAdapter {
+    id: string;
+    detect(tools: { name: string }[]): boolean;                         // e.g. presence of the gateway's own discovery tool names
+    enrich(invoker: CapabilityInvoker, catalog: ToolEntry[]): Promise<ToolEntry[]>; // fill group.provider/service, accessible, blockedReason
+    health?(invoker: CapabilityInvoker): Promise<{ provider: string; errorRatePct: number; calls: number }[]>;
+    knownPresets?(): PresetDef[];
+  }
+  export function registerAggregator(a: AggregatorAdapter): void;
+  ```
+- **First adapter:** targets the owner's gateway. It uses that gateway's per-provider tool-access tool to fill `group` / `accessible` / `blockedReason`, and its provider-health tool for `health`. It ships known presets for calendar, mail, Meet transcripts, docs, chat, code host and tickets.
+  - **Location is the owner's decision:** in this public repo, as an optional plugin package, or in a separate repo loaded via config. Org-specific tool names must not leak into core packages either way.
+  - Tests use **synthetic** fixtures that mimic the gateway's discovery response shape, with fake provider names.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `detect` is true only when the gateway's discovery tool is present.
+  - `enrich` sets `group.service: "calendar"` and `accessible: false` with the reason from the fixture.
+  - Known presets pass `Preset.parse`.
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-35): aggregator adapters for gateway-aware discovery`.
+
+**Acceptance:** With the owner's gateway, the catalog is grouped by provider and service, inaccessible tools are hidden with reasons, and calendar setup is one click using the known preset.
+
+---
+
+### Task P1-36: Trust and exit
+
+**Files:** `api-contract/src/ops/data.ts`, `service/src/handlers/data.ts`, `service/src/export.ts`, `webview/src/views/Health.tsx`, `extension/src/commands/data.ts` + tests.
+
+**Interfaces:**
+- Consumes: the doctor checks from P0-12 (factor them into `service/src/health-checks.ts`, which `emos doctor` and this task both use), connectors (P1-12), and MCP clients (P1-15).
+- Produces:
+  - **Ops:**
+    - `health.checks → { id: string; label: string; ok: boolean; detail: string }[]`;
+    - `data.export { dest } → { path; bytes }` — a zip containing `entities/<entity>.json`, plus `markdown/people/<name>.md`, `markdown/commitments.md` and `markdown/meetings/<date>.md`;
+    - `data.deleteAll { confirm: "delete" } → { deleted: true }`.
+  - **Commands:** `emos.health`, `emos.openDataFolder`, `emos.exportData` (save dialog), `emos.deleteAllData`. The delete command asks for `delete` in an InputBox, warns that it can't be undone and suggests exporting first, then calls the op, and the extension shows "EM OS data deleted".
+- **`deleteAll`:**
+  1. revoke all MCP client tokens;
+  2. stop the scheduler;
+  3. close the DB;
+  4. delete the data directory;
+  5. delete keychain entries under service `em-os`;
+  6. stop the service.
+
+  Steps 1–5 are best-effort, each reported separately.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `deleteAll` without `confirm: "delete"` → `invalid_input`.
+  - After `deleteAll`, the data dir doesn't exist and keychain `get("emos/token")` is null.
+  - The export zip contains `entities/people.json` and the people Markdown files.
+  - The export excludes `private` content unless `includePrivate: true`.
+  - `health.checks` reports a failing connector with its error detail.
+- [ ] **Step 2: Run.** Expected: FAIL.
+- [ ] **Step 3: Implement.** Use `node:zlib` plus a minimal zip writer, or a small audited dependency recorded per the ADR 0002 ledger.
+- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 5: Commit** `feat(p1-36): health panel, export and delete-all-data`.
+
+**Acceptance:** A user can see what EM OS holds, take it with them, and remove it completely in under a minute.
+
+---
+
+### Task P1-37: Marketplace and Open VSX publishing *(manual + CI)*
+
+**Files:** `.github/workflows/release.yml`, `packages/extension/{README.md,CHANGELOG.md,PRIVACY.md,icon.png}`, `packages/extension/package.json` (`publisher`, `repository`, `categories`, `galleryBanner`).
+
+**Interfaces:**
+- Consumes: the P0-15 packaging, and the P0-03 decision on platform-specific VSIXs.
+- Produces: a `v*` tag that builds the VSIX (or one per target), runs smoke, then publishes with `vsce publish` (Marketplace PAT secret `VSCE_PAT`) and `ovsx publish` (`OVSX_PAT`), and attaches the files to the GitHub Release.
+
+- [ ] **Step 1 (owner):** create the Marketplace publisher and the Open VSX namespace, and add both tokens as repo secrets.
+- [ ] **Step 2:** write the listing README: what it does, screenshots from synthetic data, the getting-started steps, and the requirements (VS Code; optional Claude Code / API key; optional Ollama). Write `PRIVACY.md`: local storage, egress per provider, no telemetry, export / delete.
+- [ ] **Step 3:** add `release.yml`. Dry-run it on a `v0.0.0-rc` tag with publishing disabled, and confirm the artifacts.
+- [ ] **Step 4:** publish `v0.1.0` as a pre-release (`--pre-release`), then install it from the gallery into a clean profile and complete onboarding.
+- [ ] **Step 5: Commit** `ci(p1-37): marketplace and open vsx release pipeline`.
+
+**Acceptance:** "EM OS" installs from the VS Code gallery, auto-updates on the next release, and needs no other install to reach the dashboard.
 
 ---
 

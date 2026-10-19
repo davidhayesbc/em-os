@@ -179,6 +179,20 @@ The first-run wizard covers:
 
 Settings views include **Models** (job → selected model, why, override) and **Retention & exclusions**.
 
+**Connecting sources (the discovery step).** Nobody should have to hand-write tool mappings:
+
+1. **Find servers.** Auto-detect MCP servers already configured for Claude Code and VS Code (`~/.claude.json`, project `.mcp.json`, VS Code `mcp.json`) and offer "Use these". Servers can also be added by hand.
+2. **Enumerate tools.** Connect and call `tools/list`, then show a catalog grouped by server, and by provider and service when an aggregator adapter provides that (§11). Each tool is classified **read** or **write**: use the MCP `readOnlyHint` annotation when present, otherwise the verb in the name. `get`, `list`, `search`, `read`, `fetch` and `query` are read; `create`, `update`, `delete`, `send`, `post`, `share`, `move`, `trash`, `set` and `respond` are write. Write tools can't be selected.
+3. **Match capabilities.** For each connector capability (e.g. `calendar.listEvents`), suggest the best-matching read tools by name, description and input schema, highest-ranked first. Known presets pre-fill the matches.
+4. **Test and preview.** Run one call, show the mapped result ("Found 12 meetings: Standup Tue 9:00, …"), then save as a preset.
+
+**Trust and exit.** These are always available from the command palette and Settings:
+
+- **Health:** the `emos doctor` checks as a panel: service, data folder, keychain, each connector, models, embedder.
+- **Open data folder.**
+- **Export my data:** a zip of JSON per entity plus a Markdown rendering of people, notes, commitments and meetings.
+- **Delete all my EM OS data:** it requires typing `delete`, then stops the service, removes the data folder and keychain entries, and revokes MCP client tokens.
+
 ## 6. Architecture
 
 ```text
@@ -220,7 +234,8 @@ Settings views include **Models** (job → selected model, why, override) and **
   - `importers/*`.
 - **Data location:** the OS per-user app-data directory. The service refuses to start if that directory is inside a git checkout.
 - **Platforms:** macOS arm64 primary. Windows x64 is kept buildable: CI builds and unit-tests both, but manual testing is macOS-only until a Windows user exists.
-- **Distribution:** a VSIX, from GitHub Releases first and the Marketplace later, that bundles the service and the `emos` CLI. "Usable by anyone" is delivered through interfaces plus one preset per connector kind. Additional presets come when someone needs them.
+- **Distribution:** published to the **VS Code Marketplace** and **Open VSX** (for VS Code forks), with auto-update coming from the gallery. GitHub Releases carry the same VSIX for manual install. If the service needs native modules, publish platform-specific VSIXs (`darwin-arm64`, `win32-x64`). Installing must never require a separate Node.js install. The listing includes a README with screenshots, an icon, the MIT licence and a privacy statement (what's stored locally, what's sent where).
+- **Bundled:** the VSIX includes the service and the `emos` CLI. "Usable by anyone" is delivered through interfaces plus one preset per connector kind. Additional presets come when someone needs them.
 
 ## 7. Domain model and core behaviour
 
@@ -472,7 +487,16 @@ All plugins are registered in-process in the service. Loading third-party plugin
 - optional `liveTools` for Ask;
 - optional `completionSignals(commitment)`.
 
-Connectors are written against **capabilities**, such as `searchMessages`, `readThread`, `listTickets` or `getDocument`. **Tool-mapping presets** bind those capabilities to a particular MCP server's tool names, so one connector works across different servers. Users can override any mapping.
+Connectors are written against **capabilities**, such as `searchMessages`, `readThread`, `listTickets` or `getDocument`. **Tool-mapping presets** bind those capabilities to a particular MCP server's tool names, so one connector works across different servers. Presets are produced by the discovery step (§5.9) or shipped as known presets. Users can override any mapping.
+
+**Aggregator adapter** (optional plugin): some MCP servers are gateways that aggregate many providers behind one login and expose their own discovery tools: provider lists, per-tool access checks, health. An aggregator adapter uses those tools to:
+
+- group the tool catalog by provider and service;
+- hide tools the user can't access, and explain why;
+- show provider health;
+- ship known presets for that gateway's tool names.
+
+The core works without any adapter, using plain `tools/list`.
 
 **Widget** (`WidgetDefinition`, ADR 0010): id, title, default size, the service query it uses, and a client render component. Connectors may contribute widgets.
 
@@ -484,7 +508,7 @@ Connectors are written against **capabilities**, such as `searchMessages`, `read
 |---|---|
 | Calendar | Google Calendar |
 | Email | Gmail |
-| Meeting notes | Google Meet / Gemini notes via Gmail + Drive |
+| Meeting notes | Google Meet transcripts and smart notes (preferred), falling back to Gemini notes via Gmail + Drive |
 | Docs | Google Drive / Docs, including brag docs shared with me |
 | Chat | Slack |
 | Code host | GitHub |
@@ -538,7 +562,8 @@ Each phase ends with the user working on real data. Detailed task plans are prod
 12. "About that person" is an explicit target (id, filter, profile, or a visible roster-name chip), never a model inference.
 13. MCP clients each get their own token and policy, so per-client sensitivity rules actually mean something.
 14. If the direct MCP spike fails for a server, the fallback order is `native` → `ingest_items` via a Claude Code skill → `mcp_via_agent`. Agent-mediated results are parsed from the verbatim tool-result blocks, never from model prose, and are only allowed when the Claude model used is approved for the source's provisional sensitivity.
-15. Distribution is a VSIX bundling the service. Windows is kept buildable and unit-tested, but manually tested only on macOS for now.
+15. Distribution is via the VS Code Marketplace and Open VSX (owner decision), with no separate Node install. Windows is kept buildable and unit-tested, but manually tested only on macOS for now.
+16. Source setup uses discovery (detect servers → `tools/list` → read/write classification → capability matching → test preview), so users never write mapping YAML by hand. Gateway-specific discovery lives in optional aggregator adapters.
 
 ## 15. Builder's discretion
 

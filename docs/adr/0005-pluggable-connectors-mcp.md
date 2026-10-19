@@ -51,6 +51,18 @@ If not, fall back per server in this order:
 - per-connector health is shown in the UI;
 - a schema-drift check (tool-list hash) warns when a server changes.
 
+## Discovery
+
+Setup never needs hand-written mapping YAML:
+
+1. **Detect servers** from the Claude Code and VS Code MCP configs.
+2. **`tools/list`** builds a tool catalog: name, description, input schema, annotations.
+3. **Classify read/write:** the `readOnlyHint` annotation wins; otherwise verbs in the name. Unknown → treated as write. Only read tools are selectable.
+4. **Match capabilities:** score each read tool against each capability by name tokens, description and schema parameters, and suggest the top 3.
+5. **Test and preview,** then save a preset.
+
+**Aggregator adapters** are optional plugins for gateways that expose their own discovery tools: provider grouping, per-tool access checks, health. They improve grouping, hide inaccessible tools, and ship gateway-specific known presets. They aren't required: without an adapter, discovery uses `tools/list` alone.
+
 ## Alternatives considered
 
 - **Hardcoding one MCP server's tool names:** rejected. It isn't portable.

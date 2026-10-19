@@ -148,7 +148,7 @@ Parallel lanes once P0-01 merges:
 
 **Interfaces:**
 - Produces three decisions that P0-10 and P0-13 rely on:
-  - `RUNTIME`: one of `bundled-node | electron-as-node | system-node`;
+  - `RUNTIME`: one of `bundled-node | electron-as-node` (`system-node` is ruled out);
   - `SQLITE_DRIVER`: one of `node:sqlite | better-sqlite3 | wasm:<pkg>`;
   - `KEYCHAIN_LIB`: e.g. `@napi-rs/keyring`.
 
@@ -158,10 +158,11 @@ Parallel lanes once P0-01 merges:
   - insert 10k rows in one transaction and time it;
   - run an online backup to a second file;
   - open with WAL.
-- [ ] **Step 2: Measure.** For each combination, record:
+- [ ] **Step 2: Measure.** `system-node` is excluded: users must never install Node separately (ADR 0001). For each remaining combination, record:
   - VSIX size impact;
   - whether install needs network or a postinstall step;
-  - whether standalone mode works with VS Code closed.
+  - whether standalone mode works with VS Code closed;
+  - whether it needs platform-specific VSIXs (`vsce package --target darwin-arm64|win32-x64`) for Marketplace / Open VSX.
 - [ ] **Step 3: Store and read a test secret** via the keychain library candidate on both OSes, under the chosen runtime.
 - [ ] **Step 4: Write the results table and the three decisions into ADR 0001/0002.** Pick the simplest combination that passes ADR 0002's criteria.
 - [ ] **Step 5: Delete `spikes/s1-runtime/` and commit** `docs(p0-03): record runtime, sqlite driver and keychain decisions`.
