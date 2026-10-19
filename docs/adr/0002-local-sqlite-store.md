@@ -89,6 +89,32 @@ Timings are medians of five runs, in milliseconds (FTS5 / plain). The runtimes a
 - `better-sqlite3` stays the fallback if `node:sqlite` turns out to lack something. Under `bundled-node` it would load fine.
 - The WASM builds fail the WAL and online-backup criteria (`node-sqlite3-wasm`) or the FTS5 criterion (`sql.js`).
 
+**Dev and CI use Node 24 too.** `.nvmrc` is `24`, `engines.node` is `>=24`, `@types/node` is `^24`, and CI uses `node-version: 24`. That way `node:sqlite` behaves the same in tests as in production: no flag and no `ExperimentalWarning`.
+
+**Verified `node:sqlite` API surface (for P0-10).** A probe script checked these on bundled Node 24.22.0. Node 26.4.0 and Electron's Node 24.21.0 gave the same results for the transaction, backup, BigInt and import rows below.
+
+- **Synchronous API.**
+  - Module exports: `DatabaseSync`, `StatementSync`, `Session`, `backup`, `constants`.
+  - `DatabaseSync` methods include `exec`, `prepare`, `close`, `open`, `function`, `aggregate`, `serialize`, `deserialize`, `createSession`, `applyChangeset`, `setAuthorizer`, `enableLoadExtension` and `loadExtension`.
+  - `StatementSync` methods: `run`, `get`, `all`, `iterate`, `columns`, `setReadBigInts`, `setReturnArrays`, `setAllowBareNamedParameters`, `setAllowUnknownNamedParameters`.
+  - `run()` returns `{ changes, lastInsertRowid }`.
+- **No `.transaction()` helper.**
+  - `db.transaction` is `undefined`. The `Store` adapter must issue `BEGIN` / `COMMIT` / `ROLLBACK` itself, using `SAVEPOINT` / `RELEASE` / `ROLLBACK TO` for nesting. `ROLLBACK TO` inside an outer `BEGIN` was verified.
+  - `db.isTransaction` reports whether a transaction is open.
+- **Integers.**
+  - By default, `INTEGER` columns are read as JS `number`.
+  - Reading a value above `Number.MAX_SAFE_INTEGER` throws `ERR_OUT_OF_RANGE`. It does not silently lose precision.
+  - `stmt.setReadBigInts(true)`, or `new DatabaseSync(path, { readBigInts: true })`, returns `bigint` for every integer.
+  - Writing a `bigint` parameter works.
+- **Backup.**
+  - `backup(sourceDb, destPath)` is a function exported by the `node:sqlite` module, not a `DatabaseSync` method (`db.backup` is `undefined`).
+  - It returns a `Promise` that resolves to the number of pages copied.
+- **Import requires the `node:` prefix.** `require('sqlite')` throws `MODULE_NOT_FOUND`. Import from `"node:sqlite"`.
+- **Tooling resolution.**
+  - A one-off test under the repo's Vitest 5.0.4 imported `{ backup, DatabaseSync }` from `"node:sqlite"`, created an FTS5 table and ran a `MATCH` query. It passed on Node 24.22.0 and on Node 26.4.0.
+  - esbuild 0.28 with `--platform=node` left `node:sqlite` external, with the prefix intact.
+  - The probe was deleted afterwards. P0-10 should still keep its own store tests as the lasting guard.
+
 **Residual risks:**
 
 - **API maturity.** The `node:sqlite` API is a release candidate, not yet stable. Breaking changes are possible between Node majors. Mitigations:

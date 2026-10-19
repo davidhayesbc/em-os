@@ -10,7 +10,7 @@
 - The VS Code extension is a thin client. It launches or attaches to the service and proxies RPC calls for Preact webviews.
 - `@emos/core` holds pure domain logic behind ports.
 
-**Tech Stack:** Node 22 LTS, TypeScript 5 (strict, ESM), npm workspaces, Biome, Vitest, esbuild, Zod, Preact, `@vscode/test-electron`, `@vscode/vsce`, GitHub Actions.
+**Tech Stack:** Node 24 LTS (matches the bundled runtime, ADR 0001), TypeScript 5 (strict, ESM), npm workspaces, Biome, Vitest, esbuild, Zod, Preact, `@vscode/test-electron`, `@vscode/vsce`, GitHub Actions.
 
 **Spec:** [`docs/PRODUCT_SPEC.md`](../PRODUCT_SPEC.md) §§6, 12. ADRs [0001](../adr/0001-backend-service-and-clients.md), [0002](../adr/0002-local-sqlite-store.md), [0003](../adr/0003-hybrid-search-local-embeddings.md), [0005](../adr/0005-pluggable-connectors-mcp.md), [0006](../adr/0006-llm-providers-model-routing.md), [0010](../adr/0010-ui-clients-widgets.md).
 

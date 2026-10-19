@@ -85,18 +85,27 @@ The SQLite driver is recorded in ADR 0002 (`node:sqlite`).
 |---|---|---|
 | Users install Node? | No | No |
 | VSIX size impact | About +39 MB on darwin-arm64 and about +35 MB on win32-x64 (`zip -9` of a 122.5 MB / 93.9 MB binary) | about 0 |
-| Platform-specific VSIX | Required (one binary per target) | Not required by the runtime |
+| Platform-specific VSIX | Required (one Node binary per target, plus the keyring addon) | Also required in practice: the runtime needs none, but the `@napi-rs/keyring` native addon is per-target either way |
 | Network or postinstall at user install | None | None |
 | Standalone with VS Code closed | Yes. No dependency on VS Code at all. | Yes, but only while VS Code stays installed at a known path. It breaks if VS Code is moved or uninstalled. |
 | Node version | Pinned by us | Changes whenever VS Code updates Electron, and differs in forks and Insiders. Open VSX users mostly run forks, whose Electron may predate `node:sqlite`. |
 | macOS native addons | Work (the official binary allows them) | Work only through the `Code Helper (Plugin)` path, not the main `Code` binary |
-| Windows updates | Independent of VS Code | Risk: a long-running `Code.exe` service may hold the file lock the VS Code updater needs |
+| Windows updates | Independent of VS Code | Risk (inferred, not tested): a long-running `Code.exe` service may hold the file lock the VS Code updater needs |
 
 **Why `bundled-node`:**
 
 - It is the simplest option operationally: one pinned runtime for managed mode, standalone mode and the CLI, so there is one Node version to test.
 - It doesn't depend on which editor is installed or where.
 - The costs are about 35–39 MB per VSIX and building one VSIX per platform. ADR 0001 already accepts platform-specific VSIXs.
+
+**Packaging the runtime (for P0-15):**
+
+- **Pin the exact version.** Pin one Node version (for example `24.22.0`) in a single checked-in place that the packaging script reads. Dev and CI use the same major (`.nvmrc`, `engines.node >=24`, CI `node-version: 24`). Bump the pin deliberately for security releases.
+- **Download per target at package time.** Fetch the official archive for each target from the Node.js release distribution (`node-v<ver>-darwin-arm64.tar.xz` and `node-v<ver>-win-x64.zip`), and extract only `bin/node` or `node.exe`. Never commit the binaries.
+- **Verify before use.** Check each archive against `SHASUMS256.txt` for the same version, and fail packaging on any mismatch. The spike checked both 24.22.0 archives this way, and both returned `OK`. Also verify the signature on `SHASUMS256.txt.asc` against the Node.js release keys when `gpg` is available on the build runner. Pin the key fingerprints in the repo rather than fetching them at build time.
+- **Never modify or re-sign the binary.** Ship it byte-for-byte as published. The official macOS binary's signature and `disable-library-validation` entitlement are what let N-API addons load, and the Windows binary keeps its publisher signature. Do not `strip`, patch, UPX-compress or re-sign it.
+- **Fetch the per-target keychain addon at the same pinned version.** `@napi-rs/keyring` resolves its binary through per-platform optional dependencies, so a host install only fetches the host's binary. To package another target, install into a throwaway staging directory with an explicit platform, for example `npm install --no-save --os=win32 --cpu=x64 @napi-rs/keyring@<pinned>`. In the spike, that fetched only `@napi-rs/keyring-win32-x64-msvc` on a macOS host. Alternatively, download that one package tarball at the same pinned version (and integrity hash from the lockfile). Then copy only that target's `.node` file into that target's VSIX.
+- **Keep each VSIX to one platform.** Each VSIX contains exactly one Node binary and one keyring binary, matching its `--target`. Packaging should assert this.
 
 **Residual risks:**
 
