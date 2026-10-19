@@ -71,6 +71,16 @@ describe("@emos/core import boundary", () => {
     "openai/resources/chat",
     "ollama",
     "ollama/browser",
+    "node:net/sub",
+    "node:http/sub",
+    "node:https/agent",
+    "node:http2/sub",
+    "node:tls/sub",
+    "node:dgram/sub",
+    "node:worker_threads/sub",
+    "node:child_process/sub",
+    "node:sqlite/sub",
+    "vscode/sub",
   ])("rejects %s", (mod) => {
     const result = lintProbe(`import * as m from "${mod}";\nexport const x = m;\n`);
     expect(result.exitCode).not.toBe(0);
