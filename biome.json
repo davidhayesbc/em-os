@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "**",
+      "!**/docs",
+      "!**/.superpowers",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!package-lock.json"
+    ]
+  },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "linter": { "enabled": true, "rules": { "preset": "recommended" } },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "overrides": [
+    {
+      "includes": ["packages/core/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "node:fs": "@emos/core is pure: no filesystem access (use a port).",
+                  "fs": "@emos/core is pure: no filesystem access (use a port).",
+                  "node:net": "@emos/core is pure: no network access (use a port).",
+                  "net": "@emos/core is pure: no network access (use a port).",
+                  "node:http": "@emos/core is pure: no network access (use a port).",
+                  "http": "@emos/core is pure: no network access (use a port).",
+                  "node:child_process": "@emos/core is pure: no process spawning (use a port).",
+                  "child_process": "@emos/core is pure: no process spawning (use a port).",
+                  "vscode": "@emos/core must not depend on the VS Code API.",
+                  "better-sqlite3": "@emos/core must not import SQLite drivers (use the storage port).",
+                  "node:sqlite": "@emos/core must not import SQLite drivers (use the storage port).",
+                  "sql.js": "@emos/core must not import SQLite drivers (use the storage port).",
+                  "wa-sqlite": "@emos/core must not import SQLite drivers (use the storage port).",
+                  "@modelcontextprotocol/sdk": "@emos/core must not import the MCP SDK.",
+                  "@anthropic-ai/sdk": "@emos/core must not import LLM SDKs (use the LLM port).",
+                  "@anthropic-ai/claude-agent-sdk": "@emos/core must not import LLM SDKs (use the LLM port).",
+                  "openai": "@emos/core must not import LLM SDKs (use the LLM port).",
+                  "ollama": "@emos/core must not import LLM SDKs (use the LLM port)."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
