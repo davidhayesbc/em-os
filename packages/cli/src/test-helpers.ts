@@ -82,14 +82,32 @@ export function writeRuntimeFiles(
   writeFileSync(join(run, "token"), token, { mode: 0o600 });
 }
 
-/** A fake service: `/health/ping` answers "ok" and `health.get` reports `apiVersion`. */
-export async function startFakeService(apiVersion: number): Promise<number> {
+/**
+ * A fake service: `/health/ping` answers "ok" and `health.get` reports `apiVersion`.
+ * `service.shutdown` calls `onShutdown` and answers ok if given; otherwise it answers
+ * `not_found`, like a service that predates the op (so `stop` falls back to a signal).
+ */
+export async function startFakeService(
+  apiVersion: number,
+  opts: { onShutdown?: () => void } = {},
+): Promise<number> {
   const server = createServer((req, res) => {
     if (req.url === "/health/ping") {
       res.end("ok");
       return;
     }
     res.setHeader("content-type", "application/json");
+    if (req.url === "/rpc/service.shutdown") {
+      const { onShutdown } = opts;
+      if (onShutdown) {
+        res.end(JSON.stringify({ ok: true, result: { ok: true } }));
+        setTimeout(onShutdown, 20);
+      } else {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ ok: false, error: { code: "not_found", message: "Unknown op" } }));
+      }
+      return;
+    }
     res.end(
       JSON.stringify({
         ok: true,

@@ -56,6 +56,11 @@ export interface StartServiceOptions {
   events?: EventBus;
   /** SSE heartbeat interval (default 25 s). */
   heartbeatMs?: number;
+  /**
+   * Called after a `service.shutdown` request has stopped the service (main.ts exits). Not
+   * called for `stop()` by the owner.
+   */
+  onShutdown?: () => void;
 }
 
 export interface RunningService {
@@ -154,6 +159,7 @@ function createRequestListener(
   token: string,
   getPort: () => number,
   streams: Set<() => void>,
+  afterRpc: (res: ServerResponse) => void,
 ) {
   const { config, log } = ctx;
 
@@ -230,6 +236,7 @@ function createRequestListener(
       log.warn("rpc.failed", { op: opName, status: result.status, code: result.body.error.code });
     }
     sendJson(res, result);
+    afterRpc(res);
   };
 
   return (req: IncomingMessage, res: ServerResponse): void => {
@@ -324,12 +331,35 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
       maxBodyBytes: MAX_BODY_BYTES,
       secretStore: isMemorySecretStore(secrets) ? "memory" : "keychain",
     };
-    const context = createContext({ config, clock, log, secrets, events });
+    let shutdown: (() => void) | undefined;
+    let shutdownRequested = false;
+    const context = createContext({
+      config,
+      clock,
+      log,
+      secrets,
+      events,
+      requestShutdown: () => {
+        shutdownRequested = true;
+      },
+    });
     ctx = context;
     const token = await loadOrCreateToken(secrets);
 
     let port = 0;
-    const srv = createServer(createRequestListener(context, token, () => port, streams));
+    const srv = createServer(
+      createRequestListener(
+        context,
+        token,
+        () => port,
+        streams,
+        (res) => {
+          // The handler asked to stop: do it once this response is on the wire.
+          if (!shutdownRequested) return;
+          res.on("finish", () => shutdown?.());
+        },
+      ),
+    );
     server = srv;
     srv.on("clientError", (_err, socket) => socket.destroy());
     port = await listenWithFallback(srv, opts.port ?? DEFAULT_PORT, log);
@@ -359,6 +389,18 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
         log.info("service.stopped", { pid: process.pid });
       })();
       return stopping;
+    };
+    shutdown = () => {
+      log.info("service.shutdown_requested");
+      stop().then(
+        () => opts.onShutdown?.(),
+        (e: unknown) => {
+          log.error("service.shutdown_failed", {
+            errorName: e instanceof Error ? e.name : typeof e,
+          });
+          opts.onShutdown?.();
+        },
+      );
     };
     const addr = srv.address();
     const host = addr !== null && typeof addr !== "string" ? addr.address : LOOPBACK;

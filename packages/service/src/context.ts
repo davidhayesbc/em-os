@@ -21,6 +21,8 @@ export interface ServiceContext {
   secrets: SecretStore;
   events: EventBus;
   config: ServiceConfig;
+  /** Stop gracefully once the current response has been sent (`service.shutdown`). */
+  requestShutdown(): void;
 }
 
 export type Handler<N extends OpName> = (
@@ -38,6 +40,7 @@ export function createContext(deps: {
   log: Logger;
   secrets: SecretStore;
   events: EventBus;
+  requestShutdown(): void;
 }): ServiceContext {
   const db = openDb(deps.config.layout.dbFile, { backupsDir: deps.config.layout.backupsDir });
   return {

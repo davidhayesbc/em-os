@@ -5,8 +5,9 @@
 //   package.json, LICENSE, media/        manifest (no scripts/deps) and the activity-bar icon
 //   dist/extension.js                    the extension host bundle (build.mjs)
 //   dist/webview/                        @emos/webview's dist (dashboard.js, sidebar.js, theme.css)
-//   dist/service/main.js                 the service, re-bundled with every workspace package and
-//                                        zod inlined; only @napi-rs/keyring stays external
+//   dist/service/main.js                 the service, bundled from source with every workspace
+//                                        package and zod inlined (reporting the extension's
+//                                        version); only @napi-rs/keyring stays external
 //   dist/service/node_modules/@napi-rs/  keyring + the target's prebuilt binary package only
 //   dist/runtime/node(.exe)              the official Node binary (node-runtime.json), verified
 //                                        against the pin and SHASUMS256.txt, never modified
@@ -38,6 +39,7 @@ import {
   expectedArchiveSha256,
   parseShasums,
   parseTargetArg,
+  serviceBundleOptions,
   sha256File,
   TARGETS,
   verifySha256,
@@ -198,23 +200,16 @@ async function main() {
   copyFileSync(extensionJs, join(stage, "dist", "extension.js"));
   cpSync(webviewDist, join(stage, "dist", "webview"), { recursive: true });
 
-  // The service: one ESM file with the workspace packages inlined (their dist/ is ESM).
+  // The service: one ESM file with the workspace packages inlined (their dist/ is ESM), built
+  // from source so it reports the extension's version (see serviceBundleOptions).
   const serviceDir = join(stage, "dist", "service");
-  await build({
-    entryPoints: [serviceMain],
-    outfile: join(serviceDir, "main.js"),
-    bundle: true,
-    platform: "node",
-    format: "esm",
-    target: "node24",
-    external: ["@napi-rs/keyring"],
-    // Lets bundled CommonJS code `require` Node built-ins from ESM output.
-    banner: {
-      js: 'import { createRequire as __emosCreateRequire } from "node:module"; const require = __emosCreateRequire(import.meta.url);',
-    },
-    legalComments: "none",
-    logLevel: "warning",
-  });
+  await build(
+    serviceBundleOptions({
+      entry: join(dirname(dirname(serviceMain)), "src", "main.ts"),
+      outfile: join(serviceDir, "main.js"),
+      version: manifest.version,
+    }),
+  );
   writeFileSync(join(serviceDir, "package.json"), '{ "type": "module" }\n');
   const scope = fetchKeyring(target, keyringVersion);
   cpSync(scope, join(serviceDir, "node_modules", "@napi-rs"), { recursive: true });

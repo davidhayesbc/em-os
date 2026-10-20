@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs as parseCliArgs } from "node:util";
 import { type DataLayout, dataLayout, resolveDataDir } from "@emos/store-sqlite";
@@ -52,14 +51,16 @@ export function runtimePaths(dataDir: string): RuntimePaths {
   };
 }
 
-/** `version` from this package's package.json (beside `src/` and `dist/`). */
+/**
+ * Injected at build time by esbuild `define` (never read from a package.json at runtime, which
+ * a bundle can't locate): scripts/build.mjs uses this package's version; the packaged VSIX
+ * re-bundles the service with the extension's version, so the two always match there.
+ */
+declare const __EMOS_VERSION__: string | undefined;
+
+/** The build-time version, or `0.0.0-dev` when running unbundled source (tests). */
 export function readServiceVersion(): string {
-  try {
-    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
+  return typeof __EMOS_VERSION__ === "string" ? __EMOS_VERSION__ : "0.0.0-dev";
 }
 
 /**

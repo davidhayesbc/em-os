@@ -50,3 +50,24 @@ describe("build-only tsconfig", () => {
     expect(all.some((f) => /\.test\.tsx?$/.test(f))).toBe(true);
   });
 });
+
+describe("build-time version injection (__EMOS_VERSION__)", () => {
+  const serviceDist = join(root, "packages", "service", "dist");
+  const built = existsSync(join(serviceDist, "main.js"));
+
+  it.skipIf(!built)(
+    "the service bundle carries its package version and never reads package.json",
+    () => {
+      const { version } = JSON.parse(
+        readFileSync(join(root, "packages", "service", "package.json"), "utf8"),
+      ) as { version: string };
+      const js = readdirSync(serviceDist)
+        .filter((f) => f.endsWith(".js"))
+        .map((f) => readFileSync(join(serviceDist, f), "utf8"))
+        .join("\n");
+      expect(js).not.toContain("__EMOS_VERSION__");
+      expect(js).not.toContain("package.json");
+      expect(js).toMatch(new RegExp(JSON.stringify(version).replaceAll(".", "\\.")));
+    },
+  );
+});

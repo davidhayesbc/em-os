@@ -14,7 +14,8 @@ try {
 }
 
 try {
-  const svc = await startService(args);
+  // `service.shutdown` stops the service itself; then exit.
+  const svc = await startService({ ...args, onShutdown: () => process.exit(0) });
   let stopping = false;
   const shutdown = () => {
     if (stopping) return;

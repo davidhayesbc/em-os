@@ -2,12 +2,17 @@
 // `GET /health/ping`, else spawn the service detached (cwd = data dir, output appended to
 // `<dataDir>/logs/service.log`) and poll until it answers. A failed start quotes the log tail.
 //
+// Version-aware attach: a located service is asked `health.get`; if its `serviceVersion` or
+// `apiVersion` differs from this extension's, it is asked to stop (`service.shutdown`), given up
+// to 5 s to release its lock (then killed), and a matching service is spawned.
+//
 // Runtime (Ruling R14): EMOS_NODE_PATH -> the bundled `<extensionPath>/dist/runtime/node`
 // (`node.exe` on Windows) -> `node` on PATH in Development/Test mode only. Never VS Code's own
 // `process.execPath`: native addons fail macOS library validation under the main Code binary.
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { closeSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { API_VERSION, ApiError, createClient, httpTransport } from "@emos/api-contract";
 import {
   assertNotInGitCheckout,
   baseUrl,
@@ -54,6 +59,53 @@ export interface LauncherOptions {
   /** How long a spawned service gets to answer the ping (default 10 s). */
   startTimeoutMs?: number;
   pollMs?: number;
+  /**
+   * The service version this extension ships with (default: the build-time `__EMOS_VERSION__`,
+   * the extension's own version). A running service reporting anything else is replaced.
+   */
+  expectedServiceVersion?: string;
+  /** `health.get` on a located service: its versions, `"incompatible"` (409), or null (failed). */
+  health?: (ep: ServiceEndpoint) => Promise<HealthVersions | "incompatible" | null>;
+  /** `service.shutdown`; resolves true if the service accepted. */
+  shutdown?: (ep: ServiceEndpoint) => Promise<boolean>;
+  /** Last resort when a replaced service doesn't release its lock. Default `process.kill`. */
+  kill?: (pid: number) => void;
+  /** How long a replaced service gets to release the lock before it is killed (default 5 s). */
+  stopTimeoutMs?: number;
+}
+
+export interface HealthVersions {
+  serviceVersion: string;
+  apiVersion: number;
+}
+
+declare const __EMOS_VERSION__: string | undefined;
+
+/** The extension's version, injected by build.mjs; `0.0.0-dev` for unbundled source (tests). */
+export const EXTENSION_VERSION: string =
+  typeof __EMOS_VERSION__ === "string" ? __EMOS_VERSION__ : "0.0.0-dev";
+
+function rpcClient(ep: ServiceEndpoint) {
+  const fetchWithTimeout: typeof fetch = (url, init) =>
+    fetch(url, { ...init, signal: AbortSignal.timeout(3000) });
+  return createClient({ transport: httpTransport(ep.baseUrl, fetchWithTimeout), token: ep.token });
+}
+
+async function defaultHealth(ep: ServiceEndpoint): Promise<HealthVersions | "incompatible" | null> {
+  try {
+    const h = await rpcClient(ep).call("health.get", {});
+    return { serviceVersion: h.serviceVersion, apiVersion: h.apiVersion };
+  } catch (e) {
+    return e instanceof ApiError && e.code === "incompatible_version" ? "incompatible" : null;
+  }
+}
+
+async function defaultShutdown(ep: ServiceEndpoint): Promise<boolean> {
+  try {
+    return (await rpcClient(ep).call("service.shutdown", {})).ok === true;
+  } catch {
+    return false;
+  }
 }
 
 export interface Launcher {
@@ -113,6 +165,11 @@ export function createLauncher(opts: LauncherOptions): Launcher {
   const pingPort = opts.ping ?? ((port: number) => ping(port));
   const startTimeoutMs = opts.startTimeoutMs ?? 10_000;
   const pollMs = opts.pollMs ?? 100;
+  const expectedVersion = opts.expectedServiceVersion ?? EXTENSION_VERSION;
+  const health = opts.health ?? defaultHealth;
+  const shutdown = opts.shutdown ?? defaultShutdown;
+  const kill = opts.kill ?? ((pid: number) => process.kill(pid));
+  const stopTimeoutMs = opts.stopTimeoutMs ?? 5_000;
   const inflight = new Map<string, Promise<ServiceEndpoint>>();
 
   function resolveNode(): string {
@@ -136,14 +193,55 @@ export function createLauncher(opts: LauncherOptions): Launcher {
     );
   }
 
-  async function locate(dataDir: string): Promise<ServiceEndpoint | null> {
+  async function locateWithPid(
+    dataDir: string,
+  ): Promise<{ ep: ServiceEndpoint; pid: number } | null> {
     const info = readServiceInfo(dataDir);
     if (info === null || info === "invalid") return null;
     if (!isAlive(info.pid)) return null;
     if (!(await pingPort(info.port))) return null;
     const token = readToken(dataDir);
     if (token === null) return null; // between ping and token write? treat as not ready yet
-    return { baseUrl: baseUrl(info.port), token };
+    return { ep: { baseUrl: baseUrl(info.port), token }, pid: info.pid };
+  }
+
+  async function locate(dataDir: string): Promise<ServiceEndpoint | null> {
+    return (await locateWithPid(dataDir))?.ep ?? null;
+  }
+
+  /** True when the located service speaks another API or is another build than ours. */
+  async function isMismatched(ep: ServiceEndpoint): Promise<boolean> {
+    const h = await health(ep);
+    if (h === null) return false; // can't tell (transient failure): attach as before
+    if (h === "incompatible") return true;
+    return h.apiVersion !== API_VERSION || h.serviceVersion !== expectedVersion;
+  }
+
+  /** The lock is gone, or its owner is dead. */
+  function lockReleased(dataDir: string): boolean {
+    const owner = readLockPid(dataDir);
+    return owner === null || !isAlive(owner);
+  }
+
+  async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
+    const deadline = performance.now() + ms;
+    while (!cond()) {
+      if (performance.now() >= deadline) return false;
+      await sleep(pollMs);
+    }
+    return true;
+  }
+
+  /** Stops a mismatched service: `service.shutdown`, wait for the lock, else kill its pid. */
+  async function replace(dataDir: string, old: { ep: ServiceEndpoint; pid: number }) {
+    const accepted = await shutdown(old.ep);
+    if (accepted && (await waitFor(() => lockReleased(dataDir), stopTimeoutMs))) return;
+    try {
+      kill(old.pid);
+    } catch {
+      // already gone
+    }
+    await waitFor(() => !isAlive(old.pid), stopTimeoutMs);
   }
 
   /** "Already running": the lock belongs to a live process other than our child. */
@@ -153,8 +251,13 @@ export function createLauncher(opts: LauncherOptions): Launcher {
   }
 
   async function start(dataDir: string): Promise<ServiceEndpoint> {
-    const found = await locate(dataDir);
-    if (found) return found;
+    const found = await locateWithPid(dataDir);
+    let replacedPid: number | undefined;
+    if (found) {
+      if (!(await isMismatched(found.ep))) return found.ep;
+      await replace(dataDir, found);
+      replacedPid = found.pid;
+    }
 
     assertNotInGitCheckout(dataDir, exists);
     const node = resolveNode();
@@ -169,8 +272,8 @@ export function createLauncher(opts: LauncherOptions): Launcher {
 
     const deadline = performance.now() + startTimeoutMs;
     for (;;) {
-      const ep = await locate(dataDir);
-      if (ep) return ep;
+      const now = await locateWithPid(dataDir);
+      if (now && now.pid !== replacedPid) return now.ep;
       const code = child.exitCode();
       // Exit 1 with the lock held by someone else = lost a start race with another window:
       // keep waiting for the winner to publish service.json.

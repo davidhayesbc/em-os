@@ -2,9 +2,11 @@ import { spawn } from "node:child_process";
 import { closeSync, existsSync, realpathSync, rmSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { createClient, httpTransport } from "@emos/api-contract";
 import { assertNotInGitCheckout } from "@emos/store-sqlite";
 import { type Command, EXIT_FAILURE, EXIT_OK } from "../command.js";
 import {
+  baseUrl,
   type CliEnv,
   defaultCliEnv,
   guarded,
@@ -13,6 +15,7 @@ import {
   probeService,
   readLockPid,
   readServiceInfo,
+  readToken,
   resolveDataDirFor,
   runtimeFiles,
   UsageError,
@@ -47,7 +50,12 @@ export interface ServiceDeps {
     args: string[],
     opts: { cwd: string; logFd: number },
   ) => SpawnedService | undefined;
-  /** Signals the service to stop. Default: SIGTERM (Windows: `process.kill(pid)`). */
+  /**
+   * Asks the service on `port` to stop via the `service.shutdown` op. Resolves true if it
+   * accepted. Default: the RPC client with a 3 s timeout; any failure resolves false.
+   */
+  requestShutdown?: (port: number, token: string) => Promise<boolean>;
+  /** Fallback when `service.shutdown` fails: SIGTERM (Windows: `process.kill(pid)`). */
   kill?: (pid: number, signal?: NodeJS.Signals) => void;
   /** Is this pid still running? Default: `process.kill(pid, 0)`. */
   isAlive?: (pid: number) => boolean;
@@ -93,6 +101,20 @@ function removeLeftovers(dataDir: string, pid: number): void {
   }
 }
 
+async function defaultRequestShutdown(port: number, token: string): Promise<boolean> {
+  const fetchWithTimeout: typeof fetch = (url, init) =>
+    fetch(url, { ...init, signal: AbortSignal.timeout(3000) });
+  try {
+    const client = createClient({
+      transport: httpTransport(baseUrl(port), fetchWithTimeout),
+      token,
+    });
+    return (await client.call("service.shutdown", {})).ok === true;
+  } catch {
+    return false;
+  }
+}
+
 function defaultKill(pid: number, signal?: NodeJS.Signals): void {
   if (process.platform === "win32") process.kill(pid);
   else process.kill(pid, signal ?? "SIGTERM");
@@ -104,6 +126,7 @@ export function createServiceCommand(deps: ServiceDeps = {}): Command {
   const stopTimeoutMs = deps.stopTimeoutMs ?? 5_000;
   const pollMs = deps.pollMs ?? 100;
   const kill = deps.kill ?? defaultKill;
+  const requestShutdown = deps.requestShutdown ?? defaultRequestShutdown;
   const isAlive = deps.isAlive ?? isPidAlive;
   const spawnService =
     deps.spawnService ??
@@ -189,22 +212,35 @@ export function createServiceCommand(deps: ServiceDeps = {}): Command {
       );
       return EXIT_FAILURE;
     }
-    try {
-      kill(svc.info.pid, process.platform === "win32" ? undefined : "SIGTERM");
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
-    }
     const files = runtimeFiles(dataDir);
     const pid = svc.info.pid;
-    const deadline = performance.now() + stopTimeoutMs;
     // A hard kill (Windows `process.kill`) skips the service's cleanup: the process is gone but
     // its lock and service.json remain. A dead pid is as good as a released lock.
-    while (existsSync(files.lock) && isAlive(pid)) {
-      if (performance.now() >= deadline) {
-        io.err(`error: the service did not stop within ${stopTimeoutMs / 1000}s\n`);
-        return EXIT_FAILURE;
+    const waitStopped = async (): Promise<boolean> => {
+      const deadline = performance.now() + stopTimeoutMs;
+      while (existsSync(files.lock) && isAlive(pid)) {
+        if (performance.now() >= deadline) return false;
+        await sleep(pollMs);
       }
-      await sleep(pollMs);
+      return true;
+    };
+
+    // First ask nicely, on every OS: the op stops the service gracefully (lock, service.json).
+    const token = readToken(dataDir);
+    let stopped =
+      token !== null && (await requestShutdown(svc.info.port, token)) && (await waitStopped());
+    if (!stopped) {
+      // Fallback: an older service without the op, a wrong token or a hung shutdown.
+      try {
+        kill(pid, process.platform === "win32" ? undefined : "SIGTERM");
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
+      }
+      stopped = await waitStopped();
+    }
+    if (!stopped) {
+      io.err(`error: the service did not stop within ${stopTimeoutMs / 1000}s\n`);
+      return EXIT_FAILURE;
     }
     if (!isAlive(pid)) removeLeftovers(dataDir, pid);
     io.out("stopped\n");

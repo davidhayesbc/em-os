@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { build } from "esbuild";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertSingleTarget,
@@ -9,6 +10,7 @@ import {
   hostTarget,
   parseShasums,
   parseTargetArg,
+  serviceBundleOptions,
   sha256File,
   TARGETS,
   verifySha256,
@@ -152,4 +154,25 @@ describe("assertSingleTarget", () => {
       ),
     ).toThrow(/exactly one .node addon/);
   });
+});
+
+describe("serviceBundleOptions", () => {
+  it("bundles the service from source with the extension's version baked in", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "emos-svc-bundle-"));
+    try {
+      const outfile = join(dir, "main.js");
+      const entry = join(import.meta.dirname, "..", "..", "service", "src", "main.ts");
+      await build({
+        ...serviceBundleOptions({ entry, outfile, version: "9.8.7" }),
+        logLevel: "silent",
+      });
+      const js = readFileSync(outfile, "utf8");
+      expect(js).toContain('"9.8.7"');
+      expect(js).not.toContain("__EMOS_VERSION__");
+      expect(js).not.toMatch(/from "zod"|from "@emos\//); // workspace packages and zod inlined
+      expect(js).toMatch(/from "@napi-rs\/keyring"/); // the native addon stays external
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

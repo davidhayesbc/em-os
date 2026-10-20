@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -101,11 +101,17 @@ async function fakeService(opts: { authEvents?: boolean } = {}) {
 }
 
 /** A launcher that only attaches (never spawns): the service under test is in-process. */
+/** The built @emos/service reports its package version; expect exactly that. */
+const SERVICE_VERSION: string = JSON.parse(
+  readFileSync(join(import.meta.dirname, "..", "..", "service", "package.json"), "utf8"),
+).version;
+
 function attachOnlyLauncher() {
   return createLauncher({
     extensionPath: "/nonexistent",
     allowPathNode: false,
     env: {},
+    expectedServiceVersion: SERVICE_VERSION,
     spawn: () => {
       throw new Error("must not spawn");
     },

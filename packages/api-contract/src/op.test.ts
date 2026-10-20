@@ -46,7 +46,8 @@ describe("op registry", () => {
   });
 
   it("derives op types from the registry", () => {
-    expectTypeOf<OpName>().toEqualTypeOf<"health.get" | "backup.create">();
+    expectTypeOf<OpName>().toEqualTypeOf<"health.get" | "backup.create" | "service.shutdown">();
+    expectTypeOf<OpOutput<"service.shutdown">>().toEqualTypeOf<{ ok: true }>();
     expectTypeOf<OpInput<"health.get">>().toEqualTypeOf<Record<string, never>>();
     expectTypeOf<OpOutput<"health.get">["apiVersion"]>().toEqualTypeOf<number>();
     expectTypeOf<OpInput<"backup.create">>().toEqualTypeOf<{ dest: string }>();

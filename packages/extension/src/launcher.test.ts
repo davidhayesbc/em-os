@@ -86,7 +86,13 @@ function world(
     }
     return { pid: 9001, exitCode: () => exit };
   });
+  const health = vi.fn(async (_ep: { baseUrl: string; token: string }) => ({
+    serviceVersion: "0.0.0",
+    apiVersion: 1,
+  }));
   const opts: LauncherOptions = {
+    expectedServiceVersion: "0.0.0",
+    health,
     extensionPath: "/ext",
     allowPathNode: true,
     env: { EMOS_NODE_PATH: "/opt/node/bin/node" },
@@ -98,7 +104,7 @@ function world(
     pollMs: 5,
     startTimeoutMs: 1000,
   };
-  return { alive, listening, spawn, spawnCalls, spawnOpts, opts };
+  return { alive, listening, spawn, spawnCalls, spawnOpts, opts, health };
 }
 
 describe("ensureService", () => {
@@ -231,6 +237,116 @@ describe("ensureService", () => {
     await expect(launcher.ensureService(dataDir)).rejects.toThrow();
     await expect(launcher.ensureService(dataDir)).rejects.toThrow();
     expect(w.spawn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("version-aware attach", () => {
+  const OLD_PID = 3131;
+  const OLD_PORT = 7777;
+
+  /** An old service is running (pid OLD_PID on OLD_PORT, holding the lock). */
+  function withOldService(
+    dataDir: string,
+    version: { serviceVersion: string; apiVersion: number } | "incompatible",
+  ) {
+    const w = world(dataDir);
+    w.alive.add(OLD_PID);
+    w.listening.add(OLD_PORT);
+    writeServiceJson(dataDir, { pid: OLD_PID, port: OLD_PORT });
+    writeToken(dataDir);
+    writeFileSync(join(dataDir, "run", "service.lock"), `${JSON.stringify({ pid: OLD_PID })}\n`);
+    const goAway = () => {
+      w.alive.delete(OLD_PID);
+      w.listening.delete(OLD_PORT);
+      rmSync(join(dataDir, "run", "service.lock"), { force: true });
+      rmSync(join(dataDir, "run", "service.json"), { force: true });
+    };
+    const health = vi.fn(async (ep: { baseUrl: string }) => {
+      if (ep.baseUrl.endsWith(`:${OLD_PORT}`)) {
+        if (version === "incompatible") return "incompatible" as const;
+        return version;
+      }
+      return { serviceVersion: "0.0.0", apiVersion: 1 };
+    });
+    return { w, goAway, health };
+  }
+
+  it("attaches without restarting when the versions match", async () => {
+    const dataDir = tmpDataDir();
+    const { w, health } = withOldService(dataDir, { serviceVersion: "0.0.0", apiVersion: 1 });
+    const shutdown = vi.fn(async () => true);
+    const ep = await createLauncher({ ...w.opts, health, shutdown }).ensureService(dataDir);
+    expect(ep.baseUrl).toBe(`http://127.0.0.1:${OLD_PORT}`);
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(w.spawn).not.toHaveBeenCalled();
+  });
+
+  it("a different serviceVersion: shuts the old one down, waits for the lock, respawns", async () => {
+    const dataDir = tmpDataDir();
+    const { w, goAway, health } = withOldService(dataDir, {
+      serviceVersion: "0.9.0",
+      apiVersion: 1,
+    });
+    const shutdown = vi.fn(async (ep: { baseUrl: string }) => {
+      expect(ep.baseUrl).toBe(`http://127.0.0.1:${OLD_PORT}`);
+      setTimeout(goAway, 20);
+      return true;
+    });
+    const kill = vi.fn();
+    const ep = await createLauncher({ ...w.opts, health, shutdown, kill }).ensureService(dataDir);
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(kill).not.toHaveBeenCalled();
+    expect(w.spawn).toHaveBeenCalledTimes(1);
+    expect(ep.baseUrl).toBe(`http://127.0.0.1:${LIVE_PORT}`);
+  });
+
+  it("a different apiVersion (or a 409 incompatible_version) is a mismatch too", async () => {
+    for (const version of [{ serviceVersion: "0.0.0", apiVersion: 2 }, "incompatible" as const]) {
+      const dataDir = tmpDataDir();
+      const { w, goAway, health } = withOldService(dataDir, version);
+      const shutdown = vi.fn(async () => {
+        goAway();
+        return true;
+      });
+      const ep = await createLauncher({ ...w.opts, health, shutdown }).ensureService(dataDir);
+      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(ep.baseUrl).toBe(`http://127.0.0.1:${LIVE_PORT}`);
+    }
+  });
+
+  it("falls back to killing the old pid when the lock does not clear in time", async () => {
+    const dataDir = tmpDataDir();
+    const { w, goAway, health } = withOldService(dataDir, {
+      serviceVersion: "0.9.0",
+      apiVersion: 1,
+    });
+    const shutdown = vi.fn(async () => false); // e.g. an old service without the op
+    const kill = vi.fn((pid: number) => {
+      expect(pid).toBe(OLD_PID);
+      goAway();
+    });
+    const ep = await createLauncher({
+      ...w.opts,
+      health,
+      shutdown,
+      kill,
+      stopTimeoutMs: 50,
+    }).ensureService(dataDir);
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(ep.baseUrl).toBe(`http://127.0.0.1:${LIVE_PORT}`);
+  });
+
+  it("an unreachable health check does not kill anything (attaches as before)", async () => {
+    const dataDir = tmpDataDir();
+    const { w } = withOldService(dataDir, { serviceVersion: "0.0.0", apiVersion: 1 });
+    const shutdown = vi.fn(async () => true);
+    const ep = await createLauncher({
+      ...w.opts,
+      health: async () => null,
+      shutdown,
+    }).ensureService(dataDir);
+    expect(ep.baseUrl).toBe(`http://127.0.0.1:${OLD_PORT}`);
+    expect(shutdown).not.toHaveBeenCalled();
   });
 });
 

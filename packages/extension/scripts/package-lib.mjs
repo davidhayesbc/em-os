@@ -175,3 +175,29 @@ export function assertSingleTarget(files, target) {
     );
   }
 }
+
+/**
+ * esbuild options for the VSIX's `dist/service/main.js`: one ESM file with the workspace
+ * packages inlined, only `@napi-rs/keyring` external. Built from the service's *source* entry
+ * so `__EMOS_VERSION__` becomes `version` (the extension's), which is what the extension's
+ * launcher expects; the service's own dist already has its package version baked in.
+ * @param {{ entry: string; outfile: string; version: string }} o
+ */
+export function serviceBundleOptions({ entry, outfile, version }) {
+  return {
+    entryPoints: [entry],
+    outfile,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node24",
+    external: ["@napi-rs/keyring"],
+    define: { __EMOS_VERSION__: JSON.stringify(version) },
+    // Lets bundled CommonJS code `require` Node built-ins from ESM output.
+    banner: {
+      js: 'import { createRequire as __emosCreateRequire } from "node:module"; const require = __emosCreateRequire(import.meta.url);',
+    },
+    legalComments: "none",
+    logLevel: "warning",
+  };
+}

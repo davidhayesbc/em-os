@@ -112,7 +112,7 @@ The extension starts the service **detached**, with its working directory set to
    Log lines print in this terminal. Attach VS Code with **Debug: Attach to Node Process** (or use a JavaScript Debug Terminal and drop `--inspect`). Breakpoints in `packages/service/src/*.ts` work through the sourcemaps.
 3. Press F5 (or run **EM OS: Reconnect** in an already-running dev host). The launcher finds the live service through `run/service.json` and attaches instead of spawning a second one.
 
-The same applies after you change service code: the service outlives the extension host, so Reconnect re-attaches to the *old* process. Run `service stop` first, then Reconnect.
+The same applies after you change service code: the service outlives the extension host, so Reconnect re-attaches to the *old* process. Run `service stop` first, then Reconnect. (The launcher replaces a running service automatically only when its `serviceVersion` or `apiVersion` differs from the extension's: it calls `service.shutdown`, waits up to 5 s for the lock, kills the pid as a last resort, then spawns. Both versions are injected at build time; in a dev checkout they are both the package version, so code changes alone don't trigger it.)
 
 ## 4. Running the service and CLI by hand
 
@@ -128,7 +128,7 @@ Commands (`emos --help` lists them; no arguments or `--help` prints usage and ex
 | Command | What it does |
 |---|---|
 | `emos service start [--data-dir <path>] [--port <n>]` | Starts the service detached and waits up to 10 s until it answers. Prints `started on port N` or `already running on port N`. |
-| `emos service stop [--data-dir <path>]` | SIGTERMs the service (Windows: `process.kill`) and waits for its lock to clear. Prints `stopped` or `not running`. |
+| `emos service stop [--data-dir <path>]` | Asks the service to stop with the `service.shutdown` op (every OS) and waits for its lock to clear; falls back to SIGTERM (Windows: `process.kill`) if the op fails or the lock stays. Prints `stopped` or `not running`. |
 | `emos service status [--data-dir <path>]` | `running on port N (pid P, version V)`, `stopped`, or `not responding` (exit 1). |
 | `emos doctor [--data-dir <path>]` | Checks the data dir, not-in-git-checkout, service reachable, API version, keychain readable. Exit 1 if any check fails. |
 | `emos backup <dest> [--data-dir <path>]` | Asks the running service for a consistent copy of the database at `<dest>` (a relative path is resolved against the current directory). Needs the service running. |
@@ -258,7 +258,7 @@ Fix or unset the variable.
 The error quotes the last lines of `<dataDir>/logs/service.log`, which usually names the cause. For more, reproduce in a terminal (section 3, Debug the service). Common causes: Node older than 24, the data dir inside a git checkout (reported separately as "EM OS data directory is inside a git checkout"), or a locked keychain (not an issue with `EMOS_SECRET_STORE=memory`).
 
 **"already running" / stale lock**
-`EM OS service already running (pid N)` means another live instance holds `run/service.lock`. Find it with `npx emos service status`; stop it with `service stop`. A lock left by a crashed process (dead pid) is reclaimed automatically on the next start, and `service stop` also cleans up `service.lock` and `service.json` when the pid is gone. If something is truly stuck, check the pid with `ps -p <pid>` and only then delete `run/service.lock` and `run/service.json` by hand. `service stop` deliberately refuses to signal a pid that is alive but not answering on its port (`not responding`), because the pid may have been reused; kill that process yourself after checking what it is.
+`EM OS service already running (pid N)` means another live instance holds `run/service.lock`. Find it with `npx emos service status`; stop it with `service stop`. A lock left by a crashed process (dead pid), or written before the last reboot (its pid may have been reused), is reclaimed automatically on the next start, and `service stop` also cleans up `service.lock` and `service.json` when the pid is gone. If something is truly stuck, check the pid with `ps -p <pid>` and only then delete `run/service.lock` and `run/service.json` by hand. `service stop` deliberately refuses to signal a pid that is alive but not answering on its port (`not responding`), because the pid may have been reused; kill that process yourself after checking what it is.
 
 **"Service unavailable" in the dashboard or sidebar**
 The extension can't reach the service or the token was rejected. Click **Retry** or run **EM OS: Reconnect**. If it persists:

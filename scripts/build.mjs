@@ -9,7 +9,7 @@
 //    `tsconfig.build.json` (the package tsconfig minus tests and test helpers, so no `.d.ts` is
 //    emitted for them). `npm run typecheck` still uses `tsconfig.json`, which includes the tests.
 import { spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { build } from "esbuild";
@@ -18,6 +18,8 @@ const cwd = process.cwd();
 const require = createRequire(import.meta.url);
 
 rmSync(join(cwd, "dist"), { recursive: true, force: true });
+
+const pkgVersion = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")).version ?? "0.0.0";
 
 const entryPoints = ["index", "main", "bridge-entry"]
   .map((name) => join(cwd, "src", `${name}.ts`))
@@ -33,6 +35,8 @@ await build({
   format: "esm",
   target: "node24",
   sourcemap: true,
+  // The package's own version, for code that reports it (the service's `serviceVersion`).
+  define: { __EMOS_VERSION__: JSON.stringify(pkgVersion) },
 });
 
 const tsc = require.resolve("typescript/bin/tsc");

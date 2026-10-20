@@ -241,7 +241,55 @@ describe("emos service stop", () => {
     expect(err).toContain("not answering");
   });
 
-  it("signals the pid and waits for the lock to disappear", async () => {
+  it("asks the service to shut down (service.shutdown) and does not signal it", async () => {
+    const dataDir = tmpDir();
+    const files = runtimeFiles(dataDir);
+    const port = await startFakeService(1, {
+      onShutdown: () => {
+        rmSync(files.lock, { force: true });
+        rmSync(files.serviceJson, { force: true });
+      },
+    });
+    writeRuntimeFiles(dataDir, { pid: process.pid, port });
+    writeFileSync(
+      files.lock,
+      JSON.stringify({ pid: process.pid, startedAt: "2026-10-20T16:00:00.000Z" }),
+    );
+    const killed: number[] = [];
+    const { code, out } = await service(dataDir, ["stop"], {
+      kill: (pid) => {
+        killed.push(pid);
+      },
+      pollMs: 10,
+    });
+    expect(code).toBe(0);
+    expect(out).toBe("stopped\n");
+    expect(killed).toEqual([]);
+  });
+
+  it("falls back to a signal if the shutdown is accepted but the lock stays", async () => {
+    const dataDir = tmpDir();
+    const lock = runtimeFiles(dataDir).lock;
+    writeRuntimeFiles(dataDir, {
+      pid: process.pid,
+      port: await startFakeService(1, { onShutdown: () => {} }),
+    });
+    writeFileSync(lock, `${process.pid}\n`);
+    const killed: number[] = [];
+    const { code, out } = await service(dataDir, ["stop"], {
+      kill: (pid) => {
+        killed.push(pid);
+        setTimeout(() => rmSync(lock), 20);
+      },
+      stopTimeoutMs: 200,
+      pollMs: 10,
+    });
+    expect(code).toBe(0);
+    expect(out).toBe("stopped\n");
+    expect(killed).toEqual([process.pid]);
+  });
+
+  it("a service without service.shutdown: signals the pid and waits for the lock to disappear", async () => {
     const dataDir = tmpDir();
     writeRuntimeFiles(dataDir, { pid: process.pid, port: await startFakeService(1) });
     const lock = runtimeFiles(dataDir).lock;
@@ -319,9 +367,10 @@ describe("service entry", () => {
   });
 });
 
-// One real spawn: detached child process, SIGTERM stop. It runs a stub entry that wraps the
-// real startService with an in-memory secret store, because the built `dist/main.js` would use
-// the real OS keychain and tests must never touch it. Signals are unreliable on Windows.
+// One real spawn: detached child process, stopped with the service.shutdown op. It runs a stub
+// entry that wraps the real startService with an in-memory secret store, because the built
+// `dist/main.js` would use the real OS keychain and tests must never touch it. Skipped on
+// Windows for now (process-tree and signal behaviour there is untested; try it once CI runs).
 describe.skipIf(process.platform === "win32")("service start/stop (real process)", () => {
   it("starts detached, reports status, is idempotent, then stops", async () => {
     const dataDir = tmpDir();
@@ -333,7 +382,7 @@ describe.skipIf(process.platform === "win32")("service start/stop (real process)
       `import { startService, createMemorySecretStore, parseArgs } from ${JSON.stringify(serviceUrl)};
 import { homedir } from "node:os";
 const args = parseArgs(process.argv.slice(2), process.env, process.platform, homedir());
-const svc = await startService({ ...args, secrets: createMemorySecretStore(), log: { info() {}, warn() {}, error() {} } });
+const svc = await startService({ ...args, secrets: createMemorySecretStore(), log: { info() {}, warn() {}, error() {} }, onShutdown: () => process.exit(0) });
 process.on("SIGTERM", () => svc.stop().then(() => process.exit(0), () => process.exit(1)));
 `,
     );
@@ -356,7 +405,12 @@ process.on("SIGTERM", () => svc.stop().then(() => process.exit(0), () => process
       expect(again.out).toBe(`already running on port ${info.port}\n`);
       expect(again.code).toBe(0);
     } finally {
-      const stopped = await service(dataDir, ["stop"], deps);
+      const stopped = await service(dataDir, ["stop"], {
+        ...deps,
+        kill: () => {
+          throw new Error("stop must not need a signal: service.shutdown handles it");
+        },
+      });
       expect(stopped.code).toBe(0);
       expect(stopped.out).toBe("stopped\n");
     }
