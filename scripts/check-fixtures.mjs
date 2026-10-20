@@ -4,7 +4,9 @@
 //
 // CLI: `node scripts/check-fixtures.mjs [dir]`
 //   - with a dir: scans that directory only;
-//   - without: scans `fixtures/` and `packages/*/fixtures/` under the cwd.
+//   - without: scans `fixtures/` and `packages/*/fixtures/` under the cwd, plus every
+//     `*.test.ts` / `*.test.tsx` under `packages/` and `scripts/` (inline test data is a
+//     fixture too), skipping `node_modules/` and `dist/`.
 // Prints `file:line rule match` per violation and exits 1 if there are any.
 // Missing directories are not an error (exit 0 with a note).
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -24,7 +26,8 @@ const SLACK_TOKEN = /xox[abpr]-/g;
 function urlHost(url) {
   const authority = url.slice(url.indexOf("://") + 3);
   const hostPort = authority.slice(authority.lastIndexOf("@") + 1);
-  return hostPort.replace(/:\d*$/, "").replace(/\.$/, "");
+  // The port may be a template placeholder (`http://127.0.0.1:${port}` in a test).
+  return hostPort.replace(/:(?:\d*|\$\{.*)$/, "").replace(/\.$/, "");
 }
 
 /**
@@ -51,17 +54,32 @@ export function scan(text) {
   return found.sort((a, b) => a.index - b.index).map(({ rule, match }) => ({ rule, match }));
 }
 
-function* walk(dir) {
+function* walk(dir, skip = new Set([".git", "node_modules"])) {
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
     a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
   )) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name !== ".git" && entry.name !== "node_modules") yield* walk(path);
+      if (!skip.has(entry.name)) yield* walk(path, skip);
     } else if (entry.isFile()) {
       yield path;
     }
   }
+}
+
+const TEST_FILE = /\.test\.tsx?$/;
+const TEST_ROOTS = ["packages", "scripts"];
+const TEST_SKIP = new Set([".git", "node_modules", "dist"]);
+
+/** `*.test.ts(x)` under `packages/` and `scripts/`, outside node_modules and dist. */
+function defaultTestFiles(cwd) {
+  const files = [];
+  for (const root of TEST_ROOTS) {
+    const dir = join(cwd, root);
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) continue;
+    for (const file of walk(dir, TEST_SKIP)) if (TEST_FILE.test(file)) files.push(file);
+  }
+  return files;
 }
 
 function defaultTargets(cwd) {
@@ -83,28 +101,32 @@ export function main(args, cwd = process.cwd()) {
   const targets = args[0]
     ? [resolve(cwd, args[0])].filter((dir) => existsSync(dir) && statSync(dir).isDirectory())
     : defaultTargets(cwd);
+  const testFiles = args[0] ? [] : defaultTestFiles(cwd);
 
-  if (targets.length === 0) {
+  if (targets.length === 0 && testFiles.length === 0) {
     console.log(
       `check-fixtures: no fixtures directory found (${args[0] ?? "fixtures"}); skipping.`,
     );
     return 0;
   }
 
+  // A test file inside a fixtures dir would otherwise be reported twice.
+  const files = new Set();
+  for (const dir of targets) for (const file of walk(dir)) files.add(file);
+  for (const file of testFiles) files.add(file);
+
   let violations = 0;
-  for (const dir of targets) {
-    for (const file of walk(dir)) {
-      const bytes = readFileSync(file);
-      if (bytes.includes(0)) continue; // binary
-      const shown = relative(cwd, file).split(sep).join("/");
-      const lines = bytes.toString("utf8").split(/\r?\n/);
-      lines.forEach((line, i) => {
-        for (const { rule, match } of scan(line)) {
-          violations += 1;
-          console.log(`${shown}:${i + 1} ${rule} ${match}`);
-        }
-      });
-    }
+  for (const file of files) {
+    const bytes = readFileSync(file);
+    if (bytes.includes(0)) continue; // binary
+    const shown = relative(cwd, file).split(sep).join("/");
+    const lines = bytes.toString("utf8").split(/\r?\n/);
+    lines.forEach((line, i) => {
+      for (const { rule, match } of scan(line)) {
+        violations += 1;
+        console.log(`${shown}:${i + 1} ${rule} ${match}`);
+      }
+    });
   }
 
   if (violations > 0) {

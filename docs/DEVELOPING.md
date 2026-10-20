@@ -26,7 +26,7 @@ npm run ci         # the same gate CI runs
 `npm run ci` runs, in order:
 
 1. `npm run lint`: Biome (`biome check .`)
-2. `npm run check:fixtures`: repo-safety scan of checked-in fixtures (the repo is public, so fixtures must be synthetic)
+2. `npm run check:fixtures`: repo-safety scan of checked-in fixtures and inline test data in `*.test.ts(x)` (the repo is public, so fixtures must be synthetic)
 3. `npm run build`: every workspace package in dependency order (`scripts/workspaces.mjs`)
 4. `npm run typecheck`: `tsc --noEmit` per package, plus `test/smoke`
 5. `npm run test`: Vitest across all packages
@@ -182,7 +182,7 @@ Every request except `GET /health/ping` needs `Authorization: Bearer <contents o
 | `npx vitest packages/cli` | The same, in watch mode. |
 | `npm run lint` | Biome check of the whole repo. `npx biome check --write .` applies safe fixes. Biome does not look at `docs/`. |
 | `npm run typecheck` | `tsc --noEmit` per package and for `test/smoke`. Needs a prior `npm run build` (packages resolve each other through `dist/`). |
-| `npm run check:fixtures` | Fails on non-reserved email domains or URL hosts, Slack ids and tokens in checked-in fixtures. Use `example.com`/`example.org` and synthetic names only. |
+| `npm run check:fixtures` | Fails on non-reserved email domains or URL hosts, Slack ids and tokens in checked-in fixtures (`fixtures/`, `packages/*/fixtures/`) and in `*.test.ts(x)` under `packages/` and `scripts/`. Use `example.com`/`example.org` and synthetic names only. |
 | `npm run ci` | lint, fixtures, build, typecheck, test (see section 2). |
 
 **Real keychain test (opt-in).** `packages/service/src/server.test.ts` has one test that round-trips a secret through the real OS keychain, using service name `em-os-test` and a random key it deletes afterwards. It is skipped unless you ask for it:

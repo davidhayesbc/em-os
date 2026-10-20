@@ -6,9 +6,16 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { scan } from "./check-fixtures.mjs";
 
+// This file is itself scanned (check-fixtures covers *.test.ts), yet its data must trip the
+// scanner. So the tell-tale characters are spliced in at runtime and the source stays clean.
+const AT = "@";
+const SL = "//";
+const T0 = "T0";
+const XOX = "xox";
+
 describe("scan", () => {
   it("rejects non-reserved email domains", () => {
-    expect(scan("a@acme.io")).toEqual([{ rule: "email-domain", match: "a@acme.io" }]);
+    expect(scan(`a${AT}acme.io`)).toEqual([{ rule: "email-domain", match: `a${AT}acme.io` }]);
   });
 
   it("allows example domains", () => {
@@ -20,14 +27,14 @@ describe("scan", () => {
   });
 
   it("does not accept look-alike email domains", () => {
-    expect(scan("a@example.com.evil.io")[0]?.rule).toBe("email-domain");
-    expect(scan("a@notexample.com")[0]?.rule).toBe("email-domain");
-    expect(scan("a@example.io")[0]?.rule).toBe("email-domain");
+    expect(scan(`a${AT}example.com.evil.io`)[0]?.rule).toBe("email-domain");
+    expect(scan(`a${AT}notexample.com`)[0]?.rule).toBe("email-domain");
+    expect(scan(`a${AT}example.io`)[0]?.rule).toBe("email-domain");
   });
 
   it("rejects non-reserved URL hosts", () => {
-    expect(scan("see https://acme.io/docs for more")).toEqual([
-      { rule: "url-host", match: "https://acme.io" },
+    expect(scan(`see https:${SL}acme.io/docs for more`)).toEqual([
+      { rule: "url-host", match: `https:${SL}acme.io` },
     ]);
   });
 
@@ -42,11 +49,11 @@ describe("scan", () => {
   });
 
   it("does not accept look-alike URL hosts", () => {
-    expect(scan("https://example.com.evil.io/x")[0]?.rule).toBe("url-host");
-    expect(scan("https://notexample.com/x")[0]?.rule).toBe("url-host");
-    expect(scan("https://example.com@evil.io/x")[0]).toEqual({
+    expect(scan(`https:${SL}example.com.evil.io/x`)[0]?.rule).toBe("url-host");
+    expect(scan(`https:${SL}notexample.com/x`)[0]?.rule).toBe("url-host");
+    expect(scan(`https:${SL}example.com${AT}evil.io/x`)[0]).toEqual({
       rule: "url-host",
-      match: "https://example.com@evil.io",
+      match: `https:${SL}example.com${AT}evil.io`,
     });
   });
 
@@ -55,8 +62,8 @@ describe("scan", () => {
   });
 
   it("rejects Slack-style workspace ids", () => {
-    expect(scan("T02ABCDEF")[0]?.rule).toBe("workspace-id");
-    expect(scan("T02ABCDEF")).toEqual([{ rule: "workspace-id", match: "T02ABCDEF" }]);
+    expect(scan(`${T0}2ABCDEF`)[0]?.rule).toBe("workspace-id");
+    expect(scan(`${T0}2ABCDEF`)).toEqual([{ rule: "workspace-id", match: `${T0}2ABCDEF` }]);
   });
 
   it("ignores ids outside the workspace-id shape", () => {
@@ -64,22 +71,29 @@ describe("scan", () => {
   });
 
   it("rejects Slack tokens without echoing the secret", () => {
-    for (const prefix of ["xoxa-", "xoxb-", "xoxp-", "xoxr-"]) {
+    for (const prefix of [`${XOX}a-`, `${XOX}b-`, `${XOX}p-`, `${XOX}r-`]) {
       expect(scan(`token=${prefix}1234-abcd`)).toEqual([{ rule: "slack-token", match: prefix }]);
     }
     expect(scan("xoxs-1234")).toEqual([]);
   });
 
   it("returns findings in order of appearance and is deterministic", () => {
-    const text = "xoxb-1 then a@acme.io then T02ABCDEF then https://acme.io/x";
+    const text = `${XOX}b-1 then a${AT}acme.io then ${T0}2ABCDEF then https:${SL}acme.io/x`;
     const expected = [
-      { rule: "slack-token", match: "xoxb-" },
-      { rule: "email-domain", match: "a@acme.io" },
-      { rule: "workspace-id", match: "T02ABCDEF" },
-      { rule: "url-host", match: "https://acme.io" },
+      { rule: "slack-token", match: `${XOX}b-` },
+      { rule: "email-domain", match: `a${AT}acme.io` },
+      { rule: "workspace-id", match: `${T0}2ABCDEF` },
+      { rule: "url-host", match: `https:${SL}acme.io` },
     ];
     expect(scan(text)).toEqual(expected);
     expect(scan(text)).toEqual(expected);
+  });
+
+  it("allows loopback URLs whose port is a template placeholder", () => {
+    expect(scan(`http:${SL}127.0.0.1:\${svc.port}/rpc`)).toEqual([]);
+    expect(scan(`http:${SL}localhost:\${port}`)).toEqual([]);
+    // ...but not a placeholder host, nor a real host before the placeholder.
+    expect(scan(`https:${SL}acme.io:\${port}/x`)[0]?.rule).toBe("url-host");
   });
 
   it("returns nothing for clean text", () => {
@@ -110,10 +124,10 @@ describe("check-fixtures CLI", () => {
   it("exits 1 and prints file:line rule match for a violating fixture", () => {
     mkdirSync(join(dir, "fixtures", "nested"), { recursive: true });
     writeFileSync(join(dir, "fixtures", "ok.md"), "sam@example.com\n");
-    writeFileSync(join(dir, "fixtures", "nested", "bad.md"), "fine\nping bob@acme.io now\n");
+    writeFileSync(join(dir, "fixtures", "nested", "bad.md"), `fine\nping bob${AT}acme.io now\n`);
     const { code, out } = run("fixtures");
     expect(code).toBe(1);
-    expect(out).toContain("fixtures/nested/bad.md:2 email-domain bob@acme.io");
+    expect(out).toContain(`fixtures/nested/bad.md:2 email-domain bob${AT}acme.io`);
     expect(out).not.toContain("ok.md");
   });
 
@@ -125,17 +139,52 @@ describe("check-fixtures CLI", () => {
 
   it("with no argument scans fixtures/ and packages/*/fixtures/", () => {
     mkdirSync(join(dir, "packages", "core", "fixtures"), { recursive: true });
-    writeFileSync(join(dir, "packages", "core", "fixtures", "bad.json"), '{"a":"x@acme.io"}\n');
+    writeFileSync(join(dir, "packages", "core", "fixtures", "bad.json"), `{"a":"x${AT}acme.io"}\n`);
     const { code, out } = run();
     expect(code).toBe(1);
-    expect(out).toContain("packages/core/fixtures/bad.json:1 email-domain x@acme.io");
+    expect(out).toContain(`packages/core/fixtures/bad.json:1 email-domain x${AT}acme.io`);
+  });
+
+  it("with no argument also scans *.test.ts(x) under packages/ and scripts/", () => {
+    mkdirSync(join(dir, "packages", "core", "src"), { recursive: true });
+    mkdirSync(join(dir, "scripts"));
+    writeFileSync(join(dir, "packages", "core", "src", "a.test.ts"), `"bob${AT}acme.io"\n`);
+    writeFileSync(join(dir, "packages", "core", "src", "b.test.tsx"), `"https:${SL}acme.io"\n`);
+    writeFileSync(join(dir, "scripts", "c.test.ts"), `"${T0}2ABCDEF"\n`);
+    writeFileSync(join(dir, "packages", "core", "src", "not-a-test.ts"), `"bob${AT}acme.io"\n`);
+    const { code, out } = run();
+    expect(code).toBe(1);
+    expect(out).toContain(`packages/core/src/a.test.ts:1 email-domain bob${AT}acme.io`);
+    expect(out).toContain(`packages/core/src/b.test.tsx:1 url-host https:${SL}acme.io`);
+    expect(out).toContain(`scripts/c.test.ts:1 workspace-id ${T0}2ABCDEF`);
+    expect(out).not.toContain("not-a-test.ts");
+  });
+
+  it("skips node_modules and dist when scanning test files", () => {
+    for (const sub of ["node_modules", "dist"]) {
+      mkdirSync(join(dir, "packages", "core", sub), { recursive: true });
+      writeFileSync(join(dir, "packages", "core", sub, "x.test.ts"), `"bob${AT}acme.io"\n`);
+    }
+    mkdirSync(join(dir, "packages", "core", "src"), { recursive: true });
+    writeFileSync(join(dir, "packages", "core", "src", "ok.test.ts"), '"sam@example.com"\n');
+    const { code, out } = run();
+    expect(code).toBe(0);
+    expect(out).toContain("check-fixtures: ok");
+  });
+
+  it("an explicit directory scans only that directory", () => {
+    mkdirSync(join(dir, "fixtures"));
+    writeFileSync(join(dir, "fixtures", "ok.md"), "sam@example.com\n");
+    mkdirSync(join(dir, "scripts"));
+    writeFileSync(join(dir, "scripts", "c.test.ts"), `"bob${AT}acme.io"\n`);
+    expect(run("fixtures").code).toBe(0);
   });
 
   it.skipIf(process.platform === "win32")(
     "still fails (exit 1) when invoked through a symlinked path",
     () => {
       mkdirSync(join(dir, "fixtures"));
-      writeFileSync(join(dir, "fixtures", "bad.md"), "bob@acme.io\n");
+      writeFileSync(join(dir, "fixtures", "bad.md"), `bob${AT}acme.io\n`);
       const link = join(dir, "linked-check-fixtures.mjs");
       symlinkSync(script, link);
       const result = spawnSync(process.execPath, [link, "fixtures"], {
@@ -143,7 +192,7 @@ describe("check-fixtures CLI", () => {
         encoding: "utf8",
       });
       expect(result.status).toBe(1);
-      expect(result.stdout).toContain("fixtures/bad.md:1 email-domain bob@acme.io");
+      expect(result.stdout).toContain(`fixtures/bad.md:1 email-domain bob${AT}acme.io`);
     },
   );
 
