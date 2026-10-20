@@ -1,0 +1,21 @@
+{
+  "name": "@emos/store-sqlite",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "node ../../scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "gen:migrations": "node scripts/gen-migrations.mjs"
+  },
+  "dependencies": {
+    "@emos/core": "0.0.0"
+  }
+}

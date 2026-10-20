@@ -9,12 +9,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "node scripts/workspaces.mjs",
     "test": "vitest run",
     "lint": "biome check .",
     "check:fixtures": "node scripts/check-fixtures.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "ci": "npm run lint && npm run check:fixtures && npm run typecheck && npm run test && npm run build"
+    "ci": "npm run lint && npm run check:fixtures && npm run build && npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
