@@ -252,16 +252,17 @@ export function createLauncher(opts: LauncherOptions): Launcher {
 
   async function start(dataDir: string): Promise<ServiceEndpoint> {
     const found = await locateWithPid(dataDir);
-    let replacedPid: number | undefined;
-    if (found) {
-      if (!(await isMismatched(found.ep))) return found.ep;
-      await replace(dataDir, found);
-      replacedPid = found.pid;
-    }
+    if (found && !(await isMismatched(found.ep))) return found.ep;
 
+    // Resolve everything needed to start a new service before stopping a mismatched one.
     assertNotInGitCheckout(dataDir, exists);
     const node = resolveNode();
     const entry = resolveServiceEntry(opts.extensionPath, exists);
+    let replacedPid: number | undefined;
+    if (found) {
+      await replace(dataDir, found);
+      replacedPid = found.pid;
+    }
     const log = openServiceLog(dataDir);
     let child: SpawnedChild;
     try {
