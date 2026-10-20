@@ -409,12 +409,14 @@ CREATE TABLE sync_state (
 
 CREATE TABLE mcp_clients (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL, -- unique among non-revoked clients (index below)
   token_hash TEXT NOT NULL UNIQUE, -- sha256 of the bearer token; the token itself is never stored
   allow_sensitive INTEGER NOT NULL DEFAULT 0 CHECK (allow_sensitive IN (0, 1)),
   created_at TEXT NOT NULL CHECK (created_at GLOB '????-??-??T??:??:??.???Z'),
   revoked_at TEXT CHECK (revoked_at GLOB '????-??-??T??:??:??.???Z')
 ) STRICT;
+-- Revoked rows stay for the audit trail, so a name can be reused once its client is revoked.
+CREATE UNIQUE INDEX mcp_clients_live_name_idx ON mcp_clients (name) WHERE revoked_at IS NULL;
 
 -- Importer idempotency (P1-17): one row per applied import unit.
 CREATE TABLE import_keys (

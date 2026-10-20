@@ -584,7 +584,7 @@ describe("schema 0001", () => {
     db.prepare("INSERT INTO layouts VALUES ('dashboard', '[]')").run();
   });
 
-  it("mcp client names and token hashes are unique", () => {
+  it("mcp client names are unique among live clients; token hashes are always unique", () => {
     const db = track(openDb(tmp()));
     const add = (id: string, name: string, hash: string) =>
       db
@@ -592,9 +592,24 @@ describe("schema 0001", () => {
           "INSERT INTO mcp_clients (id, name, token_hash, allow_sensitive, created_at) VALUES (?, ?, ?, 0, ?)",
         )
         .run(id, name, hash, T0);
+    const revoke = (id: string) =>
+      db.prepare("UPDATE mcp_clients SET revoked_at = ? WHERE id = ?").run(T0, id);
     add("mcl_1", "claude", "h1");
     expect(() => add("mcl_2", "claude", "h2")).toThrow(/UNIQUE/);
     expect(() => add("mcl_3", "other", "h1")).toThrow(/UNIQUE/);
+
+    // Revoking frees the name for a new client; the revoked row is kept for the audit trail.
+    revoke("mcl_1");
+    add("mcl_4", "claude", "h4");
+    revoke("mcl_4");
+    add("mcl_5", "claude", "h5");
+    expect(() => add("mcl_6", "claude", "h6")).toThrow(/UNIQUE/);
+    // A revoked client's token hash still can't be reused.
+    expect(() => add("mcl_7", "fresh", "h1")).toThrow(/UNIQUE/);
+    // Un-revoking a client whose name is taken by a live one is refused.
+    expect(() =>
+      db.prepare("UPDATE mcp_clients SET revoked_at = NULL WHERE id = 'mcl_1'").run(),
+    ).toThrow(/UNIQUE/);
   });
 });
 
