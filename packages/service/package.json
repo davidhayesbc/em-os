@@ -1,0 +1,26 @@
+{
+  "name": "@emos/service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "node ../../scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@emos/api-contract": "0.0.0",
+    "@emos/core": "0.0.0",
+    "@emos/store-sqlite": "0.0.0",
+    "@napi-rs/keyring": "2.1.1"
+  },
+  "devDependencies": {
+    "zod": "^4.6.7"
+  }
+}
