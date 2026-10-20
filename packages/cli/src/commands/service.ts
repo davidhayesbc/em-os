@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { assertNotInGitCheckout } from "@emos/store-sqlite";
@@ -8,8 +8,10 @@ import {
   type CliEnv,
   defaultCliEnv,
   guarded,
+  isPidAlive,
   parseFlags,
   probeService,
+  readServiceInfo,
   resolveDataDirFor,
   runtimeFiles,
   UsageError,
@@ -39,6 +41,8 @@ export interface ServiceDeps {
   spawnService?: (args: string[]) => SpawnedService | undefined;
   /** Signals the service to stop. Default: SIGTERM (Windows: `process.kill(pid)`). */
   kill?: (pid: number, signal?: NodeJS.Signals) => void;
+  /** Is this pid still running? Default: `process.kill(pid, 0)`. */
+  isAlive?: (pid: number) => boolean;
   startTimeoutMs?: number;
   stopTimeoutMs?: number;
   pollMs?: number;
@@ -63,6 +67,21 @@ function spawnDetached(entry: string, args: string[]): SpawnedService {
   return { exitCode: () => exit };
 }
 
+/** Removes `service.lock` / `service.json` left by a process that died without cleaning up. */
+function removeLeftovers(dataDir: string, pid: number): void {
+  const files = runtimeFiles(dataDir);
+  try {
+    if (readFileSync(files.lock, "utf8").trim() === String(pid))
+      rmSync(files.lock, { force: true });
+  } catch {
+    // already gone
+  }
+  const info = readServiceInfo(dataDir);
+  if (info !== null && info !== "invalid" && info.pid === pid) {
+    rmSync(files.serviceJson, { force: true });
+  }
+}
+
 function defaultKill(pid: number, signal?: NodeJS.Signals): void {
   if (process.platform === "win32") process.kill(pid);
   else process.kill(pid, signal ?? "SIGTERM");
@@ -74,6 +93,7 @@ export function createServiceCommand(deps: ServiceDeps = {}): Command {
   const stopTimeoutMs = deps.stopTimeoutMs ?? 5_000;
   const pollMs = deps.pollMs ?? 100;
   const kill = deps.kill ?? defaultKill;
+  const isAlive = deps.isAlive ?? isPidAlive;
   const spawnService =
     deps.spawnService ??
     ((args: string[]) => spawnDetached(deps.serviceEntry ?? resolveServiceEntry(), args));
@@ -153,15 +173,19 @@ export function createServiceCommand(deps: ServiceDeps = {}): Command {
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
     }
-    const lock = runtimeFiles(dataDir).lock;
+    const files = runtimeFiles(dataDir);
+    const pid = svc.info.pid;
     const deadline = performance.now() + stopTimeoutMs;
-    while (existsSync(lock)) {
+    // A hard kill (Windows `process.kill`) skips the service's cleanup: the process is gone but
+    // its lock and service.json remain. A dead pid is as good as a released lock.
+    while (existsSync(files.lock) && isAlive(pid)) {
       if (performance.now() >= deadline) {
         io.err(`error: the service did not stop within ${stopTimeoutMs / 1000}s\n`);
         return EXIT_FAILURE;
       }
       await sleep(pollMs);
     }
+    if (!isAlive(pid)) removeLeftovers(dataDir, pid);
     io.out("stopped\n");
     return EXIT_OK;
   }

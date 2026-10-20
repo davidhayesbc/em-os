@@ -178,6 +178,44 @@ describe("emos service stop", () => {
     expect(killed).toEqual([[process.pid, process.platform === "win32" ? undefined : "SIGTERM"]]);
   });
 
+  it("a hard kill (no graceful cleanup): dead pid counts as stopped and leftovers are removed", async () => {
+    const dataDir = tmpDir();
+    writeRuntimeFiles(dataDir, { pid: process.pid, port: await startFakeService(1) });
+    const files = runtimeFiles(dataDir);
+    writeFileSync(files.lock, `${process.pid}\n`);
+    let alive = true;
+    const { code, out } = await service(dataDir, ["stop"], {
+      kill: () => {
+        alive = false; // TerminateProcess: the process dies, the files stay
+      },
+      isAlive: () => alive,
+      stopTimeoutMs: 2000,
+      pollMs: 10,
+    });
+    expect(code).toBe(0);
+    expect(out).toBe("stopped\n");
+    expect(existsSync(files.lock)).toBe(false);
+    expect(existsSync(files.serviceJson)).toBe(false);
+  });
+
+  it("does not remove files that belong to another pid", async () => {
+    const dataDir = tmpDir();
+    writeRuntimeFiles(dataDir, { pid: process.pid, port: await startFakeService(1) });
+    const files = runtimeFiles(dataDir);
+    writeFileSync(files.lock, "424242\n"); // some other instance took over
+    let alive = true;
+    const { code } = await service(dataDir, ["stop"], {
+      kill: () => {
+        alive = false;
+      },
+      isAlive: () => alive,
+      stopTimeoutMs: 2000,
+      pollMs: 10,
+    });
+    expect(code).toBe(0);
+    expect(existsSync(files.lock)).toBe(true);
+  });
+
   it("fails if the lock is still there after the timeout", async () => {
     const dataDir = tmpDir();
     writeRuntimeFiles(dataDir, { pid: process.pid, port: await startFakeService(1) });

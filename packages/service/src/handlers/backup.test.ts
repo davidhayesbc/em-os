@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient, httpTransport } from "@emos/api-contract";
@@ -59,4 +67,45 @@ describe("backup.create", () => {
       code: "invalid_input",
     });
   });
+
+  it("leaves no temporary files beside the backup", async () => {
+    const { client } = await setup();
+    const dir = join(tmpDir(), "out");
+    await client.call("backup.create", { dest: join(dir, "copy.db") });
+    expect(readdirSync(dir)).toEqual(["copy.db"]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "a dangling symlink at dest counts as existing (conflict) and is not followed",
+    async () => {
+      const { client } = await setup();
+      const dir = tmpDir();
+      const target = join(dir, "missing-target.db");
+      const dest = join(dir, "link.db");
+      symlinkSync(target, dest);
+      await expect(client.call("backup.create", { dest })).rejects.toMatchObject({
+        code: "conflict",
+      });
+      expect(existsSync(target)).toBe(false);
+      expect(readdirSync(dir).sort()).toEqual(["link.db"]);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a destination that reaches a git checkout through a symlink",
+    async () => {
+      const { client } = await setup();
+      const repo = mkdtempSync(join(tmpdir(), "emos repo "));
+      mkdirSync(join(repo, ".git"));
+      mkdirSync(join(repo, "sub"));
+      const link = join(tmpDir(), "link");
+      symlinkSync(join(repo, "sub"), link);
+      for (const dest of [join(link, "copy.db"), join(link, "new", "copy.db")]) {
+        await expect(client.call("backup.create", { dest })).rejects.toMatchObject({
+          code: "invalid_input",
+        });
+      }
+      expect(readdirSync(join(repo, "sub"))).toEqual([]);
+    },
+  );
 });
