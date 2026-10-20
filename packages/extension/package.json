@@ -1,0 +1,62 @@
+{
+  "name": "@emos/extension",
+  "displayName": "EM OS",
+  "description": "EM OS dashboard and sidebar for VS Code (a thin client of the local EM OS service).",
+  "version": "0.0.0",
+  "private": true,
+  "publisher": "emos",
+  "license": "MIT",
+  "main": "./dist/extension.js",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "emos.openDashboard",
+        "title": "Open Dashboard",
+        "category": "EM OS"
+      },
+      {
+        "command": "emos.reconnect",
+        "title": "Reconnect",
+        "category": "EM OS"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "emos",
+          "title": "EM OS",
+          "icon": "media/emos.svg"
+        }
+      ]
+    },
+    "views": {
+      "emos": [
+        {
+          "type": "webview",
+          "id": "emos.sidebar",
+          "name": "Overview"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@emos/api-contract": "0.0.0"
+  },
+  "devDependencies": {
+    "@emos/service": "0.0.0",
+    "@emos/store-sqlite": "0.0.0",
+    "@emos/webview": "0.0.0",
+    "@types/vscode": "~1.95.0"
+  }
+}

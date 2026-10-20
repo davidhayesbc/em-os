@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "EM OS extension (dev host)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--disable-extensions",
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/extension"
+      ],
+      "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.js"]
+    }
+  ]
+}
