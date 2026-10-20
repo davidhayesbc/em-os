@@ -94,7 +94,7 @@ code .
 
 ### Debug the service
 
-The extension starts the service **detached with no stdio**, so you can't attach a debugger to it and you can't see its log output (one line per event on stderr). To debug the service, run it yourself in the foreground with the same environment, then let the extension attach:
+The extension starts the service **detached**, with its working directory set to the data dir and its stdout/stderr appended to `<dataDir>/logs/service.log` (one line per event; ids and counts only; rotated to `service.log.1` past 5 MiB). You can read that log, but you can't attach a debugger to the detached process. To debug the service, run it yourself in the foreground with the same environment, then let the extension attach:
 
 1. Stop any running dev service (it holds a lock and the extension would just attach to it):
 
@@ -255,7 +255,7 @@ Neither `EMOS_NODE_PATH` nor a bundled runtime exists, and the extension is not 
 Fix or unset the variable.
 
 **"EM OS service exited (code N) before it became ready" / "did not become ready within 10s"**
-The service's stderr is not captured. Reproduce in a terminal (section 3, Debug the service) to see the real error. Common causes: Node older than 24, the data dir inside a git checkout (reported separately as "EM OS data directory is inside a git checkout"), or a locked keychain (not an issue with `EMOS_SECRET_STORE=memory`).
+The error quotes the last lines of `<dataDir>/logs/service.log`, which usually names the cause. For more, reproduce in a terminal (section 3, Debug the service). Common causes: Node older than 24, the data dir inside a git checkout (reported separately as "EM OS data directory is inside a git checkout"), or a locked keychain (not an issue with `EMOS_SECRET_STORE=memory`).
 
 **"already running" / stale lock**
 `EM OS service already running (pid N)` means another live instance holds `run/service.lock`. Find it with `npx emos service status`; stop it with `service stop`. A lock left by a crashed process (dead pid) is reclaimed automatically on the next start, and `service stop` also cleans up `service.lock` and `service.json` when the pid is gone. If something is truly stuck, check the pid with `ps -p <pid>` and only then delete `run/service.lock` and `run/service.json` by hand. `service stop` deliberately refuses to signal a pid that is alive but not answering on its port (`not responding`), because the pid may have been reused; kill that process yourself after checking what it is.

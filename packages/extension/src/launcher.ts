@@ -1,11 +1,12 @@
 // Finds the local EM OS service, or starts it: read `run/service.json`, check the pid and
-// `GET /health/ping`, else spawn the service detached and poll until it answers.
+// `GET /health/ping`, else spawn the service detached (cwd = data dir, output appended to
+// `<dataDir>/logs/service.log`) and poll until it answers. A failed start quotes the log tail.
 //
 // Runtime (Ruling R14): EMOS_NODE_PATH -> the bundled `<extensionPath>/dist/runtime/node`
 // (`node.exe` on Windows) -> `node` on PATH in Development/Test mode only. Never VS Code's own
 // `process.execPath`: native addons fail macOS library validation under the main Code binary.
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   assertNotInGitCheckout,
@@ -17,11 +18,20 @@ import {
   readToken,
   resolveServiceEntry,
 } from "./runtime.js";
+import { openServiceLog, withLogTail } from "./service-log.js";
 
 /** Where the service is and how to authenticate. Stays in the extension host. */
 export interface ServiceEndpoint {
   baseUrl: string;
   token: string;
+}
+
+/** How the service is spawned: working directory and the log fd for stdout/stderr. */
+export interface ServiceSpawnOptions {
+  /** The data dir (a cwd outside any user folder: Windows locks a process's cwd). */
+  cwd: string;
+  /** Append-mode fd of `logs/service.log`; the child gets it as stdout and stderr. */
+  logFd: number;
 }
 
 /** A spawned service process: `exitCode()` is null while it runs. */
@@ -38,7 +48,7 @@ export interface LauncherOptions {
   platform?: NodeJS.Platform;
   exists?: (path: string) => boolean;
   /** Starts `command args…` detached. Default: {@link spawnDetached}. */
-  spawn?: (command: string, args: string[]) => SpawnedChild;
+  spawn?: (command: string, args: string[], opts: ServiceSpawnOptions) => SpawnedChild;
   isAlive?: (pid: number) => boolean;
   ping?: (port: number) => Promise<boolean>;
   /** How long a spawned service gets to answer the ping (default 10 s). */
@@ -64,17 +74,22 @@ export class RuntimeNotFoundError extends Error {
   }
 }
 
-/** Detached, no shell, no stdio (a pipe would break once this window closes), unref'd. */
+/**
+ * Detached, no shell, unref'd. stdout/stderr go to the log file's fd, never a pipe (a pipe
+ * would break once this window closes); stdin is ignored.
+ */
 export function spawnDetached(
   command: string,
   args: string[],
+  opts: ServiceSpawnOptions,
   spawnImpl: typeof nodeSpawn = nodeSpawn,
 ): SpawnedChild {
   let exit: number | null = null;
   const child: ChildProcess = spawnImpl(command, args, {
+    cwd: opts.cwd,
     detached: true,
     shell: false,
-    stdio: "ignore",
+    stdio: ["ignore", opts.logFd, opts.logFd],
     windowsHide: true,
   });
   child.on("exit", (code) => {
@@ -93,7 +108,7 @@ export function createLauncher(opts: LauncherOptions): Launcher {
   const env = opts.env ?? process.env;
   const platform = opts.platform ?? process.platform;
   const exists = opts.exists ?? existsSync;
-  const spawn = opts.spawn ?? ((command, args) => spawnDetached(command, args));
+  const spawn = opts.spawn ?? ((command, args, o) => spawnDetached(command, args, o));
   const isAlive = opts.isAlive ?? isPidAlive;
   const pingPort = opts.ping ?? ((port: number) => ping(port));
   const startTimeoutMs = opts.startTimeoutMs ?? 10_000;
@@ -144,7 +159,13 @@ export function createLauncher(opts: LauncherOptions): Launcher {
     assertNotInGitCheckout(dataDir, exists);
     const node = resolveNode();
     const entry = resolveServiceEntry(opts.extensionPath, exists);
-    const child = spawn(node, [entry, "--data-dir", dataDir]);
+    const log = openServiceLog(dataDir);
+    let child: SpawnedChild;
+    try {
+      child = spawn(node, [entry, "--data-dir", dataDir], { cwd: dataDir, logFd: log.fd });
+    } finally {
+      closeSync(log.fd); // the child has its own copy
+    }
 
     const deadline = performance.now() + startTimeoutMs;
     for (;;) {
@@ -154,10 +175,14 @@ export function createLauncher(opts: LauncherOptions): Launcher {
       // Exit 1 with the lock held by someone else = lost a start race with another window:
       // keep waiting for the winner to publish service.json.
       if (code !== null && !anotherInstanceHoldsLock(dataDir, child.pid)) {
-        throw new Error(`EM OS service exited (code ${code}) before it became ready`);
+        throw new Error(
+          withLogTail(`EM OS service exited (code ${code}) before it became ready`, log),
+        );
       }
       if (performance.now() >= deadline) {
-        throw new Error(`EM OS service did not become ready within ${startTimeoutMs / 1000}s`);
+        throw new Error(
+          withLogTail(`EM OS service did not become ready within ${startTimeoutMs / 1000}s`, log),
+        );
       }
       await sleep(pollMs);
     }

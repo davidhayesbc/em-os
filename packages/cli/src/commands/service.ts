@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync, rmSync } from "node:fs";
+import { closeSync, existsSync, realpathSync, rmSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { assertNotInGitCheckout } from "@emos/store-sqlite";
@@ -17,6 +17,7 @@ import {
   runtimeFiles,
   UsageError,
 } from "../env.js";
+import { openServiceLog, withLogTail } from "../service-log.js";
 
 const USAGE = [
   "Usage: emos service start [--data-dir <path>] [--port <n>]",
@@ -38,8 +39,14 @@ export interface ServiceDeps {
   cli?: CliEnv;
   /** Path of the service entry script. Default: {@link resolveServiceEntry}. */
   serviceEntry?: string;
-  /** Starts the service detached with these `--data-dir`/`--port` arguments. */
-  spawnService?: (args: string[]) => SpawnedService | undefined;
+  /**
+   * Starts the service detached with these `--data-dir`/`--port` arguments, in `cwd` (the data
+   * dir), with stdout/stderr on `logFd` (`logs/service.log`, append).
+   */
+  spawnService?: (
+    args: string[],
+    opts: { cwd: string; logFd: number },
+  ) => SpawnedService | undefined;
   /** Signals the service to stop. Default: SIGTERM (Windows: `process.kill(pid)`). */
   kill?: (pid: number, signal?: NodeJS.Signals) => void;
   /** Is this pid still running? Default: `process.kill(pid, 0)`. */
@@ -49,13 +56,21 @@ export interface ServiceDeps {
   pollMs?: number;
 }
 
-/** Detached, no shell, no stdio: the service must outlive this process. */
-function spawnDetached(entry: string, args: string[]): SpawnedService {
+/**
+ * Detached, no shell, output to the log file (never a pipe): the service must outlive this
+ * process. The cwd is the data dir, so it never holds a user folder open (Windows locks a cwd).
+ */
+function spawnDetached(
+  entry: string,
+  args: string[],
+  opts: { cwd: string; logFd: number },
+): SpawnedService {
   let exit: number | null = null;
   const child = spawn(process.execPath, [entry, ...args], {
+    cwd: opts.cwd,
     detached: true,
     shell: false,
-    stdio: "ignore",
+    stdio: ["ignore", opts.logFd, opts.logFd],
     windowsHide: true,
   });
   child.on("exit", (code) => {
@@ -92,7 +107,8 @@ export function createServiceCommand(deps: ServiceDeps = {}): Command {
   const isAlive = deps.isAlive ?? isPidAlive;
   const spawnService =
     deps.spawnService ??
-    ((args: string[]) => spawnDetached(deps.serviceEntry ?? resolveServiceEntry(), args));
+    ((args: string[], o: { cwd: string; logFd: number }) =>
+      spawnDetached(deps.serviceEntry ?? resolveServiceEntry(), args, o));
 
   async function start(args: string[], io: Parameters<Command["run"]>[1]): Promise<number> {
     const { values } = parseFlags(
@@ -124,11 +140,16 @@ export function createServiceCommand(deps: ServiceDeps = {}): Command {
       return EXIT_FAILURE;
     }
 
-    const child = spawnService([
-      "--data-dir",
-      dataDir,
-      ...(port !== undefined ? ["--port", port] : []),
-    ]);
+    const log = openServiceLog(dataDir);
+    let child: SpawnedService | undefined;
+    try {
+      child = spawnService(
+        ["--data-dir", dataDir, ...(port !== undefined ? ["--port", port] : [])],
+        { cwd: dataDir, logFd: log.fd },
+      );
+    } finally {
+      closeSync(log.fd); // the child has its own copy
+    }
     const deadline = performance.now() + startTimeoutMs;
     for (;;) {
       const now = await probeService(dataDir);
@@ -138,11 +159,15 @@ export function createServiceCommand(deps: ServiceDeps = {}): Command {
       }
       const code = child ? child.exitCode() : null;
       if (code !== null) {
-        io.err(`error: the service exited (code ${code}) before it became ready\n`);
+        io.err(
+          `error: ${withLogTail(`the service exited (code ${code}) before it became ready`, log)}\n`,
+        );
         return EXIT_FAILURE;
       }
       if (performance.now() >= deadline) {
-        io.err(`error: the service did not become ready within ${startTimeoutMs / 1000}s\n`);
+        io.err(
+          `error: ${withLogTail(`the service did not become ready within ${startTimeoutMs / 1000}s`, log)}\n`,
+        );
         return EXIT_FAILURE;
       }
       await sleep(pollMs);

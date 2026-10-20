@@ -1,10 +1,19 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createLauncher,
   type LauncherOptions,
+  type ServiceSpawnOptions,
   type SpawnedChild,
   spawnDetached,
 } from "./launcher.js";
@@ -52,12 +61,18 @@ const LIVE_PORT = 5555;
  * A simulated world: `alive` pids and `listening` ports. `spawn` records its calls and, unless
  * told otherwise, "starts" a service that writes its runtime files after `delayMs`.
  */
-function world(dataDir: string, behaviour: { delayMs?: number; exitCode?: number } = {}) {
+function world(
+  dataDir: string,
+  behaviour: { delayMs?: number; exitCode?: number; output?: string } = {},
+) {
   const alive = new Set<number>();
   const listening = new Set<number>();
   const spawnCalls: Array<{ command: string; args: string[] }> = [];
-  const spawn = vi.fn((command: string, args: string[]): SpawnedChild => {
+  const spawnOpts: ServiceSpawnOptions[] = [];
+  const spawn = vi.fn((command: string, args: string[], o: ServiceSpawnOptions): SpawnedChild => {
     spawnCalls.push({ command, args });
+    spawnOpts.push(o);
+    if (behaviour.output) writeSync(o.logFd, behaviour.output);
     let exit: number | null = null;
     if (behaviour.exitCode !== undefined) {
       exit = behaviour.exitCode;
@@ -83,7 +98,7 @@ function world(dataDir: string, behaviour: { delayMs?: number; exitCode?: number
     pollMs: 5,
     startTimeoutMs: 1000,
   };
-  return { alive, listening, spawn, spawnCalls, opts };
+  return { alive, listening, spawn, spawnCalls, spawnOpts, opts };
 }
 
 describe("ensureService", () => {
@@ -159,6 +174,36 @@ describe("ensureService", () => {
       /exited \(code 1\) before it became ready/,
     );
     expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("runs the service in the data dir with stdout/stderr appended to logs/service.log", async () => {
+    const dataDir = tmpDataDir();
+    const w = world(dataDir, { output: "2026-10-20T16:00:00.000Z info service.started\n" });
+    await createLauncher(w.opts).ensureService(dataDir);
+    expect(w.spawnOpts[0]?.cwd).toBe(dataDir);
+    expect(typeof w.spawnOpts[0]?.logFd).toBe("number");
+    const log = join(dataDir, "logs", "service.log");
+    expect(readFileSync(log, "utf8")).toContain("service.started");
+    if (process.platform !== "win32") expect(statSync(log).mode & 0o777).toBe(0o600);
+  });
+
+  it("an early exit includes the last log lines in the error", async () => {
+    const dataDir = tmpDataDir();
+    const w = world(dataDir, {
+      exitCode: 1,
+      output: "emos-service: Database is locked\n",
+    });
+    await expect(createLauncher(w.opts).ensureService(dataDir)).rejects.toThrow(
+      /exited \(code 1\) before it became ready\. Last log lines .*\n.*Database is locked/,
+    );
+  });
+
+  it("a not-ready timeout includes the last log lines too", async () => {
+    const dataDir = tmpDataDir();
+    const w = world(dataDir, { delayMs: 10_000, output: "warn service.port_unavailable\n" });
+    await expect(
+      createLauncher({ ...w.opts, startTimeoutMs: 60 }).ensureService(dataDir),
+    ).rejects.toThrow(/did not become ready within .*\n.*port_unavailable/);
   });
 
   it("refuses a data dir inside a git checkout before spawning", async () => {
@@ -242,15 +287,26 @@ describe("Node runtime resolution (R14)", () => {
 });
 
 describe("spawnDetached", () => {
-  it("spawns detached, without a shell or stdio, and unrefs the child", () => {
+  it("spawns detached in the data dir, without a shell, output to the log fd, and unrefs", () => {
     const unref = vi.fn();
     const on = vi.fn();
     const impl = vi.fn(() => ({ pid: 1, unref, on }));
-    spawnDetached("/opt/node", ["/svc/main.js", "--data-dir", "/d"], impl as never);
+    spawnDetached(
+      "/opt/node",
+      ["/svc/main.js", "--data-dir", "/d"],
+      { cwd: "/d", logFd: 17 },
+      impl as never,
+    );
     expect(impl).toHaveBeenCalledWith(
       "/opt/node",
       ["/svc/main.js", "--data-dir", "/d"],
-      expect.objectContaining({ detached: true, shell: false, stdio: "ignore", windowsHide: true }),
+      expect.objectContaining({
+        cwd: "/d",
+        detached: true,
+        shell: false,
+        stdio: ["ignore", 17, 17],
+        windowsHide: true,
+      }),
     );
     expect(unref).toHaveBeenCalled();
   });

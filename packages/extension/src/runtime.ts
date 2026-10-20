@@ -48,8 +48,8 @@ function pathFlavour(dir: string): typeof posix {
 
 /**
  * Throws if `dir` or a parent has a `.git` entry. The service refuses such a data dir too, but
- * its stderr is not captured (it runs detached with no stdio), so checking first gives the user
- * the reason instead of "exited (code 1)".
+ * checking first gives the user a clear reason and keeps the launcher from creating
+ * `logs/service.log` inside the checkout.
  */
 export function assertNotInGitCheckout(
   dir: string,

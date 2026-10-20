@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { runtimePaths, parseLockPid as serviceParseLockPid } from "@emos/service";
 import { afterEach, describe, expect, it } from "vitest";
@@ -141,6 +149,50 @@ describe("emos service start", () => {
     });
     expect(code).toBe(1);
     expect(err).toContain("did not become ready");
+  });
+
+  it("spawns in the data dir with output appended to logs/service.log", async () => {
+    const dataDir = tmpDir();
+    let seen: { cwd: string; logFd: number } | undefined;
+    await service(dataDir, ["start"], {
+      spawnService: (_a, o) => {
+        seen = o;
+        writeSync(o.logFd, "info service.starting\n");
+        return undefined;
+      },
+      startTimeoutMs: 50,
+      pollMs: 10,
+    });
+    expect(seen?.cwd).toBe(dataDir);
+    const log = join(dataDir, "logs", "service.log");
+    expect(readFileSync(log, "utf8")).toBe("info service.starting\n");
+    if (process.platform !== "win32") expect(statSync(log).mode & 0o777).toBe(0o600);
+  });
+
+  it("an early exit prints the last log lines", async () => {
+    const { code, err } = await service(tmpDir(), ["start"], {
+      spawnService: (_a, o) => {
+        writeSync(o.logFd, "emos-service: EM OS service already running (pid 7)\n");
+        return { exitCode: () => 1 };
+      },
+      pollMs: 10,
+    });
+    expect(code).toBe(1);
+    expect(err).toMatch(/exited \(code 1\) before it became ready\. Last log lines/);
+    expect(err).toContain("already running (pid 7)");
+  });
+
+  it("a timeout prints the last log lines", async () => {
+    const { code, err } = await service(tmpDir(), ["start"], {
+      spawnService: (_a, o) => {
+        writeSync(o.logFd, "warn service.port_unavailable\n");
+        return undefined;
+      },
+      startTimeoutMs: 60,
+      pollMs: 10,
+    });
+    expect(code).toBe(1);
+    expect(err).toMatch(/did not become ready within .*\n.*port_unavailable/);
   });
 
   it("passes the resolved data dir and port to the spawned entry", async () => {
