@@ -18,6 +18,10 @@ An operating system for engineering managers. EM OS gathers what's happening acr
 - **Cited.** Every draft and answer links to the records it came from.
 - **Right model per task.** Claude, an OpenAI-compatible gateway or local Ollama are auto-selected per job, by capability and data sensitivity, and you can override any choice.
 
+## Developing
+
+See [`docs/DEVELOPING.md`](docs/DEVELOPING.md) to install, run, debug and test the extension locally.
+
 ## Repository rules
 
 This is a public repository. It holds code, docs and **synthetic** fixtures only. No real work content, credentials, databases or personal data is ever committed.
