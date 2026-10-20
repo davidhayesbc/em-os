@@ -127,6 +127,35 @@ describe("onEvent", () => {
   });
 });
 
+describe("event safety", () => {
+  it("drops event messages whose event is not a record with a string type", () => {
+    const seen: unknown[] = [];
+    onEvent((e) => seen.push(e));
+    for (const event of [undefined, null, "sync.status", 42, [], {}, { type: 7 }, { kind: "x" }]) {
+      host.dispatch({ kind: "event", event } as never);
+    }
+    expect(seen).toEqual([]);
+    const ok: ServerEvent = { type: "items.changed", entity: "commitment", ids: ["c1"] };
+    host.dispatch({ kind: "event", event: ok });
+    expect(seen).toEqual([ok]);
+  });
+
+  it("a throwing listener does not stop the others", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const seen: string[] = [];
+    onEvent(() => seen.push("first"));
+    onEvent(() => {
+      throw new Error("boom");
+    });
+    onEvent(() => seen.push("third"));
+    const event: ServerEvent = { type: "sync.status", connectorId: "c1", state: "ok" };
+    expect(() => host.dispatch({ kind: "event", event })).not.toThrow();
+    expect(seen).toEqual(["first", "third"]);
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+});
+
 describe("useConnection", () => {
   function Probe() {
     return <p data-testid="state">{useConnection()}</p>;

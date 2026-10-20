@@ -61,8 +61,18 @@ function onMessage(ev: MessageEvent): void {
       return;
     }
     case "event": {
+      // The host only relays events it has parsed, but a webview must not trust its input:
+      // drop anything that isn't at least `{ type: string }` (a zod-free shape check).
+      if (!isRecord(msg.event) || typeof msg.event.type !== "string") return;
       const event = msg.event as ServerEvent;
-      for (const fn of [...eventListeners]) fn(event);
+      for (const fn of [...eventListeners]) {
+        try {
+          fn(event);
+        } catch (e) {
+          // One broken widget must not stop the others from hearing the event.
+          console.error("EM OS: event listener failed", e);
+        }
+      }
       return;
     }
     case "connection": {
