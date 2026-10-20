@@ -20,6 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-14, windows-latest]
+        # Ruling R3: the real-keychain round-trip test (EMOS_TEST_KEYCHAIN=1) runs on macOS only.
+        # TODO: try it on Windows (Credential Manager) once CI runs, and enable it if it passes.
+        include:
+          - os: macos-14
+            test-keychain: "1"
+          - os: windows-latest
+            test-keychain: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,6 +35,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run ci
+        env:
+          EMOS_TEST_KEYCHAIN: ${{ matrix.test-keychain }}
 
   smoke:
     # Packages this OS's VSIX (bundled Node runtime + keyring addon), installs it into a clean
