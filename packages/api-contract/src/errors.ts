@@ -1,6 +1,7 @@
-import { z } from "zod";
+// Zod-free on purpose: the webview bundles this through `@emos/api-contract/bridge`.
+// The zod enum for schemas is `ErrorCodeSchema` (errors-schema.ts), derived from this tuple.
 
-export const ErrorCode = z.enum([
+export const ERROR_CODES = [
   "unauthorized",
   "not_found",
   "invalid_input",
@@ -8,8 +9,14 @@ export const ErrorCode = z.enum([
   "unavailable",
   "incompatible_version",
   "internal",
-]);
-export type ErrorCode = z.infer<typeof ErrorCode>;
+] as const;
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
+const CODES: ReadonlySet<string> = new Set(ERROR_CODES);
+
+export function isErrorCode(x: unknown): x is ErrorCode {
+  return typeof x === "string" && CODES.has(x);
+}
 
 export class ApiError extends Error {
   readonly code: ErrorCode;

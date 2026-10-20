@@ -2,7 +2,8 @@
 // does this): `node ../../scripts/build.mjs`.
 //
 // 1. esbuild bundles `src/index.ts` -> `dist/index.js` (ESM, node24, sourcemaps), plus
-//    `src/main.ts` -> `dist/main.js` when a package has a runnable entry point (the service).
+//    `src/main.ts` -> `dist/main.js` when a package has a runnable entry point (the service), and
+//    `src/bridge-entry.ts` -> `dist/bridge-entry.js` (api-contract's zod-free `./bridge` subpath).
 //    Code shared between entries goes into a chunk. Dependencies stay external (not bundled).
 // 2. `tsc --emitDeclarationOnly` writes `dist/index.d.ts` using the package's build-only
 //    `tsconfig.build.json` (the package tsconfig minus tests and test helpers, so no `.d.ts` is
@@ -18,7 +19,7 @@ const require = createRequire(import.meta.url);
 
 rmSync(join(cwd, "dist"), { recursive: true, force: true });
 
-const entryPoints = ["index", "main"]
+const entryPoints = ["index", "main", "bridge-entry"]
   .map((name) => join(cwd, "src", `${name}.ts`))
   .filter((file) => existsSync(file));
 

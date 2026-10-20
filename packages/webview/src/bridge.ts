@@ -1,13 +1,13 @@
+// Runtime imports come only from the zod-free `@emos/api-contract/bridge` subpath, so the
+// webview bundle stays small and free of zod's eval probe; the op types are erased.
+import type { OpInput, OpName, OpOutput } from "@emos/api-contract";
 import {
   ApiError,
-  ErrorCode,
-  type OpInput,
-  type OpName,
-  type OpOutput,
+  isErrorCode,
   type ServerEvent,
   type ToHost,
   type ToView,
-} from "@emos/api-contract";
+} from "@emos/api-contract/bridge";
 import { useEffect, useState } from "preact/hooks";
 
 /** The subset of the VS Code webview API this app uses. */
@@ -55,9 +55,8 @@ function onMessage(ev: MessageEvent): void {
         p.resolve(msg.result);
       } else {
         const error = isRecord(msg.error) ? msg.error : {};
-        const code = ErrorCode.safeParse(error.code);
         const message = typeof error.message === "string" ? error.message : undefined;
-        p.reject(new ApiError(code.success ? code.data : "internal", message));
+        p.reject(new ApiError(isErrorCode(error.code) ? error.code : "internal", message));
       }
       return;
     }

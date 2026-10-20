@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./bridge": {
+      "types": "./dist/bridge-entry.d.ts",
+      "default": "./dist/bridge-entry.js"
     }
   },
   "types": "./dist/index.d.ts",

@@ -1,4 +1,4 @@
-import { ApiError, type ServerEvent } from "@emos/api-contract";
+import { ApiError, type ServerEvent } from "@emos/api-contract/bridge";
 import { act, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installBridge, onEvent, rpc, uninstallBridge, useConnection } from "./bridge.js";

@@ -2,6 +2,7 @@ export * from "./bridge.js";
 export * from "./client.js";
 export * from "./entities/index.js";
 export * from "./errors.js";
+export * from "./errors-schema.js";
 export * from "./events.js";
 export * from "./op.js";
 export { backupCreate } from "./ops/backup.js";

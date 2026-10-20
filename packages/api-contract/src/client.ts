@@ -1,4 +1,4 @@
-import { ApiError, ErrorCode } from "./errors.js";
+import { ApiError, isErrorCode } from "./errors.js";
 import { API_VERSION, type OpInput, type OpName, type OpOutput } from "./op.js";
 
 export interface Transport {
@@ -23,8 +23,7 @@ function unwrap(json: unknown): unknown {
     if (json.ok === false && isRecord(json.error)) {
       const { code, message } = json.error;
       if (typeof code === "string" && typeof message === "string") {
-        const known = ErrorCode.safeParse(code);
-        throw new ApiError(known.success ? known.data : "internal", message);
+        throw new ApiError(isErrorCode(code) ? code : "internal", message);
       }
     }
   }

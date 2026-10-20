@@ -1,4 +1,4 @@
-import type { ToHost, ToView } from "@emos/api-contract";
+import type { ToHost, ToView } from "@emos/api-contract/bridge";
 import type { VsCodeApi } from "./bridge.js";
 
 export interface FakeVsCode {

@@ -28,8 +28,9 @@ npm run ci         # the same gate CI runs
 1. `npm run lint`: Biome (`biome check .`)
 2. `npm run check:fixtures`: repo-safety scan of checked-in fixtures and inline test data in `*.test.ts(x)` (the repo is public, so fixtures must be synthetic)
 3. `npm run build`: every workspace package in dependency order (`scripts/workspaces.mjs`)
-4. `npm run typecheck`: `tsc --noEmit` per package, plus `test/smoke`
-5. `npm run test`: Vitest across all packages
+4. `npm run check:bundles`: the webview bundles contain no `eval`/`Function` and no remote URLs; prints their sizes
+5. `npm run typecheck`: `tsc --noEmit` per package, plus `test/smoke`
+6. `npm run test`: Vitest across all packages
 
 Note `npm ci` (install) and `npm run ci` (the gate) are different commands.
 
@@ -183,7 +184,8 @@ Every request except `GET /health/ping` needs `Authorization: Bearer <contents o
 | `npm run lint` | Biome check of the whole repo. `npx biome check --write .` applies safe fixes. Biome does not look at `docs/`. |
 | `npm run typecheck` | `tsc --noEmit` per package and for `test/smoke`. Needs a prior `npm run build` (packages resolve each other through `dist/`). |
 | `npm run check:fixtures` | Fails on non-reserved email domains or URL hosts, Slack ids and tokens in checked-in fixtures (`fixtures/`, `packages/*/fixtures/`) and in `*.test.ts(x)` under `packages/` and `scripts/`. Use `example.com`/`example.org` and synthetic names only. |
-| `npm run ci` | lint, fixtures, build, typecheck, test (see section 2). |
+| `npm run check:bundles` | After a build: fails if `packages/webview/dist/*.js` contains `new Function`, `Function(`, `eval` or an http(s) URL other than a W3C namespace, and prints each bundle's size. The webview imports runtime values only from the zod-free `@emos/api-contract/bridge` subpath (types may come from the main entry). |
+| `npm run ci` | lint, fixtures, build, bundle check, typecheck, test (see section 2). |
 
 **Real keychain test (opt-in).** `packages/service/src/server.test.ts` has one test that round-trips a secret through the real OS keychain, using service name `em-os-test` and a random key it deletes afterwards. It is skipped unless you ask for it:
 
