@@ -4,7 +4,9 @@
 // 1. esbuild bundles `src/index.ts` -> `dist/index.js` (ESM, node24, sourcemaps), plus
 //    `src/main.ts` -> `dist/main.js` when a package has a runnable entry point (the service).
 //    Code shared between entries goes into a chunk. Dependencies stay external (not bundled).
-// 2. `tsc --emitDeclarationOnly` writes `dist/index.d.ts` using the package tsconfig.
+// 2. `tsc --emitDeclarationOnly` writes `dist/index.d.ts` using the package's build-only
+//    `tsconfig.build.json` (the package tsconfig minus tests and test helpers, so no `.d.ts` is
+//    emitted for them). `npm run typecheck` still uses `tsconfig.json`, which includes the tests.
 import { spawnSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -33,9 +35,12 @@ await build({
 });
 
 const tsc = require.resolve("typescript/bin/tsc");
+const tsconfig = existsSync(join(cwd, "tsconfig.build.json"))
+  ? "tsconfig.build.json"
+  : "tsconfig.json";
 const result = spawnSync(
   process.execPath,
-  [tsc, "-p", "tsconfig.json", "--emitDeclarationOnly", "--declaration", "--outDir", "dist"],
+  [tsc, "-p", tsconfig, "--emitDeclarationOnly", "--declaration", "--outDir", "dist"],
   { cwd, stdio: "inherit" },
 );
 if (result.status !== 0) process.exit(result.status ?? 1);
