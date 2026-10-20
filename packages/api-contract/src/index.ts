@@ -4,5 +4,6 @@ export * from "./entities/index.js";
 export * from "./errors.js";
 export * from "./events.js";
 export * from "./op.js";
+export { backupCreate } from "./ops/backup.js";
 export { healthGet } from "./ops/health.js";
 export * from "./ops/index.js";

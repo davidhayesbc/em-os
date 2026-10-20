@@ -1,0 +1,25 @@
+{
+  "name": "@emos/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "emos": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "node ../../scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@emos/api-contract": "0.0.0",
+    "@emos/service": "0.0.0",
+    "@emos/store-sqlite": "0.0.0"
+  }
+}

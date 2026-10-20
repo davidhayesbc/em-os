@@ -30,9 +30,20 @@ describe("op registry", () => {
     ).toBe(false);
   });
 
+  it("backup.create requires an absolute dest", () => {
+    const { input } = ops["backup.create"];
+    for (const dest of ["/tmp/a.db", "C:\\b\\a.db", "C:/b/a.db", "\\\\host\\share\\a.db"]) {
+      expect(input.safeParse({ dest }).success).toBe(true);
+    }
+    for (const dest of ["", "a.db", "./a.db", "../a.db"]) {
+      expect(input.safeParse({ dest }).success).toBe(false);
+    }
+  });
+
   it("derives op types from the registry", () => {
-    expectTypeOf<OpName>().toEqualTypeOf<"health.get">();
+    expectTypeOf<OpName>().toEqualTypeOf<"health.get" | "backup.create">();
     expectTypeOf<OpInput<"health.get">>().toEqualTypeOf<Record<string, never>>();
     expectTypeOf<OpOutput<"health.get">["apiVersion"]>().toEqualTypeOf<number>();
+    expectTypeOf<OpInput<"backup.create">>().toEqualTypeOf<{ dest: string }>();
   });
 });

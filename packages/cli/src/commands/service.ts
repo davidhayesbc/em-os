@@ -1,0 +1,200 @@
+import { spawn } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { assertNotInGitCheckout } from "@emos/store-sqlite";
+import { type Command, EXIT_FAILURE, EXIT_OK } from "../command.js";
+import {
+  type CliEnv,
+  defaultCliEnv,
+  guarded,
+  parseFlags,
+  probeService,
+  resolveDataDirFor,
+  runtimeFiles,
+  UsageError,
+} from "../env.js";
+
+const USAGE = [
+  "Usage: emos service start [--data-dir <path>] [--port <n>]",
+  "       emos service stop [--data-dir <path>]",
+  "       emos service status [--data-dir <path>]",
+].join("\n");
+
+/** The service's `main.js`, resolved through its package `exports` (`@emos/service/main`). */
+export function resolveServiceEntry(): string {
+  return fileURLToPath(import.meta.resolve("@emos/service/main"));
+}
+
+/** A running child: `exitCode()` is null while it is alive. */
+export interface SpawnedService {
+  exitCode(): number | null;
+}
+
+export interface ServiceDeps {
+  cli?: CliEnv;
+  /** Path of the service entry script. Default: {@link resolveServiceEntry}. */
+  serviceEntry?: string;
+  /** Starts the service detached with these `--data-dir`/`--port` arguments. */
+  spawnService?: (args: string[]) => SpawnedService | undefined;
+  /** Signals the service to stop. Default: SIGTERM (Windows: `process.kill(pid)`). */
+  kill?: (pid: number, signal?: NodeJS.Signals) => void;
+  startTimeoutMs?: number;
+  stopTimeoutMs?: number;
+  pollMs?: number;
+}
+
+/** Detached, no shell, no stdio: the service must outlive this process. */
+function spawnDetached(entry: string, args: string[]): SpawnedService {
+  let exit: number | null = null;
+  const child = spawn(process.execPath, [entry, ...args], {
+    detached: true,
+    shell: false,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.on("exit", (code) => {
+    exit = code ?? -1;
+  });
+  child.on("error", () => {
+    exit = -1;
+  });
+  child.unref();
+  return { exitCode: () => exit };
+}
+
+function defaultKill(pid: number, signal?: NodeJS.Signals): void {
+  if (process.platform === "win32") process.kill(pid);
+  else process.kill(pid, signal ?? "SIGTERM");
+}
+
+export function createServiceCommand(deps: ServiceDeps = {}): Command {
+  const cli = deps.cli ?? defaultCliEnv();
+  const startTimeoutMs = deps.startTimeoutMs ?? 10_000;
+  const stopTimeoutMs = deps.stopTimeoutMs ?? 5_000;
+  const pollMs = deps.pollMs ?? 100;
+  const kill = deps.kill ?? defaultKill;
+  const spawnService =
+    deps.spawnService ??
+    ((args: string[]) => spawnDetached(deps.serviceEntry ?? resolveServiceEntry(), args));
+
+  async function start(args: string[], io: Parameters<Command["run"]>[1]): Promise<number> {
+    const { values } = parseFlags(
+      args,
+      { "data-dir": { type: "string" }, port: { type: "string" } },
+      { min: 0, max: 0 },
+    );
+    const port = values.port;
+    if (port !== undefined && (!/^\d{1,5}$/.test(port) || Number(port) > 65535)) {
+      throw new UsageError(`Invalid --port: ${port} (expected 0-65535)`);
+    }
+    const dataDir = resolveDataDirFor(cli, values["data-dir"]);
+
+    const current = await probeService(dataDir);
+    if (current.state === "running") {
+      io.out(`already running on port ${current.info.port}\n`);
+      return EXIT_OK;
+    }
+    try {
+      let real = dataDir;
+      try {
+        real = realpathSync(dataDir);
+      } catch {
+        // not created yet: check the path as given
+      }
+      assertNotInGitCheckout(real, existsSync);
+    } catch {
+      io.err(`error: the data dir is inside a git checkout: ${dataDir}\n`);
+      return EXIT_FAILURE;
+    }
+
+    const child = spawnService([
+      "--data-dir",
+      dataDir,
+      ...(port !== undefined ? ["--port", port] : []),
+    ]);
+    const deadline = performance.now() + startTimeoutMs;
+    for (;;) {
+      const now = await probeService(dataDir);
+      if (now.state === "running") {
+        io.out(`started on port ${now.info.port}\n`);
+        return EXIT_OK;
+      }
+      const code = child ? child.exitCode() : null;
+      if (code !== null) {
+        io.err(`error: the service exited (code ${code}) before it became ready\n`);
+        return EXIT_FAILURE;
+      }
+      if (performance.now() >= deadline) {
+        io.err(`error: the service did not become ready within ${startTimeoutMs / 1000}s\n`);
+        return EXIT_FAILURE;
+      }
+      await sleep(pollMs);
+    }
+  }
+
+  async function stop(args: string[], io: Parameters<Command["run"]>[1]): Promise<number> {
+    const { values } = parseFlags(args, { "data-dir": { type: "string" } }, { min: 0, max: 0 });
+    const dataDir = resolveDataDirFor(cli, values["data-dir"]);
+    const svc = await probeService(dataDir);
+    if (svc.state === "stopped") {
+      io.out("not running\n");
+      return EXIT_OK;
+    }
+    if (svc.state === "unresponsive") {
+      // Never signal a pid we cannot tie to the service: it may be a recycled pid.
+      io.err(
+        `error: pid ${svc.info.pid} is alive but not answering on port ${svc.info.port}; not signalling it\n`,
+      );
+      return EXIT_FAILURE;
+    }
+    try {
+      kill(svc.info.pid, process.platform === "win32" ? undefined : "SIGTERM");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
+    }
+    const lock = runtimeFiles(dataDir).lock;
+    const deadline = performance.now() + stopTimeoutMs;
+    while (existsSync(lock)) {
+      if (performance.now() >= deadline) {
+        io.err(`error: the service did not stop within ${stopTimeoutMs / 1000}s\n`);
+        return EXIT_FAILURE;
+      }
+      await sleep(pollMs);
+    }
+    io.out("stopped\n");
+    return EXIT_OK;
+  }
+
+  async function status(args: string[], io: Parameters<Command["run"]>[1]): Promise<number> {
+    const { values } = parseFlags(args, { "data-dir": { type: "string" } }, { min: 0, max: 0 });
+    const dataDir = resolveDataDirFor(cli, values["data-dir"]);
+    const svc = await probeService(dataDir);
+    if (svc.state === "running") {
+      const { port, pid, serviceVersion } = svc.info;
+      io.out(`running on port ${port} (pid ${pid}, version ${serviceVersion})\n`);
+      return EXIT_OK;
+    }
+    if (svc.state === "unresponsive") {
+      io.out(`not responding on port ${svc.info.port} (pid ${svc.info.pid})\n`);
+      return EXIT_FAILURE;
+    }
+    io.out("stopped\n");
+    return EXIT_OK;
+  }
+
+  return {
+    name: "service",
+    summary: "Control the local service: start, stop or status",
+    run: (args, io) =>
+      guarded(USAGE, io, async () => {
+        const [sub, ...rest] = args;
+        if (sub === "start") return start(rest, io);
+        if (sub === "stop") return stop(rest, io);
+        if (sub === "status") return status(rest, io);
+        throw new UsageError(sub ? `Unknown subcommand: ${sub}` : "Missing subcommand");
+      }),
+  };
+}
+
+export const serviceCommand: Command = createServiceCommand();
