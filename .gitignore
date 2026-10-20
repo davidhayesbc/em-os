@@ -57,3 +57,4 @@ artifacts/
 .cache/
 .package/
 .emos-dev-data/
+*.code-workspace
