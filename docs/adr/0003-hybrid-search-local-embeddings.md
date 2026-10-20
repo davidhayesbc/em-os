@@ -39,3 +39,19 @@ Ask ("what did we decide about the ledger migration last month?") needs semantic
 ## Consequences
 
 Semantic features need Ollama or another configured embedder; onboarding checks for one. Reindexing takes minutes and runs as a visible background task. Date pre-filtering keeps brute-force search cheap as history grows.
+
+## Spike result (2026-10-19)
+
+Benchmark: `spikes/s5-ollama/bench.ts` (`node --experimental-strip-types spikes/s5-ollama/bench.ts`, no dependencies). It sends 2,000 synthetic English chunks (~375 tokens each) to `POST /api/embed` with `input: string[]`. Hardware: Apple M5 Pro, macOS, Ollama 0.40.6, Node 26.4 (Node 24 is the supported runtime but was not installed on the bench machine). Throughput was measured on one machine only; treat it as an order of magnitude.
+
+| Model | Dimension | Batch | Chunks/s | Ollama RSS (peak, server + runner) |
+| --- | --- | --- | --- | --- |
+| `nomic-embed-text` | 768 | 16 | 64.1 | ~502 MiB |
+| `nomic-embed-text` | 768 | 64 | 79.3 | ~504 MiB |
+| `mxbai-embed-large` | 1024 | 16 | 32.0 | ~890 MiB |
+| `mxbai-embed-large` | 1024 | 64 | 35.2 | ~893 MiB |
+
+- **Default embedder: `nomic-embed-text`, dimension 768, batch size 64.** It is about twice as fast and uses about 45% less memory than `mxbai-embed-large`, and its larger vectors buy nothing we have measured. `mxbai-embed-large` (1024 dimensions) stays selectable as the configurable alternative. Retrieval quality was not evaluated in this spike; throughput and memory only.
+- **Initial index:** 100k chunks takes about 21 minutes at ~79 chunks/s, so reindexing runs as a visible background task. Batch 64 is about 20% faster than batch 16 for `nomic-embed-text`; larger batches were not tried.
+- **Brute-force cosine:** 50,000 L2-normalised Float32 vectors, top-50, plain loop over one contiguous `Float32Array`, run in a `worker_threads` Worker. Median of 9 runs: **23.8 ms at 768 dimensions** (146 MiB matrix) and 32.0 ms at 1024 dimensions (195 MiB). The target is < 300 ms (spec §13), met with roughly 10x headroom, which confirms that `sqlite-vec` is not needed at this scale. The matrix size is the full 50k set; after the date pre-filter the working set is smaller.
+- **Windows re-run:** on Windows x64, rerun the bench and record chunks/s (Ollama uses CPU or an available GPU, so it will differ), RSS (the bench reads RSS via `ps`, which is absent there, so it reports `NaN`; read `ollama.exe` and the runner from Task Manager or `Get-Process ollama*` instead), and the cosine median. The cosine test needs no Ollama and runs with `MODELS= COSINE_RUNS=9`.
