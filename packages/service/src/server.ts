@@ -23,7 +23,6 @@ import {
   runtimePaths,
   type ServiceConfig,
   type ServiceInfo,
-  shouldValidateOutput,
 } from "./config.js";
 import { createContext, type ServiceContext } from "./context.js";
 import { createEventBus, type EventBus, serveEvents } from "./events.js";
@@ -215,7 +214,7 @@ function createRequestListener(
     }
 
     const started = performance.now();
-    const result = await dispatchRpc(ctx, opName, body, { validateOutput: config.validateOutput });
+    const result = await dispatchRpc(ctx, opName, body, {});
     const ms = Math.round(performance.now() - started);
     if (result.body.ok) {
       log.info("rpc", { op: opName, status: result.status, ms });
@@ -317,7 +316,6 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
       startedAt: toDbInstant(clock.now()),
       heartbeatMs: opts.heartbeatMs ?? HEARTBEAT_MS,
       maxBodyBytes: MAX_BODY_BYTES,
-      validateOutput: shouldValidateOutput(process.env),
     };
     const context = createContext({ config, clock, log, secrets, events });
     ctx = context;

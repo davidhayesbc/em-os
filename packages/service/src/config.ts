@@ -19,8 +19,6 @@ export interface ServiceConfig {
   startedAt: string;
   heartbeatMs: number;
   maxBodyBytes: number;
-  /** Validate handler output against the op's output schema (off when NODE_ENV=production). */
-  validateOutput: boolean;
 }
 
 /** Contents of `run/service.json`. Clients read it to find the port; it holds no secrets. */
@@ -50,11 +48,6 @@ export function runtimePaths(dataDir: string): RuntimePaths {
     token: join(runDir, "token"),
     lock: join(runDir, "service.lock"),
   };
-}
-
-/** Output validation runs everywhere except `NODE_ENV=production`. */
-export function shouldValidateOutput(env: NodeJS.ProcessEnv): boolean {
-  return env.NODE_ENV !== "production";
 }
 
 /** `version` from this package's package.json (beside `src/` and `dist/`). */

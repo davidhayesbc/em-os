@@ -1,4 +1,5 @@
-// `POST /rpc/:op` dispatch: op lookup, input validation, handler call, error mapping.
+// `POST /rpc/:op` dispatch: op lookup, input validation, handler call, output parsing, error
+// mapping.
 // Logs carry op names, error codes and error class names only, never bodies or messages.
 import { ApiError, ops as defaultOps, type ErrorCode } from "@emos/api-contract";
 import type { ServiceContext } from "./context.js";
@@ -63,7 +64,6 @@ export async function dispatchRpc(
   opName: string,
   rawBody: string,
   opts: {
-    validateOutput: boolean;
     ops?: Record<string, OpLike>;
     handlers?: Record<string, AnyHandler | undefined>;
   },
@@ -97,12 +97,13 @@ export async function dispatchRpc(
     return errorResult("internal", "Internal error");
   }
 
-  if (opts.validateOutput) {
-    const out = op.output.safeParse(result);
-    if (!out.success) {
-      ctx.log.error("rpc.output_invalid", { op: opName, issues: out.error.issues.length });
-      return errorResult("internal", "Handler output failed validation");
-    }
+  // Always parse, in every mode, and return the *parsed* value: object schemas strip unknown
+  // keys, so a field a handler adds by mistake (a secret, an internal id) never leaves the
+  // service. Invalid output fails closed rather than returning unparsed data.
+  const out = op.output.safeParse(result);
+  if (!out.success) {
+    ctx.log.error("rpc.output_invalid", { op: opName, issues: out.error.issues.length });
+    return errorResult("internal", "Handler output failed validation");
   }
-  return { status: 200, body: { ok: true, result } };
+  return { status: 200, body: { ok: true, result: out.data } };
 }

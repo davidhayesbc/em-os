@@ -16,7 +16,7 @@ import { createClient, httpTransport, type ServerEvent } from "@emos/api-contrac
 import { dataLayout } from "@emos/store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { TOKEN_KEY } from "./auth.js";
-import { DEFAULT_PORT, parseArgs, runtimePaths, shouldValidateOutput } from "./config.js";
+import { DEFAULT_PORT, parseArgs, runtimePaths } from "./config.js";
 import { createEventBus } from "./events.js";
 import { createKeychainSecretStore, createMemorySecretStore } from "./secrets.js";
 import { startService } from "./server.js";
@@ -471,15 +471,6 @@ describe("startService defaults", () => {
     expect(existsSync(runtimePaths(dataDir).serviceJson)).toBe(false);
     // and a normal start works afterwards
     await startTestService({ dataDir });
-  });
-});
-
-describe("shouldValidateOutput", () => {
-  it("validates handler output except in production", () => {
-    expect(shouldValidateOutput({})).toBe(true);
-    expect(shouldValidateOutput({ NODE_ENV: "test" })).toBe(true);
-    expect(shouldValidateOutput({ NODE_ENV: "development" })).toBe(true);
-    expect(shouldValidateOutput({ NODE_ENV: "production" })).toBe(false);
   });
 });
 

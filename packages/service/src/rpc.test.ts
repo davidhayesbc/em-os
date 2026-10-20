@@ -26,16 +26,11 @@ function fakeCtx() {
   return { ctx: { log } as unknown as ServiceContext, log };
 }
 
-async function dispatch(
-  body: string,
-  handler: AnyHandler,
-  opts: { validateOutput?: boolean; op?: string } = {},
-) {
+async function dispatch(body: string, handler: AnyHandler, opts: { op?: string } = {}) {
   const { ctx, log } = fakeCtx();
   const res = await dispatchRpc(ctx, opts.op ?? "test.echo", body, {
     ops: testOps,
     handlers: { "test.echo": handler },
-    validateOutput: opts.validateOutput ?? true,
   });
   return { ...res, log };
 }
@@ -68,7 +63,6 @@ describe("dispatchRpc", () => {
     const res = await dispatchRpc(ctx, "test.echo", "{}", {
       ops: testOps,
       handlers: {},
-      validateOutput: true,
     });
     expect(res).toMatchObject({ status: 404, body: { ok: false, error: { code: "not_found" } } });
   });
@@ -138,10 +132,18 @@ describe("dispatchRpc", () => {
     expect(res).toMatchObject({ status: 500, body: { ok: false, error: { code: "internal" } } });
   });
 
-  it("does not validate output when validateOutput is false (production)", async () => {
-    const bad: AnyHandler = () => ({ length: "nope" });
-    const res = await dispatch(JSON.stringify({ text: "x" }), bad, { validateOutput: false });
-    expect(res).toMatchObject({ status: 200, body: { ok: true, result: { length: "nope" } } });
+  it("returns the parsed output: fields outside the op's schema are stripped", async () => {
+    const leaky: AnyHandler = () => ({ length: 1, token: "s3cret", nested: { key: "k" } });
+    const res = await dispatch(JSON.stringify({ text: "x" }), leaky);
+    expect(res).toEqual({ status: 200, body: { ok: true, result: { length: 1 } }, log: res.log });
+    expect(JSON.stringify(res.body)).not.toContain("s3cret");
+  });
+
+  it("invalid output fails closed: no unparsed data is ever returned", async () => {
+    const bad: AnyHandler = () => ({ length: "nope", token: "s3cret" });
+    const res = await dispatch(JSON.stringify({ text: "x" }), bad);
+    expect(res).toMatchObject({ status: 500, body: { ok: false, error: { code: "internal" } } });
+    expect(JSON.stringify(res.body)).not.toContain("s3cret");
   });
 });
 
