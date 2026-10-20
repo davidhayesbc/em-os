@@ -1,15 +1,13 @@
 import {
-  copyFileSync,
   existsSync,
-  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +16,13 @@ import { openDb } from "@emos/store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ServiceContext } from "../context.js";
 import { cleanup, startTestService, tmpDir } from "../test-helpers.js";
-import { makeBackupCreate, type PublishOps, publishBackup } from "./backup.js";
+import {
+  defaultPublishOps,
+  hasCleanSegments,
+  makeBackupCreate,
+  type PublishOps,
+  publishBackup,
+} from "./backup.js";
 
 afterEach(cleanup);
 
@@ -122,12 +126,7 @@ function errno(code: string): NodeJS.ErrnoException {
 
 /** Real fs operations with overrides, to force failures. */
 function ops(over: Partial<PublishOps> = {}): PublishOps {
-  return {
-    link: linkSync,
-    copyExcl: (src, dest) => copyFileSync(src, dest, 1),
-    remove: (p) => rmSync(p, { force: true }),
-    ...over,
-  };
+  return { ...defaultPublishOps, ...over };
 }
 
 /** A context whose database "backup" writes a small known file. */
@@ -168,8 +167,8 @@ describe("publishing a backup", () => {
         link: () => {
           throw errno("EPERM");
         },
-        copyExcl: (_src, to) => {
-          writeFileSync(to, "par"); // partial
+        copyToFd: (_src, fd) => {
+          writeSync(fd, "par"); // partial
           throw errno("ENOSPC");
         },
       }),
@@ -205,7 +204,7 @@ describe("publishing a backup", () => {
         link: () => {
           throw errno("EACCES");
         },
-        copyExcl: () => {
+        openExcl: () => {
           throw new Error("must not copy");
         },
       }),
@@ -245,5 +244,108 @@ describe("backup.create path normalisation", () => {
       });
     }
     expect(readdirSync(dir).sort()).toEqual(["lnk", "real"]);
+  });
+});
+
+describe("owner-safe cleanup in the copy fallback", () => {
+  it("a file another party creates between the failed link and the copy survives", async () => {
+    const dir = tmpDir();
+    const dest = join(dir, "copy.db");
+    const handler = makeBackupCreate(
+      ops({
+        link: () => {
+          writeFileSync(dest, "theirs"); // appears in the race window
+          throw errno("EPERM");
+        },
+      }),
+    );
+    await expect(handler(fakeCtx(), { dest })).rejects.toMatchObject({ code: "conflict" });
+    expect(readFileSync(dest, "utf8")).toBe("theirs");
+    expect(readdirSync(dir)).toEqual(["copy.db"]);
+  });
+
+  it("a copy that fails before writing (source unreadable) removes only our own dest", () => {
+    const dir = tmpDir();
+    const dest = join(dir, "dest");
+    expect(() =>
+      publishBackup(
+        join(dir, "missing-source"),
+        dest,
+        ops({
+          link: () => {
+            throw errno("EPERM");
+          },
+        }),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "ENOENT" }));
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("an existing dest is never removed when our exclusive open fails", () => {
+    const dir = tmpDir();
+    const tmp = join(dir, "tmp");
+    const dest = join(dir, "dest");
+    writeFileSync(tmp, "new");
+    writeFileSync(dest, "theirs");
+    const removed: string[] = [];
+    expect(() =>
+      publishBackup(
+        tmp,
+        dest,
+        ops({
+          link: () => {
+            throw errno("EPERM");
+          },
+          remove: (p) => removed.push(p),
+        }),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "conflict" }));
+    expect(removed).toEqual([]);
+    expect(readFileSync(dest, "utf8")).toBe("theirs");
+  });
+
+  it("the fallback copies every byte of a large file", () => {
+    const dir = tmpDir();
+    const tmp = join(dir, "tmp");
+    const dest = join(dir, "dest");
+    const data = Buffer.alloc(300_000, 7);
+    writeFileSync(tmp, data);
+    publishBackup(
+      tmp,
+      dest,
+      ops({
+        link: () => {
+          throw errno("EPERM");
+        },
+      }),
+    );
+    expect(readFileSync(dest).equals(data)).toBe(true);
+  });
+});
+
+describe("hasCleanSegments (separator-agnostic, same result on every platform)", () => {
+  it.each([
+    "C:\\Users\\d\\copy.db",
+    "C:/Users/d/copy.db",
+    "\\\\server\\share\\x.db",
+    "D:\\My Docs\\x.db",
+    "/a/b.db",
+    "/a/b c/zoë.db",
+  ])("accepts %s", (p) => {
+    expect(hasCleanSegments(p)).toBe(true);
+  });
+
+  it.each([
+    "/a/../b.db",
+    "C:\\a\\..\\b.db",
+    "C:/a/./b.db",
+    "/a//b.db",
+    "/a/b.db/",
+    "C:\\a\\b.db\\",
+    "\\\\server\\share\\..\\x.db",
+    "/",
+    "C:/",
+  ])("rejects %s", (p) => {
+    expect(hasCleanSegments(p)).toBe(false);
   });
 });
