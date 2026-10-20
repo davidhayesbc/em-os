@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { assertNotInGitCheckout } from "@emos/store-sqlite";
@@ -11,6 +11,7 @@ import {
   isPidAlive,
   parseFlags,
   probeService,
+  readLockPid,
   readServiceInfo,
   resolveDataDirFor,
   runtimeFiles,
@@ -70,12 +71,7 @@ function spawnDetached(entry: string, args: string[]): SpawnedService {
 /** Removes `service.lock` / `service.json` left by a process that died without cleaning up. */
 function removeLeftovers(dataDir: string, pid: number): void {
   const files = runtimeFiles(dataDir);
-  try {
-    if (readFileSync(files.lock, "utf8").trim() === String(pid))
-      rmSync(files.lock, { force: true });
-  } catch {
-    // already gone
-  }
+  if (readLockPid(dataDir) === pid) rmSync(files.lock, { force: true });
   const info = readServiceInfo(dataDir);
   if (info !== null && info !== "invalid" && info.pid === pid) {
     rmSync(files.serviceJson, { force: true });

@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runtimePaths } from "@emos/service";
+import { runtimePaths, parseLockPid as serviceParseLockPid } from "@emos/service";
 import { afterEach, describe, expect, it } from "vitest";
-import { runtimeFiles } from "../env.js";
+import { parseLockPid, readLockPid, runtimeFiles } from "../env.js";
 import {
   capture,
   cleanup,
@@ -17,6 +17,18 @@ import { createServiceCommand, resolveServiceEntry } from "./service.js";
 
 afterEach(cleanup);
 
+const LOCK_TEXTS = [
+  '{"pid":123,"startedAt":"2026-10-20T16:00:00.000Z"}\n',
+  "123\n",
+  " 77 ",
+  "",
+  "abc",
+  "{",
+  '{"pid":"12"}',
+  '{"pid":-1}',
+  "12abc",
+];
+
 type Deps = Parameters<typeof createServiceCommand>[0];
 
 async function service(dataDir: string, args: string[], deps: Partial<Deps> = {}) {
@@ -30,6 +42,23 @@ describe("runtime file layout", () => {
   it("matches @emos/service's runtimePaths", () => {
     const dataDir = join(tmpDir(), "d");
     expect(runtimeFiles(dataDir)).toEqual(runtimePaths(dataDir));
+  });
+
+  it.each(LOCK_TEXTS)("parseLockPid matches @emos/service for %j", (text) => {
+    expect(parseLockPid(text)).toBe(serviceParseLockPid(text));
+  });
+
+  it("readLockPid reads both lock formats", () => {
+    const dataDir = tmpDir();
+    expect(readLockPid(dataDir)).toBeNull();
+    mkdirSync(join(dataDir, "run"));
+    writeFileSync(runtimeFiles(dataDir).lock, "7777\n");
+    expect(readLockPid(dataDir)).toBe(7777);
+    writeFileSync(
+      runtimeFiles(dataDir).lock,
+      '{"pid":8888,"startedAt":"2026-10-20T16:00:00.000Z"}',
+    );
+    expect(readLockPid(dataDir)).toBe(8888);
   });
 });
 

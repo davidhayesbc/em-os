@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runtimePaths } from "@emos/service";
+import { runtimePaths, parseLockPid as serviceParseLockPid } from "@emos/service";
 import {
   assertNotInGitCheckout as storeAssertNotInGitCheckout,
   resolveDataDir as storeResolveDataDir,
@@ -9,12 +9,26 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertNotInGitCheckout,
+  parseLockPid,
+  readLockPid,
   readServiceInfo,
   readToken,
   resolveDataDir,
   resolveWebviewDist,
   runtimeFiles,
 } from "./runtime.js";
+
+const LOCK_TEXTS = [
+  '{"pid":123,"startedAt":"2026-10-20T16:00:00.000Z"}\n',
+  "123\n",
+  " 77 ",
+  "",
+  "abc",
+  "{",
+  '{"pid":"12"}',
+  '{"pid":-1}',
+  "12abc",
+];
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -65,6 +79,23 @@ describe("runtime paths (duplicated to keep node:sqlite and the keychain out of 
   it("runtimeFiles matches @emos/service's runtimePaths", () => {
     const d = join(tmp(), "d");
     expect(runtimeFiles(d)).toEqual(runtimePaths(d));
+  });
+
+  it.each(LOCK_TEXTS)("parseLockPid matches @emos/service for %j", (text) => {
+    expect(parseLockPid(text)).toBe(serviceParseLockPid(text));
+  });
+
+  it("readLockPid reads both lock formats", () => {
+    const d = tmp();
+    expect(readLockPid(d)).toBeNull();
+    mkdirSync(join(d, "run"));
+    writeFileSync(join(d, "run", "service.lock"), "7777\n");
+    expect(readLockPid(d)).toBe(7777);
+    writeFileSync(
+      join(d, "run", "service.lock"),
+      '{"pid":8888,"startedAt":"2026-10-20T16:00:00.000Z"}',
+    );
+    expect(readLockPid(d)).toBe(8888);
   });
 
   it("readServiceInfo: null when absent, 'invalid' when malformed, the info otherwise", () => {

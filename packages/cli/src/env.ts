@@ -71,6 +71,32 @@ export function readServiceInfo(dataDir: string): ServiceInfo | null | "invalid"
   return "invalid";
 }
 
+/**
+ * The owner pid in `run/service.lock`: `{"pid":1234,…}` or the old bare `1234`. Null when
+ * unparseable. Mirrors `parseLockPid` in @emos/service (a test pins the two together).
+ */
+export function parseLockPid(text: string): number | null {
+  const t = text.trim();
+  if (/^\d+$/.test(t)) return Number(t);
+  if (!t.startsWith("{")) return null;
+  try {
+    const v = JSON.parse(t) as { pid?: unknown } | null;
+    const pid = v?.pid;
+    return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The pid in `run/service.lock` (either format), or null when absent or unparseable. */
+export function readLockPid(dataDir: string): number | null {
+  try {
+    return parseLockPid(readFileSync(runtimeFiles(dataDir).lock, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 export function readToken(dataDir: string): string | null {
   try {
     return readFileSync(runtimeFiles(dataDir).token, "utf8").trim() || null;

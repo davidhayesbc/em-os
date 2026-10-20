@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AlreadyRunningError, acquireLock, isPidAlive } from "./lockfile.js";
+import { AlreadyRunningError, acquireLock, isPidAlive, parseLockPid } from "./lockfile.js";
 import { cleanup, tmpDir } from "./test-helpers.js";
 
 afterEach(cleanup);
@@ -46,12 +46,69 @@ describe("isPidAlive", () => {
 });
 
 describe("acquireLock", () => {
-  it("creates the lock file containing the pid", async () => {
+  it("creates the lock file containing { pid, startedAt } as JSON", async () => {
     const file = join(tmpDir(), "service.lock");
-    const lock = await acquireLock(file);
-    expect(readFileSync(file, "utf8").trim()).toBe(String(process.pid));
+    const lock = await acquireLock(file, { now: () => Date.parse("2026-10-20T16:00:00.000Z") });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      pid: process.pid,
+      startedAt: "2026-10-20T16:00:00.000Z",
+    });
     lock.release();
     expect(existsSync(file)).toBe(false);
+  });
+
+  it("still honours a live lock in the old pid-only format", async () => {
+    const file = join(tmpDir(), "service.lock");
+    writeFileSync(file, "4242\n");
+    await expect(acquireLock(file, { isAlive: (p) => p === 4242 })).rejects.toThrow(
+      /already running \(pid 4242\)/,
+    );
+  });
+
+  it("reclaims a lock older than system boot even when its pid is alive (recycled pid)", async () => {
+    const file = join(tmpDir(), "service.lock");
+    writeFileSync(file, JSON.stringify({ pid: 4242, startedAt: "2026-10-19T08:00:00.000Z" }));
+    const now = Date.parse("2026-10-20T16:00:00.000Z");
+    const uptimeSec = 3600; // booted at 15:00
+    utimesSync(file, new Date(now - 2 * 3600_000), new Date(now - 2 * 3600_000)); // 14:00
+    const lock = await acquireLock(file, {
+      pid: 1001,
+      isAlive: () => true, // 4242 now belongs to some unrelated process
+      now: () => now,
+      uptimeSec: () => uptimeSec,
+    });
+    expect(parseLockPid(readFileSync(file, "utf8"))).toBe(1001);
+    lock.release();
+  });
+
+  it("reclaims an old-format lock older than boot too", async () => {
+    const file = join(tmpDir(), "service.lock");
+    writeFileSync(file, "4242\n");
+    const now = Date.parse("2026-10-20T16:00:00.000Z");
+    utimesSync(file, new Date(now - 7200_000), new Date(now - 7200_000));
+    const lock = await acquireLock(file, {
+      pid: 1001,
+      isAlive: () => true,
+      now: () => now,
+      uptimeSec: () => 3600,
+    });
+    expect(parseLockPid(readFileSync(file, "utf8"))).toBe(1001);
+    lock.release();
+  });
+
+  it("keeps a lock taken after boot whose pid is alive", async () => {
+    const file = join(tmpDir(), "service.lock");
+    writeFileSync(file, JSON.stringify({ pid: 4242, startedAt: "2026-10-20T15:30:00.000Z" }));
+    const now = Date.parse("2026-10-20T16:00:00.000Z");
+    utimesSync(file, new Date(now - 1800_000), new Date(now - 1800_000)); // 15:30, after boot
+    await expect(
+      acquireLock(file, {
+        pid: 1001,
+        isAlive: () => true,
+        now: () => now,
+        uptimeSec: () => 3600,
+      }),
+    ).rejects.toBeInstanceOf(AlreadyRunningError);
   });
 
   it("refuses a lock held by a live pid with 'already running'", async () => {
@@ -67,7 +124,7 @@ describe("acquireLock", () => {
     const file = join(tmpDir(), "service.lock");
     writeFileSync(file, String(deadPid()));
     const lock = await acquireLock(file);
-    expect(readFileSync(file, "utf8").trim()).toBe(String(process.pid));
+    expect(parseLockPid(readFileSync(file, "utf8"))).toBe(process.pid);
     lock.release();
   });
 
@@ -82,7 +139,7 @@ describe("acquireLock", () => {
     const file = join(tmpDir(), "service.lock");
     writeFileSync(file, "not a pid");
     const lock = await acquireLock(file, { partialWriteGraceMs: 10 });
-    expect(readFileSync(file, "utf8").trim()).toBe(String(process.pid));
+    expect(parseLockPid(readFileSync(file, "utf8"))).toBe(process.pid);
     lock.release();
   });
 
@@ -113,4 +170,19 @@ describe("acquireLock", () => {
     lock.release();
     expect(() => lock.release()).not.toThrow();
   });
+});
+
+describe("parseLockPid", () => {
+  it("reads the JSON format and the old pid-only format", () => {
+    expect(parseLockPid('{"pid":123,"startedAt":"2026-10-20T16:00:00.000Z"}\n')).toBe(123);
+    expect(parseLockPid("123\n")).toBe(123);
+    expect(parseLockPid(" 77 ")).toBe(77);
+  });
+
+  it.each(["", "abc", "{", '{"pid":"12"}', '{"pid":-1}', '{"pid":1.5}', "[1]", "null", "12abc"])(
+    "rejects %j",
+    (t) => {
+      expect(parseLockPid(t)).toBeNull();
+    },
+  );
 });

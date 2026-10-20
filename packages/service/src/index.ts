@@ -12,7 +12,7 @@ export {
 export type { Handler, ServiceContext } from "./context.js";
 export { createEventBus, type EventBus } from "./events.js";
 export { handlers } from "./handlers/index.js";
-export { AlreadyRunningError, isPidAlive } from "./lockfile.js";
+export { AlreadyRunningError, isPidAlive, parseLockPid } from "./lockfile.js";
 export { createKeychainSecretStore, createMemorySecretStore } from "./secrets.js";
 export {
   createStderrLogger,
