@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient, httpTransport } from "@emos/api-contract";
 import { openDb } from "@emos/store-sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ServiceContext } from "../context.js";
 import { cleanup, startTestService, tmpDir } from "../test-helpers.js";
 import {
@@ -347,5 +347,43 @@ describe("hasCleanSegments (separator-agnostic, same result on every platform)",
     "C:/",
   ])("rejects %s", (p) => {
     expect(hasCleanSegments(p)).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("backup file mode (POSIX)", () => {
+  let previous: number;
+  beforeEach(() => {
+    previous = process.umask(0o022); // the common default: new files would be 0644
+  });
+  afterEach(() => {
+    process.umask(previous);
+  });
+
+  const mode = (p: string) => statSync(p).mode & 0o777;
+
+  it("a hard-linked backup is 0600 under umask 022", async () => {
+    const { client } = await setup();
+    const dest = join(tmpDir(), "linked.db");
+    await client.call("backup.create", { dest });
+    expect(mode(dest)).toBe(0o600);
+  });
+
+  it("a copied backup (no hard links) is 0600 under umask 022", async () => {
+    const dest = join(tmpDir(), "copied.db");
+    const handler = makeBackupCreate(
+      ops({
+        link: () => {
+          throw errno("EXDEV");
+        },
+      }),
+    );
+    await handler(fakeCtx(), { dest });
+    expect(mode(dest)).toBe(0o600);
+  });
+
+  it("the fake snapshot really is created 0644 first (the test exercises the chmod)", () => {
+    const p = join(tmpDir(), "probe");
+    writeFileSync(p, "x");
+    expect(mode(p)).toBe(0o644);
   });
 });

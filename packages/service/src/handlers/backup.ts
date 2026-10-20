@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  chmodSync,
   closeSync,
   fsyncSync,
   linkSync,
@@ -15,6 +16,8 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { ApiError } from "@emos/api-contract";
 import { assertNotInGitCheckout, toDbInstant } from "@emos/store-sqlite";
 import type { Handler } from "../context.js";
+
+const POSIX = process.platform !== "win32";
 
 function exists(path: string): boolean {
   try {
@@ -179,6 +182,10 @@ export function makeBackupCreate(ops: PublishOps = defaultPublishOps): Handler<"
     );
     try {
       await ctx.db.backup(tmp);
+      // The snapshot is created with the process umask (often 0644). Tighten it before it is
+      // published: a hard link shares the inode, so dest gets 0600 too (the copy fallback
+      // creates dest 0600 itself).
+      if (POSIX) chmodSync(tmp, 0o600);
       publishBackup(tmp, dest, ops);
     } finally {
       ops.remove(tmp);
