@@ -2,7 +2,8 @@
 // Run: node --experimental-strip-types spikes/s5-ollama/bench.ts   (Node >= 24; no dependencies)
 // Env: OLLAMA_URL (default http://127.0.0.1:11434), MODELS (comma list), CHUNKS (default 2000),
 //      COSINE_N (default 50000), COSINE_RUNS (default 9).
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
 const WORDS =
@@ -47,6 +48,7 @@ function makeChunks(count: number): string[] {
   return chunks;
 }
 
+const execFileAsync = promisify(execFile);
 const base = process.env.OLLAMA_URL ?? "http://127.0.0.1:11434";
 
 async function embed(model: string, input: string[], keepAlive?: number): Promise<number[][]> {
@@ -63,16 +65,22 @@ async function embed(model: string, input: string[], keepAlive?: number): Promis
   return ((await res.json()) as { embeddings: number[][] }).embeddings;
 }
 
-/** Sum of RSS (MiB) across the Ollama server and its model runner processes (not the desktop app UI). */
-function ollamaRssMiB(): number {
+/**
+ * Sum of RSS (MiB) across the Ollama server and its model runner processes. The macOS desktop UI
+ * (`.../Contents/MacOS/Ollama`) is excluded. Async so sampling never blocks timed requests.
+ * Apple Silicon: RSS may under-report Metal/unified-memory weights, so treat it as a lower bound.
+ */
+async function ollamaRssMiB(): Promise<number> {
   try {
-    const out = execFileSync("ps", ["-axo", "rss=,comm="], { encoding: "utf8" });
+    const { stdout } = await execFileAsync("ps", ["-axo", "rss=,comm="]);
     let kib = 0;
-    for (const line of out.split("\n")) {
+    for (const line of stdout.split("\n")) {
       const m = /^\s*(\d+)\s+(.*)$/.exec(line);
-      const name = (m?.[2] ?? "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
-      if (m && /^(ollama|llama-server|ollama_llama_server)(\.exe)?$/.test(name))
-        kib += Number(m[1]);
+      if (!m) continue;
+      const path = m[2] as string;
+      if (/[\\/]macos[\\/]/i.test(path)) continue; // desktop UI binary
+      const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+      if (/^(ollama|llama-server|ollama_llama_server)(\.exe)?$/.test(name)) kib += Number(m[1]);
     }
     return kib / 1024;
   } catch {
@@ -86,8 +94,14 @@ async function benchModel(model: string, chunks: string[], batchSizes: number[])
   results.dimension = warm[0]?.length;
   for (const batch of batchSizes) {
     let peak = 0;
+    let sampling = false;
     const timer = setInterval(() => {
-      peak = Math.max(peak, ollamaRssMiB());
+      if (sampling) return;
+      sampling = true;
+      void ollamaRssMiB().then((v) => {
+        peak = Math.max(peak, v);
+        sampling = false;
+      });
     }, 250);
     const t0 = performance.now();
     let n = 0;
@@ -96,7 +110,7 @@ async function benchModel(model: string, chunks: string[], batchSizes: number[])
     }
     const secs = (performance.now() - t0) / 1000;
     clearInterval(timer);
-    peak = Math.max(peak, ollamaRssMiB());
+    peak = Math.max(peak, await ollamaRssMiB());
     results[`batch${batch}`] = {
       chunks: n,
       seconds: Number(secs.toFixed(1)),
