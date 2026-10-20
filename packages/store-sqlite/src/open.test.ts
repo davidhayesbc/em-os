@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { constants, DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -81,6 +81,31 @@ describe("openDb", () => {
     expect(
       copy.prepare("SELECT name FROM sqlite_master WHERE name = 'test_extra'").get(),
     ).toBeUndefined();
+  });
+
+  it("a stale pre-<name>.db from an earlier attempt is replaced with the current state", () => {
+    const file = tmp();
+    const first = openDb(file);
+    addPerson(first, "per_1");
+    first.close();
+
+    const backupsDir = join(dirname(file), "bk");
+    mkdirSync(backupsDir, { recursive: true });
+    const backup = join(backupsDir, "pre-p9-97_test.db");
+    writeFileSync(backup, "stale bytes from a failed attempt long ago");
+
+    // Data written since that attempt must be in the new snapshot.
+    const second = openDb(file);
+    addPerson(second, "per_2");
+    second.close();
+
+    const extra = { name: "p9-97_test", sql: "CREATE TABLE test_extra3 (id TEXT) STRICT;" };
+    track(openDb(file, { backupsDir, migrations: [...migrations, extra] }));
+
+    const copy = track(openDb(backup, { migrations: [...migrations], backupsDir }));
+    expect(copy.prepare("SELECT count(*) AS n FROM people").get()).toEqual({ n: 2 });
+    // Written via a temp file + rename: nothing else is left in the backups dir.
+    expect(readdirSync(backupsDir).filter((f) => !f.startsWith("pre-p9-97_test.db"))).toEqual([]);
   });
 
   it("does not back up a brand-new database", () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Db, openSqlite } from "./driver.js";
 import { type Migration, migrate, pendingMigrations } from "./migrate.js";
@@ -21,7 +21,7 @@ const POSIX = process.platform !== "win32";
  * if needed. Sets WAL, foreign_keys=ON and busy_timeout=5000, then migrates.
  *
  * If the file already held a database with pending migrations, a snapshot is written first to
- * `<backupsDir>/pre-<first-pending-name>.db` (kept if it already exists from an earlier try).
+ * `<backupsDir>/pre-<first-pending-name>.db`, replacing one left by an earlier attempt.
  *
  * Callers are responsible for `assertNotInGitCheckout` on the data dir (the service does it).
  */
@@ -53,7 +53,16 @@ export function openDb(file: string, opts: OpenDbOptions = {}): Db {
  * rather than the async `Db.backup`. ADR 0002 lists it as the backup fallback.
  */
 function backupBeforeMigrating(db: Db, target: string): void {
-  if (existsSync(target)) return; // an earlier attempt already captured the pre-migration state
   mkdirSync(dirname(target), { recursive: true, ...(POSIX ? { mode: 0o700 } : {}) });
-  db.prepare("VACUUM INTO ?").run(target);
+  // Always take a fresh snapshot: a `pre-<name>.db` left by an earlier failed attempt predates
+  // everything written since. VACUUM INTO needs a new file, so write a temp file and rename it
+  // over the target; a crash midway leaves the old backup intact.
+  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    db.prepare("VACUUM INTO ?").run(tmp);
+    renameSync(tmp, target);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
 }
