@@ -29,7 +29,7 @@ import { createContext, type ServiceContext } from "./context.js";
 import { createEventBus, type EventBus, serveEvents } from "./events.js";
 import { acquireLock, type Lock } from "./lockfile.js";
 import { dispatchRpc, errorResult, type RpcResult } from "./rpc.js";
-import { createKeychainSecretStore } from "./secrets.js";
+import { createKeychainSecretStore, createMemorySecretStore, secretStoreKind } from "./secrets.js";
 
 const POSIX = process.platform !== "win32";
 const LOOPBACK = "127.0.0.1";
@@ -39,7 +39,10 @@ export interface StartServiceOptions {
   dataDir: string;
   /** Preferred port (default 47821). If it is in use, an ephemeral port is used. 0 = ephemeral. */
   port?: number;
-  /** Default: the OS keychain (service name `em-os`). */
+  /**
+   * Default: the OS keychain (service name `em-os`), or the in-memory store when the test-only
+   * `EMOS_SECRET_STORE=memory` is set together with `EMOS_DATA_DIR` (see `secretStoreKind`).
+   */
   secrets?: SecretStore;
   clock?: Clock;
   /** Default: one line per event on stderr (event name + ids/counts). */
@@ -269,6 +272,16 @@ function writeJsonAtomic(path: string, value: unknown): void {
   renameSync(tmp, path);
 }
 
+function defaultSecretStore(log: Logger): SecretStore {
+  const { kind, ignored } = secretStoreKind(process.env);
+  if (ignored) log.warn("service.secret_store_override_ignored");
+  if (kind === "memory") {
+    log.warn("service.secret_store_memory");
+    return createMemorySecretStore();
+  }
+  return createKeychainSecretStore();
+}
+
 /**
  * Starts the service on 127.0.0.1: checks the data dir, takes the single-instance lock, opens
  * and migrates the database, loads (or creates) the token, listens, then writes
@@ -278,7 +291,7 @@ function writeJsonAtomic(path: string, value: unknown): void {
 export async function startService(opts: StartServiceOptions): Promise<RunningService> {
   const clock = opts.clock ?? systemClock;
   const log = opts.log ?? createStderrLogger(clock);
-  const secrets = opts.secrets ?? createKeychainSecretStore();
+  const secrets = opts.secrets ?? defaultSecretStore(log);
   const events = opts.events ?? createEventBus(log);
 
   // Refuse a checkout before creating anything in it; re-check the real path afterwards so a

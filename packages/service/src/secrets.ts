@@ -34,3 +34,20 @@ export function createMemorySecretStore(): SecretStore {
     },
   };
 }
+
+/**
+ * TEST-ONLY switch: `EMOS_SECRET_STORE=memory` selects {@link createMemorySecretStore} so smoke
+ * tests and the dev host never touch the real OS keychain. Honoured only when `EMOS_DATA_DIR`
+ * is also set (a throwaway data dir); otherwise, and for unknown values, the keychain is used
+ * and `ignored` is true so the caller can log it. Never set this for real use: the token then
+ * changes on every restart.
+ */
+export function secretStoreKind(env: NodeJS.ProcessEnv): {
+  kind: "keychain" | "memory";
+  ignored: boolean;
+} {
+  const requested = env.EMOS_SECRET_STORE;
+  if (requested === undefined || requested === "") return { kind: "keychain", ignored: false };
+  if (requested === "memory" && env.EMOS_DATA_DIR) return { kind: "memory", ignored: false };
+  return { kind: "keychain", ignored: true };
+}
