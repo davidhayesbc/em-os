@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Dated, IsoDateTime, LocalDate, type NewEntity } from "./common.js";
+import { Dated, IsoDateTime, LocalDate, LocalTime, type NewEntity, TimeZone } from "./common.js";
 
 export const Direction = z.enum(["mine", "owed_to_me"]);
 export type Direction = z.infer<typeof Direction>;
@@ -18,14 +18,15 @@ export type CreatedBy = z.infer<typeof CreatedBy>;
 
 export const CommitmentDue = z.object({
   date: LocalDate,
-  time: z.string().nullable(), // local wall-clock time, null = all day
-  timeZone: z.string(), // IANA zone
+  time: LocalTime.nullable(), // local wall-clock `HH:MM`, null = all day
+  timeZone: TimeZone,
 });
 export type CommitmentDue = z.infer<typeof CommitmentDue>;
 
 export const Recurrence = z.object({
   freq: z.enum(["daily", "weekly", "monthly"]),
   interval: z.number().int().positive(),
+  /** Weekdays 0-6 with 0 = Sunday (same as core `localWeekdayIndex` and `Date#getUTCDay`). */
   byWeekday: z.array(z.number().int().min(0).max(6)).nullable(),
   byMonthDay: z.number().int().min(1).max(31).nullable(),
 });
@@ -48,7 +49,7 @@ export const Commitment = Dated.extend({
   title: z.string(),
   notes: z.string(),
   pinned: z.boolean(),
-  effortMinutes: z.number().nullable(),
+  effortMinutes: z.number().int().min(1).max(1440).nullable(), // at most one day
   snoozedUntil: IsoDateTime.nullable(),
   completedAt: IsoDateTime.nullable(),
   recurrence: Recurrence.nullable(),

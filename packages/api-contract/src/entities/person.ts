@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Dated, type NewEntity, Sensitivity } from "./common.js";
+import { Dated, type NewEntity, Sensitivity, TimeZone } from "./common.js";
 
 export const Relationship = z.enum([
   "self",
@@ -18,7 +18,7 @@ export const Person = Dated.extend({
   pronouns: z.string().nullable(), // null = unknown
   aliases: z.array(z.string()),
   role: z.string().nullable(),
-  timeZone: z.string().nullable(), // IANA zone
+  timeZone: TimeZone.nullable(), // null = unknown
   archived: z.boolean(),
   oneOnOneCadenceDays: z.number().int().positive().nullable(),
 });

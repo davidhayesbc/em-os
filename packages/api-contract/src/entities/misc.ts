@@ -67,6 +67,12 @@ export type NewAccomplishment = NewEntity<Accomplishment>;
 export const AuditActor = z.enum(["user", "import", "system", "mcp"]);
 export type AuditActor = z.infer<typeof AuditActor>;
 
+/**
+ * One side of a diff. Must be present and JSON-representable: an empty value is `null`, never
+ * `undefined` (which `JSON.stringify` drops, losing the change).
+ */
+const DiffValue = z.unknown().refine((v) => v !== undefined, "Use null, not undefined");
+
 export const AuditEvent = z.object({
   id: z.string(),
   entity: z.string(),
@@ -75,6 +81,7 @@ export const AuditEvent = z.object({
   actor: AuditActor,
   at: IsoDateTime,
   note: z.string().nullable(),
-  diff: z.record(z.string(), z.object({ from: z.unknown(), to: z.unknown() })),
+  /** Changed field -> `{ from, to }`; both are required and use `null` for "empty". */
+  diff: z.record(z.string(), z.object({ from: DiffValue, to: DiffValue })),
 });
 export type AuditEvent = z.infer<typeof AuditEvent>;
