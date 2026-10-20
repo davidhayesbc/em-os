@@ -239,6 +239,8 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   | `snoozed` | `activate` (also implicit once `snoozedUntil` passes), `complete`, `drop`, `edit` |
   | `done` / `dropped` | `reopen` (user only) |
 
+- **Clearing `drop_reason`:** restoring or reopening a dropped commitment must clear `drop_reason` (set it to NULL) in the same UPDATE that changes the status. The `commitments` table CHECK (P0-10) only allows a non-null `drop_reason` while `status = 'dropped'`, so a separate UPDATE fails.
+
 - Ops: `commitments.list | get | create | update | complete | snooze {id, until} | drop {id, reason} | reopen | pin {id, pinned}`, and `goals.list | create | update`.
 - `commitments.get {id} → { commitment, sources: SourceItem[], audit: AuditEvent[] }`. Audit rows live in `audit_events` (P0-10).
 - **Recurrence:** `export function nextOccurrence(r: Recurrence, after: LocalDate): LocalDate` in `core/src/commitments/recurrence.ts`. Completing a commitment that has a `recurrence` also creates the next occurrence in the same transaction: same `seriesId`, `status: "active"`, and `due.date = nextOccurrence(recurrence, completed due date or today)`.
@@ -735,7 +737,11 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - expand RRULEs with `ical.js` inside the window;
   - `externalId` = `UID` + recurrence instance start;
   - `allDay` from `VALUE=DATE`.
-- **Dates:** DTO times are normalised to UTC ISO strings. All-day events use local midnight in the display time zone.
+- **Dates:** DTO times are normalised to UTC ISO strings.
+- **All-day convention (pinned):** an all-day event has `allDay: true`, and:
+  - the DTO `start` is local midnight of the start date;
+  - the DTO `end` is local midnight of the day *after* the last day (exclusive, like ICS `DTEND;VALUE=DATE`);
+  - both are expressed as UTC instants for the display time zone. For example, a one-day event on 2026-10-23 in `America/Vancouver` (UTC−7 that day) has `start: "2026-10-23T07:00:00.000Z"` and `end: "2026-10-24T07:00:00.000Z"`.
 
 - [ ] **Step 1: Write the failing tests.**
   - A two-page fixture produces N meetings.
