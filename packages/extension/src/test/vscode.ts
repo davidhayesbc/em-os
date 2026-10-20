@@ -113,6 +113,7 @@ export const window = {
   ),
   registerWebviewViewProvider: vi.fn((_id: string, _provider: unknown) => ({ dispose() {} })),
   showErrorMessage: vi.fn(async (..._args: unknown[]) => undefined as string | undefined),
+  showWarningMessage: vi.fn(async (..._args: unknown[]) => undefined as string | undefined),
 };
 
 /** Clears recorded calls and registered commands between tests. */
@@ -123,4 +124,5 @@ export function resetMock(): void {
   window.createWebviewPanel.mockClear();
   window.registerWebviewViewProvider.mockClear();
   window.showErrorMessage.mockClear();
+  window.showWarningMessage.mockClear();
 }

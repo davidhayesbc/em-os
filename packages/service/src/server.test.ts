@@ -423,6 +423,30 @@ describe("secrets", () => {
     expect(logged).not.toContain(wrong);
   });
 
+  it("health.get reports which secret store is in use", async () => {
+    const health = async (svc: { port: number; token: string }) =>
+      createClient({
+        transport: httpTransport(`http://127.0.0.1:${svc.port}`),
+        token: svc.token,
+      }).call("health.get", {});
+    const mem = await startTestService({ secrets: createMemorySecretStore() });
+    expect((await health(mem)).secretStore).toBe("memory");
+
+    // Any store not made by createMemorySecretStore counts as the keychain.
+    const values = new Map<string, string>();
+    const keychainLike = {
+      get: async (k: string) => values.get(k) ?? null,
+      set: async (k: string, v: string) => {
+        values.set(k, v);
+      },
+      delete: async (k: string) => {
+        values.delete(k);
+      },
+    };
+    const kc = await startTestService({ secrets: keychainLike });
+    expect((await health(kc)).secretStore).toBe("keychain");
+  });
+
   it("the memory store round-trips and deletes", async () => {
     const s = createMemorySecretStore();
     expect(await s.get("k")).toBeNull();

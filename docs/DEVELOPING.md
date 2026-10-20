@@ -52,7 +52,7 @@ In the dev host, resources come from the workspace packages, not a VSIX: the web
 ### The two dev-only environment variables
 
 - **`EMOS_DATA_DIR`** overrides the data directory on every platform. The service refuses a directory inside a git working tree, so keep it outside any checkout (`~/.emos-dev-data` is fine unless your home directory is itself a git repo).
-- **`EMOS_SECRET_STORE=memory`** swaps the OS keychain for an in-process secret store. It is test/dev only and is honoured *only* when `EMOS_DATA_DIR` is also set; otherwise the service logs a warning and uses the keychain. The API token is then regenerated on every service start, which is fine for a throwaway data dir.
+- **`EMOS_SECRET_STORE=memory`** swaps the OS keychain for an in-process secret store. It is test/dev only and is honoured *only* when `EMOS_DATA_DIR` is also set, is the data dir the service actually runs on (compared by real path), and is not the platform default data dir; otherwise the service logs a warning and uses the keychain. `health.get` reports the store in use (`secretStore: "keychain" | "memory"`), and a Production-mode extension shows a one-time warning when it is `memory`. The API token is then regenerated on every service start, which is fine for a throwaway data dir.
 
 Together they mean the dev host never touches your real data or your keychain.
 

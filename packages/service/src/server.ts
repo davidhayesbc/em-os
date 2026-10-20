@@ -28,7 +28,12 @@ import { createContext, type ServiceContext } from "./context.js";
 import { createEventBus, type EventBus, serveEvents } from "./events.js";
 import { acquireLock, type Lock } from "./lockfile.js";
 import { dispatchRpc, errorResult, type RpcResult } from "./rpc.js";
-import { createKeychainSecretStore, createMemorySecretStore, secretStoreKind } from "./secrets.js";
+import {
+  createKeychainSecretStore,
+  createMemorySecretStore,
+  isMemorySecretStore,
+  secretStoreKind,
+} from "./secrets.js";
 
 const POSIX = process.platform !== "win32";
 const LOOPBACK = "127.0.0.1";
@@ -40,7 +45,8 @@ export interface StartServiceOptions {
   port?: number;
   /**
    * Default: the OS keychain (service name `em-os`), or the in-memory store when the test-only
-   * `EMOS_SECRET_STORE=memory` is set together with `EMOS_DATA_DIR` (see `secretStoreKind`).
+   * `EMOS_SECRET_STORE=memory` is set and `EMOS_DATA_DIR` names this (non-default) data dir
+   * (see `secretStoreKind`). `health.get` reports which kind is in use.
    */
   secrets?: SecretStore;
   clock?: Clock;
@@ -271,8 +277,8 @@ function writeJsonAtomic(path: string, value: unknown): void {
   renameSync(tmp, path);
 }
 
-function defaultSecretStore(log: Logger): SecretStore {
-  const { kind, ignored } = secretStoreKind(process.env);
+function defaultSecretStore(log: Logger, dataDir: string): SecretStore {
+  const { kind, ignored } = secretStoreKind(process.env, { dataDir });
   if (ignored) log.warn("service.secret_store_override_ignored");
   if (kind === "memory") {
     log.warn("service.secret_store_memory");
@@ -290,7 +296,6 @@ function defaultSecretStore(log: Logger): SecretStore {
 export async function startService(opts: StartServiceOptions): Promise<RunningService> {
   const clock = opts.clock ?? systemClock;
   const log = opts.log ?? createStderrLogger(clock);
-  const secrets = opts.secrets ?? defaultSecretStore(log);
   const events = opts.events ?? createEventBus(log);
 
   // Refuse a checkout before creating anything in it; re-check the real path afterwards so a
@@ -300,6 +305,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
   mkdirSync(requested, { recursive: true, ...(POSIX ? { mode: 0o700 } : {}) });
   const dataDir = realpathSync(requested);
   assertNotInGitCheckout(dataDir, existsSync);
+  const secrets = opts.secrets ?? defaultSecretStore(log, dataDir);
 
   const paths = runtimePaths(dataDir);
   mkdirSync(paths.runDir, { recursive: true, ...(POSIX ? { mode: 0o700 } : {}) });
@@ -316,6 +322,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
       startedAt: toDbInstant(clock.now()),
       heartbeatMs: opts.heartbeatMs ?? HEARTBEAT_MS,
       maxBodyBytes: MAX_BODY_BYTES,
+      secretStore: isMemorySecretStore(secrets) ? "memory" : "keychain",
     };
     const context = createContext({ config, clock, log, secrets, events });
     ctx = context;

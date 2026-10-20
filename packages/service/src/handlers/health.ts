@@ -6,5 +6,6 @@ export const healthGet: Handler<"health.get"> = (ctx) => ({
   serviceVersion: ctx.config.serviceVersion,
   startedAt: ctx.config.startedAt,
   dataDir: ctx.config.dataDir,
+  secretStore: ctx.config.secretStore,
   connectors: [],
 });

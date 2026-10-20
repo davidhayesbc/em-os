@@ -21,9 +21,14 @@ describe("op registry", () => {
       serviceVersion: "0.0.0",
       startedAt: "2026-10-20T16:00:00.000Z",
       dataDir: "/data/em-os",
+      secretStore: "keychain",
       connectors: [{ id: "c1", state: "idle", lastSuccessAt: null }],
     };
     expect(ops["health.get"].output.safeParse(out).success).toBe(true);
+    expect(ops["health.get"].output.safeParse({ ...out, secretStore: "memory" }).success).toBe(
+      true,
+    );
+    expect(ops["health.get"].output.safeParse({ ...out, secretStore: "file" }).success).toBe(false);
     expect(
       ops["health.get"].output.safeParse({ ...out, startedAt: "2026-10-20T09:00:00-07:00" })
         .success,

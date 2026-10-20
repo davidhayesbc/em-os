@@ -9,6 +9,7 @@ const HEALTH = {
   serviceVersion: "0.0.1",
   startedAt: "2026-10-20T16:00:00.000Z",
   dataDir: "/data",
+  secretStore: "keychain",
   connectors: [],
 };
 

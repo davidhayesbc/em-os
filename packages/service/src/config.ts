@@ -19,6 +19,8 @@ export interface ServiceConfig {
   startedAt: string;
   heartbeatMs: number;
   maxBodyBytes: number;
+  /** `memory` only for the test-only `EMOS_SECRET_STORE=memory` switch (or an injected one). */
+  secretStore: "keychain" | "memory";
 }
 
 /** Contents of `run/service.json`. Clients read it to find the port; it holds no secrets. */

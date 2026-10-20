@@ -13,6 +13,7 @@ const healthResult = {
   serviceVersion: "0.0.0",
   startedAt: "2026-10-20T16:00:00.000Z",
   dataDir: "/data/em-os",
+  secretStore: "keychain",
   connectors: [],
 };
 

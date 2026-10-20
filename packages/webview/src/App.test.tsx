@@ -24,6 +24,7 @@ function health(overrides: Record<string, unknown> = {}) {
     serviceVersion: "0.4.2",
     startedAt: new Date(Date.now() - (2 * 3600 + 5 * 60 + 10) * 1000).toISOString(),
     dataDir: "/data",
+    secretStore: "keychain",
     connectors: [],
     ...overrides,
   };

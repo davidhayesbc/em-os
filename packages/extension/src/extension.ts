@@ -8,6 +8,7 @@ import { createLauncher } from "./launcher.js";
 import { disposeDashboard, type PanelDeps, showDashboard } from "./panels/dashboard.js";
 import { SidebarProvider } from "./panels/sidebar.js";
 import { resolveDataDir, resolveWebviewDist } from "./runtime.js";
+import { watchSecretStore } from "./secret-store-warning.js";
 
 let connection: ServiceConnection | undefined;
 
@@ -84,6 +85,11 @@ export function activate(
           ]),
         ]
       : []),
+    watchSecretStore({
+      connection: conn,
+      production: context.extensionMode === vscode.ExtensionMode.Production,
+      warn: (m) => void vscode.window.showWarningMessage(m),
+    }),
     { dispose: () => conn.dispose() },
   );
 

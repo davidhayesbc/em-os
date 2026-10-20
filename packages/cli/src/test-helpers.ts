@@ -98,6 +98,7 @@ export async function startFakeService(apiVersion: number): Promise<number> {
           serviceVersion: "9.9.9",
           startedAt: "2026-10-20T16:00:00.000Z",
           dataDir: "/x",
+          secretStore: "keychain",
           connectors: [],
         },
       }),
