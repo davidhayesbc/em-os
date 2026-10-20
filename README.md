@@ -2,7 +2,7 @@
 
 An operating system for engineering managers. EM OS gathers what's happening across your chat, meetings, email, calendar, PRs, tickets and docs into one local, dated, searchable store. It tracks what you've promised and what others owe you, and shows the five things that matter today, fitted around your meetings. You can ask questions with answers that link back to sources, and draft updates and brag docs from a cited record.
 
-> **Status:** design. The specification is in review and there is no code yet. Start with [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md) and the decision records in [`docs/adr/`](docs/adr/README.md).
+> **Status:** Phase 0 (foundations) is done: the local service, SQLite store, API contract, CLI and a VS Code extension shell are in place, with no product features yet. See [`docs/DEVELOPING.md`](docs/DEVELOPING.md) to build and run it. The product is described in [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md), with decision records in [`docs/adr/`](docs/adr/README.md).
 
 ## Shape
 
