@@ -13,12 +13,15 @@
     "test": "vitest run",
     "lint": "biome check .",
     "check:fixtures": "node scripts/check-fixtures.mjs",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "ci": "npm run lint && npm run check:fixtures && npm run build && npm run typecheck && npm run test"
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p test/smoke/tsconfig.json",
+    "ci": "npm run lint && npm run check:fixtures && npm run build && npm run typecheck && npm run test",
+    "package": "npm run package -w em-os --",
+    "smoke": "npm run build && npm run package && node test/smoke/runTest.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@types/node": "^24.19.2",
+    "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.28.2",
     "typescript": "~5.9.3",
     "vitest": "^5.0.4"

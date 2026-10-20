@@ -1,0 +1,8 @@
+{
+  "$comment": "The Node.js runtime shipped inside each platform VSIX (ADR 0001, Packaging the runtime). Official nodejs.org archives, byte-for-byte; the sha256 values are cross-checked against that version's SHASUMS256.txt at package time. Bump deliberately for security releases.",
+  "version": "24.22.0",
+  "sha256": {
+    "node-v24.22.0-darwin-arm64.tar.xz": "75ddfb875bbd868ebe57536f4442225f54dd10f6d2178dd439de869a5c648dc3",
+    "node-v24.22.0-win-x64.zip": "f9683a19877e12a9b167305c8db71040d812876359de21f0d2e97c3f321f80c3"
+  }
+}

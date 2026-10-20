@@ -1,0 +1,5 @@
+# The staging dir built by scripts/package.mjs holds only what ships; this is a safety net.
+**/*.map
+**/*.ts
+**/*.md
+.vscodeignore

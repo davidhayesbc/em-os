@@ -29,6 +29,39 @@ jobs:
       - run: npm ci
       - run: npm run ci
 
+  smoke:
+    # Packages this OS's VSIX (bundled Node runtime + keyring addon), installs it into a clean
+    # VS Code profile and runs the extension smoke test (test/smoke/). Not part of `npm run ci`:
+    # it downloads VS Code and the Node runtime.
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: .cache/node-runtime
+          key: node-runtime-${{ runner.os }}-${{ hashFiles('packages/extension/node-runtime.json') }}
+      - run: npm ci
+      - run: npm run build
+      - run: npm run smoke
+      - name: Upload VSIX
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.os }}
+          path: packages/extension/*.vsix
+          if-no-files-found: error
+          retention-days: 30
+
   gitleaks:
     name: gitleaks
     runs-on: ubuntu-latest

@@ -59,6 +59,28 @@ describe("bridge.attach", () => {
     });
   });
 
+  it("reports each rpc outcome (op name and ok only) to onRpcResult", async () => {
+    const webview = new FakeWebview();
+    const results: Array<[string, boolean]> = [];
+    const { conn } = fakeConnection(async (op) => {
+      if (op === "backup.create") throw new ApiError("internal", "boom");
+      return {};
+    });
+    attach(webview, conn, {
+      executeCommand: async () => undefined,
+      onRpcResult: (op, ok) => results.push([op, ok]),
+    });
+    webview.deliver({ kind: "rpc", reqId: "a", op: "health.get", input: {} });
+    webview.deliver({ kind: "rpc", reqId: "b", op: "backup.create", input: {} });
+    webview.deliver({ kind: "rpc", reqId: "c", op: "../nope", input: {} });
+    await flush();
+    expect(results.sort()).toEqual([
+      ["../nope", false],
+      ["backup.create", false],
+      ["health.get", true],
+    ]);
+  });
+
   it("maps an ApiError to { ok: false, error: { code, message } }", async () => {
     const { webview } = setup(async () => {
       throw new ApiError("not_found", "No such goal");

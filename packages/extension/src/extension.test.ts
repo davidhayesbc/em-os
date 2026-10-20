@@ -31,4 +31,26 @@ describe("activate", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("registers the test-only dashboard probe only when EMOS_TEST_HOOKS=1", async () => {
+    const context = {
+      subscriptions: [] as Array<{ dispose(): unknown }>,
+      extensionPath: "/nonexistent-extension",
+      extensionMode: vscode.ExtensionMode.Production,
+    } as unknown as vscode.ExtensionContext;
+    vi.stubEnv("EMOS_NODE_PATH", "/nonexistent/node");
+    vi.stubEnv("EMOS_DATA_DIR", "/nonexistent-data-dir");
+    vi.stubEnv("EMOS_TEST_HOOKS", "1");
+    try {
+      activate(context, { autoStart: false });
+      const calls = vi.mocked(vscode.commands.registerCommand).mock.calls;
+      const probe = calls.find((c) => c[0] === "emos.test.dashboardRpcResults");
+      expect(probe).toBeDefined();
+      expect(await probe?.[1]()).toEqual([]);
+      for (const s of context.subscriptions) s.dispose();
+      deactivate();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

@@ -41,6 +41,16 @@ export function activate(
     executeCommand,
   });
 
+  // TEST-ONLY (EMOS_TEST_HOOKS=1, set by the smoke test): record which rpcs the dashboard
+  // webview completed, so the smoke test can tell the page loaded and got data from the service.
+  // Op names and outcomes only; never inputs or results. Not contributed to the palette.
+  const testHooks = process.env.EMOS_TEST_HOOKS === "1";
+  const dashboardRpcResults: Array<{ op: string; ok: boolean }> = [];
+  const dashboardDeps = (): PanelDeps =>
+    testHooks
+      ? { ...panelDeps(), onRpcResult: (op, ok) => dashboardRpcResults.push({ op, ok }) }
+      : panelDeps();
+
   const connect = (): void => {
     conn.start().catch(async (e: unknown) => {
       const choice = await vscode.window.showErrorMessage(`EM OS: ${message(e)}`, "Reconnect");
@@ -51,7 +61,7 @@ export function activate(
   context.subscriptions.push(
     vscode.commands.registerCommand("emos.openDashboard", () => {
       try {
-        showDashboard(panelDeps());
+        showDashboard(dashboardDeps());
       } catch (e) {
         void vscode.window.showErrorMessage(`EM OS: ${message(e)}`);
       }
@@ -67,6 +77,13 @@ export function activate(
       },
     }),
     { dispose: () => disposeDashboard() },
+    ...(testHooks
+      ? [
+          vscode.commands.registerCommand("emos.test.dashboardRpcResults", () => [
+            ...dashboardRpcResults,
+          ]),
+        ]
+      : []),
     { dispose: () => conn.dispose() },
   );
 

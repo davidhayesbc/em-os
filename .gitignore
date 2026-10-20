@@ -51,3 +51,9 @@ artifacts/
 
 # Brainstorm / visual-companion scratch (local only)
 .superpowers/
+
+# VSIX packaging and smoke-test output
+*.vsix
+.cache/
+.package/
+.emos-dev-data/

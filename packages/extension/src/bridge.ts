@@ -20,6 +20,8 @@ export interface BridgeConnection {
 
 export interface BridgeOptions {
   executeCommand(command: string, ...args: unknown[]): Thenable<unknown>;
+  /** Told the op name and outcome of every rpc (never input or result). Test probe only. */
+  onRpcResult?(op: string, ok: boolean): void;
 }
 
 /** Commands a webview may ask the host to run. Anything else is ignored. */
@@ -51,6 +53,7 @@ export function attach(
 
   const rpc = async (reqId: string, op: string, input: unknown): Promise<void> => {
     if (!isKnownOp(op)) {
+      opts.onRpcResult?.(op, false);
       post({
         kind: "rpc-result",
         reqId,
@@ -61,8 +64,10 @@ export function attach(
     }
     try {
       const result = await connection.call(op, input);
+      opts.onRpcResult?.(op, true);
       post({ kind: "rpc-result", reqId, ok: true, result });
     } catch (e) {
+      opts.onRpcResult?.(op, false);
       const error =
         e instanceof ApiError
           ? { code: e.code, message: e.message }

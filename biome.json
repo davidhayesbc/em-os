@@ -8,6 +8,9 @@
       "!**/dist",
       "!**/node_modules",
       "!**/coverage",
+      "!**/.vscode-test",
+      "!**/.cache",
+      "!**/.package",
       "!package-lock.json"
     ]
   },

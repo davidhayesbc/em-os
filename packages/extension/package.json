@@ -1,10 +1,14 @@
 {
-  "name": "@emos/extension",
+  "name": "em-os",
   "displayName": "EM OS",
   "description": "EM OS dashboard and sidebar for VS Code (a thin client of the local EM OS service).",
   "version": "0.0.0",
   "private": true,
-  "publisher": "emos",
+  "publisher": "emos-dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/davidhayesbc/em-os.git"
+  },
   "license": "MIT",
   "main": "./dist/extension.js",
   "engines": {
@@ -48,7 +52,8 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "package": "node scripts/package.mjs"
   },
   "dependencies": {
     "@emos/api-contract": "0.0.0"
@@ -57,6 +62,7 @@
     "@emos/service": "0.0.0",
     "@emos/store-sqlite": "0.0.0",
     "@emos/webview": "0.0.0",
-    "@types/vscode": "~1.95.0"
+    "@types/vscode": "~1.95.0",
+    "@vscode/vsce": "^4.0.0"
   }
 }

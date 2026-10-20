@@ -9,7 +9,15 @@
         "--disable-extensions",
         "--extensionDevelopmentPath=${workspaceFolder}/packages/extension"
       ],
-      "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.js"],
+      "preLaunchTask": "npm: build",
+      "env": {
+        // A throwaway data dir outside this checkout (the service refuses one inside a git
+        // working tree) and the test-only in-memory secret store: the dev host never touches
+        // the real data dir or the OS keychain.
+        "EMOS_DATA_DIR": "${userHome}/.emos-dev-data",
+        "EMOS_SECRET_STORE": "memory"
+      }
     }
   ]
 }
