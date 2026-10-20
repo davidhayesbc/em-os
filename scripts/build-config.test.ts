@@ -16,12 +16,16 @@ const packages = readdirSync(join(root, "packages")).filter((dir) => {
 });
 
 function fileNames(dir: string, config: string): string[] {
-  const parsed = ts.getParsedCommandLineOfConfigFile(join(dir, config), {}, {
-    ...ts.sys,
-    onUnRecoverableConfigFileDiagnostic: (d) => {
-      throw new Error(ts.flattenDiagnosticMessageText(d.messageText, "\n"));
+  const parsed = ts.getParsedCommandLineOfConfigFile(
+    join(dir, config),
+    {},
+    {
+      ...ts.sys,
+      onUnRecoverableConfigFileDiagnostic: (d) => {
+        throw new Error(ts.flattenDiagnosticMessageText(d.messageText, "\n"));
+      },
     },
-  });
+  );
   if (!parsed) throw new Error(`cannot parse ${config} in ${dir}`);
   return parsed.fileNames.map((f) => f.slice(dir.length + 1).replaceAll("\\", "/"));
 }
