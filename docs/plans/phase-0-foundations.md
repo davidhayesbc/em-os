@@ -47,21 +47,21 @@
 
 ## Task board
 
-- [ ] **P0-01** Monorepo, toolchain, lint boundaries — deps: none — claim: —
-- [ ] **P0-02** CI matrix + repo-safety checks — deps: P0-01 — claim: —
-- [ ] **P0-03** *spike* S1: service runtime, SQLite driver, keychain library — deps: P0-01 — claim: —
+- [x] **P0-01** Monorepo, toolchain, lint boundaries — deps: none — claim: done · merged to main (a33ff8d)
+- [x] **P0-02** CI matrix + repo-safety checks — deps: P0-01 — claim: done · merged to main (a33ff8d)
+- [x] **P0-03** *spike* S1: service runtime, SQLite driver, keychain library — deps: P0-01 — claim: done · merged to main (a33ff8d)
 - [ ] **P0-04** *spike, manual* S2: direct MCP client against the owner's MCP servers — deps: P0-01 — claim: —
 - [ ] **P0-05** *spike, manual* S3: headless `claude -p` structured output + tool restriction + terms check — deps: P0-01 — claim: —
 - [ ] **P0-06** *spike, manual* S4: LiteLLM gateway model discovery + structured output — deps: P0-01 — claim: —
-- [ ] **P0-07** *spike* S5: Ollama embedding throughput — deps: P0-01 — claim: —
-- [ ] **P0-08** `@emos/api-contract`: entities, op registry, errors, client — deps: P0-01 — claim: —
-- [ ] **P0-09** `@emos/core` skeleton: ports, ids, time utilities — deps: P0-08 — claim: —
-- [ ] **P0-10** `@emos/store-sqlite`: paths, driver adapter, migrations, schema 0001 — deps: P0-03, P0-09 — claim: —
-- [ ] **P0-11** `@emos/service`: RPC server, auth, SSE, lockfile, health, keychain secrets — deps: P0-03, P0-08, P0-10 — claim: —
-- [ ] **P0-12** `@emos/cli`: `emos doctor`, `emos backup`, `emos service start|stop` — deps: P0-11 — claim: —
-- [ ] **P0-13** `@emos/extension`: activation, launcher/attach, RPC bridge, panels — deps: P0-03, P0-11 — claim: —
-- [ ] **P0-14** `@emos/webview`: Preact shell, bridge client, widget grid, service-status widget — deps: P0-08 — claim: —
-- [ ] **P0-15** VSIX packaging + extension smoke test in CI — deps: P0-02, P0-13, P0-14 — claim: —
+- [x] **P0-07** *spike* S5: Ollama embedding throughput — deps: P0-01 — claim: done · merged to main (a33ff8d)
+- [x] **P0-08** `@emos/api-contract`: entities, op registry, errors, client — deps: P0-01 — claim: done · merged to main (a33ff8d)
+- [x] **P0-09** `@emos/core` skeleton: ports, ids, time utilities — deps: P0-08 — claim: done · merged to main (a33ff8d)
+- [x] **P0-10** `@emos/store-sqlite`: paths, driver adapter, migrations, schema 0001 — deps: P0-03, P0-09 — claim: done · merged to main (a33ff8d)
+- [x] **P0-11** `@emos/service`: RPC server, auth, SSE, lockfile, health, keychain secrets — deps: P0-03, P0-08, P0-10 — claim: done · merged to main (a33ff8d)
+- [x] **P0-12** `@emos/cli`: `emos doctor`, `emos backup`, `emos service start|stop` — deps: P0-11 — claim: done · merged to main (a33ff8d)
+- [x] **P0-13** `@emos/extension`: activation, launcher/attach, RPC bridge, panels — deps: P0-03, P0-11 — claim: done · merged to main (a33ff8d)
+- [x] **P0-14** `@emos/webview`: Preact shell, bridge client, widget grid, service-status widget — deps: P0-08 — claim: done · merged to main (a33ff8d)
+- [x] **P0-15** VSIX packaging + extension smoke test in CI — deps: P0-02, P0-13, P0-14 — claim: done · merged to main (a33ff8d)
 
 Parallel lanes once P0-01 merges:
 
@@ -84,18 +84,18 @@ Parallel lanes once P0-01 merges:
   - package template: `"type": "module"`, `exports` → `./dist/index.js`, `types` → `./dist/index.d.ts`;
   - the Biome `noRestrictedImports` override for `packages/core/**` that bans the modules listed in Global Constraints.
 
-- [ ] **Step 1: Write the failing test.** `lint-boundaries.test.ts` writes a temp file `packages/core/src/__probe.ts` containing `import fs from "node:fs";`, runs `npx biome lint packages/core/src/__probe.ts`, and deletes the file in `finally`.
+- [x] **Step 1: Write the failing test.** `lint-boundaries.test.ts` writes a temp file `packages/core/src/__probe.ts` containing `import fs from "node:fs";`, runs `npx biome lint packages/core/src/__probe.ts`, and deletes the file in `finally`.
   ```ts
   expect(result.exitCode).not.toBe(0);
   expect(result.stdout + result.stderr).toMatch(/noRestrictedImports/);
   ```
-- [ ] **Step 2: Run `npx vitest run scripts/lint-boundaries.test.ts`.** Expected: FAIL (no Biome config yet).
-- [ ] **Step 3: Add the root configs.** Settings:
+- [x] **Step 2: Run `npx vitest run scripts/lint-boundaries.test.ts`.** Expected: FAIL (no Biome config yet).
+- [x] **Step 3: Add the root configs.** Settings:
   - TypeScript: `strict`, `noUncheckedIndexedAccess`, `module: NodeNext`, `target: ES2022`;
   - Biome: formatter on, recommended rules, the `packages/core/**` restricted-imports override;
   - `npm run ci` = `lint && typecheck && test && build`.
-- [ ] **Step 4: Run `npm install && npm run ci`.** Expected: PASS, and the boundary test passes.
-- [ ] **Step 5: Commit** `chore(p0-01): monorepo toolchain and core import boundary`.
+- [x] **Step 4: Run `npm install && npm run ci`.** Expected: PASS, and the boundary test passes.
+- [x] **Step 5: Commit** `chore(p0-01): monorepo toolchain and core import boundary`.
 
 **Acceptance:** `npm ci && npm run ci` is green on a clean clone. Importing `node:fs` in `packages/core` fails lint.
 
@@ -113,7 +113,7 @@ Parallel lanes once P0-01 merges:
   - a `gitleaks` job (`gitleaks/gitleaks-action@v2`);
   - `node scripts/check-fixtures.mjs [dir=fixtures]`, which exits 1 on violations.
 
-- [ ] **Step 1: Write the failing tests.** `check-fixtures.test.ts`:
+- [x] **Step 1: Write the failing tests.** `check-fixtures.test.ts`:
   ```ts
   it("rejects non-reserved email domains", () => {
     expect(scan("a@acme.io")).toEqual([{ rule: "email-domain", match: "a@acme.io" }]);
@@ -125,16 +125,16 @@ Parallel lanes once P0-01 merges:
     expect(scan("T02ABCDEF")[0]?.rule).toBe("workspace-id");
   });
   ```
-- [ ] **Step 2: Run them.** Expected: FAIL (`scan` is not defined).
-- [ ] **Step 3: Implement `export function scan(text: string): Array<{ rule: string; match: string }>`** in `scripts/check-fixtures.mjs`. Rules:
+- [x] **Step 2: Run them.** Expected: FAIL (`scan` is not defined).
+- [x] **Step 3: Implement `export function scan(text: string): Array<{ rule: string; match: string }>`** in `scripts/check-fixtures.mjs`. Rules:
   - emails not `@example.(com|org|net)`;
   - URLs whose host isn't `example.*` or `localhost`;
   - `\bT0[0-9A-Z]{7,10}\b` (workspace-id);
   - `xox[abpr]-` tokens.
 
   The CLI walks `fixtures/**` and `packages/*/fixtures/**`.
-- [ ] **Step 4: Run the tests (PASS), then push the branch.** Expected: both matrix jobs and the gitleaks job are green.
-- [ ] **Step 5: Commit** `ci(p0-02): os matrix, gitleaks, fixture safety scan`.
+- [x] **Step 4: Run the tests (PASS), then push the branch.** Expected: both matrix jobs and the gitleaks job are green.
+- [x] **Step 5: Commit** `ci(p0-02): os matrix, gitleaks, fixture safety scan`.
 
 **Acceptance:** CI runs on PRs and on `main`. A fixture containing `bob@acme.io` fails the job.
 
@@ -152,20 +152,20 @@ Parallel lanes once P0-01 merges:
   - `SQLITE_DRIVER`: one of `node:sqlite | better-sqlite3 | wasm:<pkg>`;
   - `KEYCHAIN_LIB`: e.g. `@napi-rs/keyring`.
 
-- [ ] **Step 1: For each driver candidate, run a script under each runtime candidate on macOS arm64 and Windows x64 (CI matrix).** The script must:
+- [x] **Step 1: For each driver candidate, run a script under each runtime candidate on macOS arm64 and Windows x64 (CI matrix).** The script must:
   - create a DB;
   - `CREATE VIRTUAL TABLE t USING fts5(x)`;
   - insert 10k rows in one transaction and time it;
   - run an online backup to a second file;
   - open with WAL.
-- [ ] **Step 2: Measure.** `system-node` is excluded: users must never install Node separately (ADR 0001). For each remaining combination, record:
+- [x] **Step 2: Measure.** `system-node` is excluded: users must never install Node separately (ADR 0001). For each remaining combination, record:
   - VSIX size impact;
   - whether install needs network or a postinstall step;
   - whether standalone mode works with VS Code closed;
   - whether it needs platform-specific VSIXs (`vsce package --target darwin-arm64|win32-x64`) for Marketplace / Open VSX.
-- [ ] **Step 3: Store and read a test secret** via the keychain library candidate on both OSes, under the chosen runtime.
-- [ ] **Step 4: Write the results table and the three decisions into ADR 0001/0002.** Pick the simplest combination that passes ADR 0002's criteria.
-- [ ] **Step 5: Delete `spikes/s1-runtime/` and commit** `docs(p0-03): record runtime, sqlite driver and keychain decisions`.
+- [x] **Step 3: Store and read a test secret** via the keychain library candidate on both OSes, under the chosen runtime.
+- [x] **Step 4: Write the results table and the three decisions into ADR 0001/0002.** Pick the simplest combination that passes ADR 0002's criteria.
+- [x] **Step 5: Delete `spikes/s1-runtime/` and commit** `docs(p0-03): record runtime, sqlite driver and keychain decisions`.
 
 **Acceptance:** The ADRs name exactly one choice for each of `RUNTIME`, `SQLITE_DRIVER` and `KEYCHAIN_LIB`, with per-OS evidence.
 
@@ -231,12 +231,12 @@ Parallel lanes once P0-01 merges:
 - Create: `spikes/s5-ollama/bench.ts`
 - Modify: `docs/adr/0003-hybrid-search-local-embeddings.md`
 
-- [ ] **Step 1: Benchmark `POST /api/embed`.** Use `nomic-embed-text` and one alternative (e.g. `mxbai-embed-large`) on 2,000 synthetic 400-token chunks. Record:
+- [x] **Step 1: Benchmark `POST /api/embed`.** Use `nomic-embed-text` and one alternative (e.g. `mxbai-embed-large`) on 2,000 synthetic 400-token chunks. Record:
   - chunks/second at batch sizes 16 and 64;
   - the dimension;
   - RSS.
-- [ ] **Step 2: Measure brute-force cosine** top-50 over 50k random normalised vectors of that dimension in a worker thread. The target is < 300 ms (spec §13).
-- [ ] **Step 3: Record the default model and batch size in ADR 0003. Commit** `docs(p0-07): record embedding model and throughput`.
+- [x] **Step 2: Measure brute-force cosine** top-50 over 50k random normalised vectors of that dimension in a worker thread. The target is < 300 ms (spec §13).
+- [x] **Step 3: Record the default model and batch size in ADR 0003. Commit** `docs(p0-07): record embedding model and throughput`.
 
 **Acceptance:** ADR 0003 names the default embedder, its dimension and a measured throughput.
 
@@ -298,7 +298,7 @@ Parallel lanes once P0-01 merges:
 - Produces `events.ts`: `ServerEvent = { type: "sync.status", connectorId, state } | { type: "items.changed", entity: string, ids: string[] }`.
 - Produces `bridge.ts`: the `ToHost` / `ToView` webview message types, exactly as listed in the P0-13 Interfaces block. They live here so that P0-13 and P0-14 can build in parallel.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   ```ts
   it("rejects non-UTC timestamps", () => { expect(IsoDateTime.safeParse("2026-10-20T09:00:00-07:00").success).toBe(false); });
   it("person pronouns may be null (unknown)", () => { expect(Person.parse({ ...basePerson, pronouns: null }).pronouns).toBeNull(); });
@@ -309,10 +309,10 @@ Parallel lanes once P0-01 merges:
   });
   it("client sends bearer and api version headers", async () => { /* assert headers.Authorization === "Bearer k", headers["X-EMOS-API"] === "1" */ });
   ```
-- [ ] **Step 2: Run `npx vitest run packages/api-contract`.** Expected: FAIL.
-- [ ] **Step 3: Implement the files above.** `httpTransport` uses global `fetch`.
-- [ ] **Step 4: Run.** Expected: PASS, and `npm run typecheck` is green.
-- [ ] **Step 5: Commit** `feat(p0-08): api contract entities, op registry and client`.
+- [x] **Step 2: Run `npx vitest run packages/api-contract`.** Expected: FAIL.
+- [x] **Step 3: Implement the files above.** `httpTransport` uses global `fetch`.
+- [x] **Step 4: Run.** Expected: PASS, and `npm run typecheck` is green.
+- [x] **Step 5: Commit** `feat(p0-08): api contract entities, op registry and client`.
 
 **Acceptance:** Every entity in spec §7.1 needed by Phase 1 has a schema. The registry exposes `health.get`, and the client is fully typed by op name.
 
@@ -343,7 +343,7 @@ Parallel lanes once P0-01 merges:
   export function localMinutes(instant: Date, timeZone: string): number;              // minutes since local midnight
   ```
 
-- [ ] **Step 1: Write the failing tests** (they pin DST):
+- [x] **Step 1: Write the failing tests** (they pin DST):
   ```ts
   it("start of day across US DST fall-back", () => {
     expect(startOfLocalDay("2026-11-01", "America/Los_Angeles").toISOString()).toBe("2026-11-01T07:00:00.000Z");
@@ -354,10 +354,10 @@ Parallel lanes once P0-01 merges:
   });
   it("localMinutes", () => { expect(localMinutes(new Date("2026-10-20T16:30:00Z"), "America/Los_Angeles")).toBe(9 * 60 + 30); });
   ```
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement with `Intl.DateTimeFormat(..., { timeZone, hourCycle: "h23" })`.** For `startOfLocalDay`, compute the offset from a two-pass correction.
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p0-09): core ports and zoned time utilities`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement with `Intl.DateTimeFormat(..., { timeZone, hourCycle: "h23" })`.** For `startOfLocalDay`, compute the offset from a two-pass correction.
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p0-09): core ports and zoned time utilities`.
 
 **Acceptance:** DST tests pass on both CI OSes, and core still passes the boundary lint.
 
@@ -406,7 +406,7 @@ Parallel lanes once P0-01 merges:
 - **Later migrations:** a task that needs schema changes adds `migrations/<task-id>_<area>.sql` (e.g. `p1-41_recurrence.sql`) and appends it to `migrations/index.ts` *(append-only)*. Order is the order in `index.ts`.
 - **Pre-migration backup:** when `openDb` opens an existing database with pending migrations, it first writes `<dataDir>/backups/pre-<first-pending-name>.db` using `Db.backup`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   ```ts
   it("resolves platform data dirs", () => {
     expect(resolveDataDir({}, "darwin", "/Users/zoë q")).toBe("/Users/zoë q/Library/Application Support/EM OS");
@@ -423,10 +423,10 @@ Parallel lanes once P0-01 merges:
   it("has occurred_at index on every dated table", () => { /* PRAGMA index_list per table includes an index whose first column is occurred_at */ });
   it("backup produces a readable copy", async () => { /* backup → openDb(copy) → same row counts */ });
   ```
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.** Migrations run inside one transaction per file and record their names in `schema_migrations`. `openDb` creates the parent directory with mode `0o700` on POSIX.
-- [ ] **Step 4: Run.** Expected: PASS on both OSes in CI.
-- [ ] **Step 5: Commit** `feat(p0-10): sqlite store, data paths and initial schema`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.** Migrations run inside one transaction per file and record their names in `schema_migrations`. `openDb` creates the parent directory with mode `0o700` on POSIX.
+- [x] **Step 4: Run.** Expected: PASS on both OSes in CI.
+- [x] **Step 5: Commit** `feat(p0-10): sqlite store, data paths and initial schema`.
 
 **Acceptance:** A fresh DB has every Phase 1 table. Re-opening applies nothing. A checkout path is refused.
 
@@ -463,7 +463,7 @@ Parallel lanes once P0-01 merges:
 
   A missing or wrong bearer gets 401 `unauthorized`. A mismatched `X-EMOS-API` gets 409 `incompatible_version`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   ```ts
   it("rejects missing token", async () => { expect((await post("/rpc/health.get", {}, {})).status).toBe(401); });
   it("serves health.get with a valid token", async () => { expect(res.json).toMatchObject({ ok: true, result: { apiVersion: 1 } }); });
@@ -475,10 +475,10 @@ Parallel lanes once P0-01 merges:
   it("streams items.changed events over SSE", async () => {});
   it("secrets round-trip through the keychain and never appear in logs", async () => {});
   ```
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement** with `node:http` (no framework). `main.ts` parses `--data-dir` and `--port` (default `47821`), handles SIGTERM, and writes the runtime files.
-- [ ] **Step 4: Run.** Expected: PASS on both OSes.
-- [ ] **Step 5: Commit** `feat(p0-11): service with authenticated rpc, sse and lockfile`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement** with `node:http` (no framework). `main.ts` parses `--data-dir` and `--port` (default `47821`), handles SIGTERM, and writes the runtime files.
+- [x] **Step 4: Run.** Expected: PASS on both OSes.
+- [x] **Step 5: Commit** `feat(p0-11): service with authenticated rpc, sse and lockfile`.
 
 **Acceptance:** `node packages/service/dist/main.js` starts the service. A client using the token from the token file gets `health.get`. A second start reports "already running".
 
@@ -501,11 +501,11 @@ Parallel lanes once P0-01 merges:
   - `emos backup <dest>` calls a new op `backup.create` (add it to `api-contract/ops/backup.ts` and `service/handlers/backup.ts`), which uses `Db.backup`.
   - `emos service start|stop|status`.
 
-- [ ] **Step 1: Write the failing tests.** Doctor against a running test service prints `✓ service reachable` and exits 0. With no service it prints `✗ service reachable` and exits 1. Backup writes a file that `openDb` can open.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.** Use a minimal argv parser (no dependency).
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p0-12): emos cli doctor, backup and service control`.
+- [x] **Step 1: Write the failing tests.** Doctor against a running test service prints `✓ service reachable` and exits 0. With no service it prints `✗ service reachable` and exits 1. Backup writes a file that `openDb` can open.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.** Use a minimal argv parser (no dependency).
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p0-12): emos cli doctor, backup and service control`.
 
 **Acceptance:** `emos doctor` is accurate in both the running and the stopped state. `emos backup` produces a restorable copy.
 
@@ -532,15 +532,15 @@ Parallel lanes once P0-01 merges:
   - `bridge.attach(webview, client)`: proxies `rpc` messages, forwards SSE events, and sends `connection` state.
   - The webview never sees the token.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `launcher` with a stale `service.json` (dead pid) spawns once.
   - Concurrent `ensureService` calls spawn only once (in-process mutex).
   - A 401 triggers one token re-read, then `unavailable`.
   - `bridge` maps an `ApiError` to `{ ok: false, error }`.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.** `html.ts` builds the webview HTML with the CSP from Global Constraints, a per-load nonce, and the `@emos/webview` bundle URI. The dashboard opens with `retainContextWhenHidden: true`.
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p0-13): extension launcher, rpc bridge and panels`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.** `html.ts` builds the webview HTML with the CSP from Global Constraints, a per-load nonce, and the `@emos/webview` bundle URI. The dashboard opens with `retainContextWhenHidden: true`.
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p0-13): extension launcher, rpc bridge and panels`.
 
 **Acceptance:** Running `EM OS: Open Dashboard` in a dev host starts the service if needed and shows the dashboard tab. Killing the service shows `unavailable`, and `EM OS: Reconnect` recovers.
 
@@ -568,14 +568,14 @@ Parallel lanes once P0-01 merges:
 - The bundle has two entry points: `dashboard` (`App`) and `sidebar` (`Sidebar`).
 - Colours come only from `var(--vscode-*)` CSS variables.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `rpc` resolves when a matching `rpc-result` arrives, and rejects on `ok: false`.
   - `App` renders `Service unavailable` with a `Retry` button when the connection is `unavailable`.
   - `ServiceStatus` renders `API v1`.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.** esbuild bundles to `packages/webview/dist/{dashboard,sidebar}.js`.
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p0-14): webview shell, rpc bridge and service status widget`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.** esbuild bundles to `packages/webview/dist/{dashboard,sidebar}.js`.
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p0-14): webview shell, rpc bridge and service status widget`.
 
 **Acceptance:** In the dev host, the dashboard tab shows the ServiceStatus widget with live data in both light and dark themes.
 
@@ -594,14 +594,14 @@ Parallel lanes once P0-01 merges:
 - Consumes: P0-13 and P0-14 outputs.
 - Produces: `npm run package` → `packages/extension/em-os-<version>.vsix`, and `npm run smoke`.
 
-- [ ] **Step 1: Write the failing smoke test.** Run `@vscode/test-electron` with a temp `EMOS_DATA_DIR`. Execute `emos.openDashboard`, then assert:
+- [x] **Step 1: Write the failing smoke test.** Run `@vscode/test-electron` with a temp `EMOS_DATA_DIR`. Execute `emos.openDashboard`, then assert:
   - the service's `service.json` appears within 15 s;
   - `health.get` via the token returns `apiVersion: 1`;
   - the dashboard panel is visible.
-- [ ] **Step 2: Run `npm run smoke`.** Expected: FAIL (no packaging yet).
-- [ ] **Step 3: Implement the packaging.** Use `vsce package --no-dependencies` after the esbuild bundles. The service bundle goes in `dist/service/`.
-- [ ] **Step 4: Run locally and in CI on both OSes.** Expected: PASS.
-- [ ] **Step 5: Commit** `ci(p0-15): package vsix and run extension smoke on both os`.
+- [x] **Step 2: Run `npm run smoke`.** Expected: FAIL (no packaging yet).
+- [x] **Step 3: Implement the packaging.** Use `vsce package --no-dependencies` after the esbuild bundles. The service bundle goes in `dist/service/`.
+- [x] **Step 4: Run locally and in CI on both OSes.** Expected: PASS.
+- [x] **Step 5: Commit** `ci(p0-15): package vsix and run extension smoke on both os`.
 
 **Acceptance (the Phase 0 done criterion):**
 - CI produces a VSIX.
