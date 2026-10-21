@@ -13,9 +13,10 @@
     "test": "vitest run",
     "lint": "biome check .",
     "check:fixtures": "node scripts/check-fixtures.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
     "check:bundles": "node scripts/check-bundles.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present && tsc -p test/smoke/tsconfig.json",
-    "ci": "npm run lint && npm run check:fixtures && npm run build && npm run check:bundles && npm run typecheck && npm run test",
+    "ci": "npm run lint && npm run check:fixtures && npm run check:docs && npm run build && npm run check:bundles && npm run typecheck && npm run test",
     "package": "npm run package -w em-os --",
     "smoke": "npm run build && npm run package && node test/smoke/runTest.ts"
   },
