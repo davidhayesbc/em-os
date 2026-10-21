@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Team protocol: [README.md](README.md).
 
+**Status:** complete (merged to `main` at `a33ff8d`, CI green on macOS and Windows), except owner spikes P0-04, P0-05 and P0-06 (`claim: owner`).
+
 **Goal:** A buildable monorepo where the VS Code extension starts or attaches to the local EM OS service and renders a dashboard tab with data the service serves, on macOS arm64 and Windows x64. The five spikes have recorded decisions.
 
 **Architecture:**
@@ -50,9 +52,9 @@
 - [x] **P0-01** Monorepo, toolchain, lint boundaries — deps: none — claim: done · merged to main (a33ff8d)
 - [x] **P0-02** CI matrix + repo-safety checks — deps: P0-01 — claim: done · merged to main (a33ff8d)
 - [x] **P0-03** *spike* S1: service runtime, SQLite driver, keychain library — deps: P0-01 — claim: done · merged to main (a33ff8d)
-- [ ] **P0-04** *spike, manual* S2: direct MCP client against the owner's MCP servers — deps: P0-01 — claim: —
-- [ ] **P0-05** *spike, manual* S3: headless `claude -p` structured output + tool restriction + terms check — deps: P0-01 — claim: —
-- [ ] **P0-06** *spike, manual* S4: LiteLLM gateway model discovery + structured output — deps: P0-01 — claim: —
+- [ ] **P0-04** *spike, manual* S2: direct MCP client against the owner's MCP servers — deps: P0-01 — claim: owner
+- [ ] **P0-05** *spike, manual* S3: headless `claude -p` structured output + tool restriction + terms check — deps: P0-01 — claim: owner
+- [ ] **P0-06** *spike, manual* S4: LiteLLM gateway model discovery + structured output — deps: P0-01 — claim: owner
 - [x] **P0-07** *spike* S5: Ollama embedding throughput — deps: P0-01 — claim: done · merged to main (a33ff8d)
 - [x] **P0-08** `@emos/api-contract`: entities, op registry, errors, client — deps: P0-01 — claim: done · merged to main (a33ff8d)
 - [x] **P0-09** `@emos/core` skeleton: ports, ids, time utilities — deps: P0-08 — claim: done · merged to main (a33ff8d)

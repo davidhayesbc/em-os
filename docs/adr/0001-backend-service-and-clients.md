@@ -132,3 +132,16 @@ The SQLite driver is recorded in ADR 0002 (`node:sqlite`).
 3. Repeat step 1 with a data directory whose path has spaces and Unicode, e.g. `C:\Users\Zoë Q\AppData\Local\EM OS`.
 4. Run `vsce package --target win32-x64` with `node.exe`. Install the VSIX and spawn `node.exe` from the extension directory. Check that Defender and SmartScreen don't block it, and that the process outlives VS Code.
 5. Record the size of the `win32-x64` VSIX.
+
+## Verification (2026-10-21)
+
+CI run `39520158278` on `main` (commit `a33ff8d`) passed every job on `windows-latest` and `macos-14`.
+
+- **Verified on Windows x64 (CI runner):**
+  - `npm run package` built `em-os-win32-x64-0.0.0.vsix` on Windows: 35.4 MB, 18 files, with `node.exe` 24.22.0 and `keyring.win32-x64-msvc.node` 2.1.1. This covers checklist item 5.
+  - The smoke test installed that VSIX into a clean VS Code profile. The extension spawned the bundled `node.exe`, the service wrote `service.json`, `health.get` returned API v1, and the dashboard webview loaded service data. This covers checklist item 4, apart from Defender and SmartScreen, below.
+  - Unit tests passed under Node 24 on Windows, including store-sqlite (WAL, migrations, online `backup()`) and data-dir paths containing spaces and `zoë`. This covers checklist items 1 and 3, except FTS5.
+- **Still pending:**
+  - **Checklist item 1, FTS5:** no automated test creates an FTS5 table yet, on any OS. Tracked in P1-00.
+  - **Checklist item 2, Windows Credential Manager:** `EMOS_TEST_KEYCHAIN=1` runs on macOS CI only. Tracked in P1-00.
+  - **Checklist item 4, Defender, SmartScreen and outliving VS Code on a real Windows desktop:** CI runners don't exercise these. This is an owner check on a real machine.

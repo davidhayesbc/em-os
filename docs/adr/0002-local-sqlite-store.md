@@ -1,6 +1,6 @@
 # ADR 0002: Local SQLite store
 
-- **Status:** Accepted; driver chosen by Phase 0 spike
+- **Status:** Accepted; driver chosen by Phase 0 spike (result recorded below: `node:sqlite`)
 - **Date:** 2026-10-19
 - **Spec:** §§6, 7.1, 10
 
@@ -123,3 +123,8 @@ Timings are medians of five runs, in milliseconds (FTS5 / plain). The runtimes a
 - **No sqlite-vec loaded.** Vectors stay as BLOBs with a brute-force search (ADR 0003). Loading extensions in `node:sqlite` needs `allowExtension`, and that was not tested.
 - **The bundled SQLite version follows Node releases.** It was 3.53.4 in 24.22.0. Record it in `emos doctor`.
 - **Windows x64: pending the first CI run.** FTS5 is expected, because the official Node builds compile SQLite with the same options on every platform. This is not yet observed. See "Windows verification to run" in ADR 0001.
+
+## Verification (2026-10-21)
+
+- **WAL, migrations and online backup:** CI run `39520158278` passed the store-sqlite tests under Node 24 on `windows-latest` and `macos-14`.
+- **FTS5:** pending. No automated test creates an FTS5 table yet. P1-00 adds one, so FTS5 availability is checked on every CI run.

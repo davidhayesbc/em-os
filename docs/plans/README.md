@@ -1,11 +1,42 @@
 # EM OS implementation plans
 
-| Plan | Phase | Spec |
-|---|---|---|
-| [phase-0-foundations.md](phase-0-foundations.md) | 0: foundations + spikes | [PRODUCT_SPEC.md](../PRODUCT_SPEC.md) §12, ADRs 0001–0006, 0010 |
-| [phase-1-daily-driver.md](phase-1-daily-driver.md) | 1: daily driver | [PRODUCT_SPEC.md](../PRODUCT_SPEC.md) §§5, 7, 10–12, ADRs 0001–0013 |
+**Start here.** The plan with status *in progress* is the current phase. Its **Task board**, near the top of the file, is the work queue.
+
+| Plan | Phase | Status | Spec |
+|---|---|---|---|
+| [phase-0-foundations.md](phase-0-foundations.md) | 0: foundations + spikes | **complete**, except 3 owner spikes (P0-04, P0-05, P0-06) | [PRODUCT_SPEC.md](../PRODUCT_SPEC.md) §12, ADRs 0001–0006, 0010 |
+| [phase-1-daily-driver.md](phase-1-daily-driver.md) | 1: daily driver | **in progress**: start with P1-00 | [PRODUCT_SPEC.md](../PRODUCT_SPEC.md) §§5, 7, 10–12, ADRs 0001–0013 |
+
+Phases 2–5 are described in [PRODUCT_SPEC.md §12](../PRODUCT_SPEC.md). Each gets its own `phase-N-*.md` plan, in this structure, before work starts.
 
 Each plan opens with a **task board**: one checkbox line per task. The task sections below it hold the detail and their own step checkboxes.
+
+## Task markers
+
+| Marker | Where | Meaning | Who |
+|---|---|---|---|
+| `- [ ]` / `- [x]` | board line, step | open / done (merged) | whoever finishes the task ticks it, in the same PR |
+| `claim: —` | board line | unclaimed | — |
+| `claim: <agent-id> · <branch>` | board line | in progress | the claiming agent |
+| `claim: done · <commit>` | board line | merged; set together with `[x]` | the finishing agent |
+| `claim: owner` | board line | reserved for the human owner | owner only |
+| `blocked: <reason>` | board line | can't proceed; needs a decision or a dependency | anyone sets it; the owner clears it |
+| *manual* | board line and task title | needs the owner's machine, real accounts or judgement (e.g. MCP servers, Claude login, LLM gateway, publisher accounts) | owner only, unless the owner hands it to an agent |
+| *spike* | board line and task title | an experiment whose output is a recorded decision in an ADR, not product code | an agent, unless also *manual* |
+| *manual + CI* | board line and task title | mixed: the owner does the account steps; an agent may do the steps not marked "(owner)" | both |
+| *(owner, after merge)* | acceptance bullet | verified by the owner on real accounts after merge; not required for the PR | owner |
+| *(append-only)* | Files list | shared registry file: add your lines, never reorder or edit others' | everyone |
+
+## Owner work outstanding
+
+Agents never pick these. They're listed here so nobody waits on them unknowingly.
+
+- **P0-04:** direct MCP client against the owner's MCP servers. Its result decides the transport for P1-13 and P1-14. Until it's recorded in ADR 0005, those tasks build against the fixture invoker only.
+- **P0-05:** headless `claude -p` recipe plus a terms check (ADR 0006). Needed before Phase 2 model jobs.
+- **P0-06:** LiteLLM gateway discovery and structured output (ADR 0006). Needed before Phase 2 model routing.
+- **P1-37 steps 1 and 4:** Marketplace and Open VSX accounts, and the first pre-release publish.
+- **ADR 0001 Verification, Windows desktop:** check Defender and SmartScreen on a real Windows machine.
+- **Every *(owner, after merge)* acceptance bullet** in the current plan.
 
 ## How a coding agent works a task
 
@@ -15,7 +46,7 @@ Each plan opens with a **task board**: one checkbox line per task. The task sect
 4. **Build** the steps in order (TDD: failing test → implement → passing test). Tick each step `- [x]` in your branch as you go.
 5. **Stay in your files.** Only create or modify the files listed under **Files**. Files marked *(append-only)* are shared registries: add your lines, don't reorder or edit others', and rebase on conflict.
 6. **Finish.** Open one PR per task. The PR must:
-   - tick the task's board line `[x]`;
+   - tick the task's board line `[x]`, set `claim: done · <merge commit>`, and tick every step checkbox in the task's section;
    - pass CI on both OS jobs;
    - meet every **Acceptance** bullet, except bullets marked *(owner, after merge)*. The owner verifies those on real accounts after merge, and a failure becomes a new bug task;
    - contain synthetic data only.

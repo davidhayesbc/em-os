@@ -22,6 +22,8 @@ An operating system for engineering managers. EM OS gathers what's happening acr
 
 See [`docs/DEVELOPING.md`](docs/DEVELOPING.md) to install, run, debug and test the extension locally.
 
+Contributing with a coding agent? Start with [`AGENTS.md`](AGENTS.md). It covers the work queue in [`docs/plans/`](docs/plans/README.md), the hard rules, and the [ADR protocol](docs/adr/README.md#adr-protocol).
+
 ## Repository rules
 
 This is a public repository. It holds code, docs and **synthetic** fixtures only. No real work content, credentials, databases or personal data is ever committed.

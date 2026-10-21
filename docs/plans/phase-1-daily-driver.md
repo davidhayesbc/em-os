@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Team protocol: [README.md](README.md).
 
+**Status:** in progress. Start with **P1-00**. Tasks that need a real transport (P1-13, P1-14) build against fixtures until owner spike P0-04 is recorded in ADR 0005.
+
 **Goal:** The user plans every morning in EM OS. After a one-time import of their notes and a live calendar sync, the dashboard shows:
 
 - the week's load;
@@ -140,7 +142,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [ ] **P1-35** Plugin loader + aggregator adapter interface + synthetic reference adapter — deps: P1-34 — claim: —
 - [ ] **P1-36** Trust and exit: health panel, open data folder, export, delete all data — deps: P1-05, P1-12, P1-15 — claim: —
 - [ ] **P1-42** Automatic daily backups with rotation — deps: Phase 0 — claim: —
-- [ ] **P1-37** *manual + CI* Marketplace and Open VSX publishing — deps: P0-15, P1-36 — claim: —
+- [ ] **P1-37** *manual + CI* Marketplace and Open VSX publishing — deps: P0-15, P1-36 — claim: owner (steps 1 and 4); an agent may do steps 2, 3 and 5
 
 **Close-out**
 
@@ -160,6 +162,9 @@ Starting lanes (no Phase 1 dependencies): P1-02, P1-04, P1-05, P1-12, P1-16 and 
 - `packages/extension/src/launcher.ts` (+ tests)
 - `packages/api-contract/src/entities/common.ts` (+ test)
 - `packages/service/src/lockfile.ts` (+ test)
+- `packages/store-sqlite/src/fts5.test.ts`
+- `.github/workflows/ci.yml`
+- `docs/adr/0001-backend-service-and-clients.md` and `docs/adr/0002-local-sqlite-store.md` (dated Verification updates only)
 
 **Changes:**
 
@@ -170,6 +175,8 @@ Starting lanes (no Phase 1 dependencies): P1-02, P1-04, P1-05, P1-12, P1-16 and 
 5. **Lock release.** In the launcher, `lockReleased` treats a lock that names a different pid as released, so it never kills a pid that has already exited.
 6. **`isRealDate`.** Use `setUTCFullYear(y, m - 1, d)` so years 0000–0099 are handled correctly. A test covers `0000-02-29`.
 7. **Lock staleness.** Add a 120 s margin to the boot-time check, and store `uptimeAtStart` in the lock JSON. Treat `os.uptime() < uptimeAtStart` as proof of a reboot.
+8. **FTS5 check.** Add a store-sqlite test that creates an FTS5 virtual table, inserts rows and runs a `MATCH` query, so FTS5 availability is proven on every CI OS. This closes the ADR 0002 Verification item.
+9. **Windows keychain in CI.** Enable `EMOS_TEST_KEYCHAIN=1` on the `windows-latest` test job. If Credential Manager isn't usable on the runner, record that in ADR 0001 Verification and keep it macOS-only. This closes, or documents, the ADR 0001 checklist item 2.
 
 **Acceptance:** each change has a test, `npm run ci` passes, and the smoke test passes.
 
@@ -1494,7 +1501,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [ ] **Step 1 (owner):** create the Marketplace publisher and the Open VSX namespace, and add both tokens as repo secrets.
 - [ ] **Step 2:** write the listing README: what it does, screenshots from synthetic data, the getting-started steps, and the requirements (VS Code; optional Claude Code / API key; optional Ollama). Write `PRIVACY.md`: local storage, egress per provider, no telemetry, export / delete.
 - [ ] **Step 3:** add `release.yml`. Dry-run it on a `v0.0.0-rc` tag with publishing disabled, and confirm the artifacts.
-- [ ] **Step 4:** publish `v0.1.0` as a pre-release (`--pre-release`), then install it from the gallery into a clean profile and complete onboarding.
+- [ ] **Step 4 (owner):** publish `v0.1.0` as a pre-release (`--pre-release`), then install it from the gallery into a clean profile and complete onboarding.
 - [ ] **Step 5: Commit** `ci(p1-37): marketplace and open vsx release pipeline`.
 
 **Acceptance:** "EM OS" installs from the VS Code gallery, auto-updates on the next release, and needs no other install to reach the dashboard.
