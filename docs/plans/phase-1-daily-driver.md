@@ -75,6 +75,10 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 ## Task board
 
+**Phase 0 carry-over (do first)**
+
+- [ ] **P1-00** Phase 0 hardening: host-only ops in the webview bridge, a case-insensitive data-dir gate, a shutdown pid guard — deps: Phase 0 — claim: —
+
 **Slices (data + ops)**
 
 - [ ] **P1-01** People, identities and person notes slice — deps: P1-05 — claim: —
@@ -143,6 +147,31 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [ ] **P1-33** Phase 1 end-to-end synthetic test + owner dogfood checklist — deps: every P1 task except P1-37 — claim: —
 
 Starting lanes (no Phase 1 dependencies): P1-02, P1-04, P1-05, P1-12, P1-16 and P1-42. UI tasks can build against a fake `rpc()` as soon as their ops exist in `api-contract`.
+
+---
+
+### Task P1-00: Phase 0 hardening (from the Phase 0 final review)
+
+**Files:**
+- `packages/extension/src/bridge.ts` (+ test)
+- `packages/service/src/secrets.ts` (+ test)
+- `packages/service/src/handlers/service.ts`
+- `packages/service/src/server.ts`
+- `packages/extension/src/launcher.ts` (+ tests)
+- `packages/api-contract/src/entities/common.ts` (+ test)
+- `packages/service/src/lockfile.ts` (+ test)
+
+**Changes:**
+
+1. **Host-only ops.** Add `HOST_ONLY_OPS = new Set(["service.shutdown", "backup.create"])` to the extension bridge. `isKnownOp` accepts an op only when `Object.hasOwn(ops, op)` and the op is not in that set. A test asserts the webview gets `not_found` for both ops.
+2. **Memory secret-store gate.** `real()` must use `realpathSync.native`. On `darwin` and `win32`, compare the chosen data dir against the platform default case-insensitively, so a case variant of the default selects the keychain. Add a case-variant test.
+3. **Shutdown guard.** `service.shutdown` gets an optional `{ pid }` input and is refused unless `pid === process.pid`. The launcher sends the pid it read from `service.json`.
+4. **Shutdown trigger.** Trigger shutdown on the response's `close` event, not `finish`.
+5. **Lock release.** In the launcher, `lockReleased` treats a lock that names a different pid as released, so it never kills a pid that has already exited.
+6. **`isRealDate`.** Use `setUTCFullYear(y, m - 1, d)` so years 0000–0099 are handled correctly. A test covers `0000-02-29`.
+7. **Lock staleness.** Add a 120 s margin to the boot-time check, and store `uptimeAtStart` in the lock JSON. Treat `os.uptime() < uptimeAtStart` as proof of a reboot.
+
+**Acceptance:** each change has a test, `npm run ci` passes, and the smoke test passes.
 
 ---
 
