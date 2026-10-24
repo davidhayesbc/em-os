@@ -27,6 +27,20 @@ Commitments, person notes, goals and meeting notes can be captured by hand. Clau
 
 **Requires:** every Phase 0 task done. Its Interfaces blocks are the starting contract: `ops`, `defineOp`, `Handler`, `ServiceContext`, `Db`, the `Store` port, `rpc()`, `widgets` and the bridge protocol.
 
+## Commitment-first validation milestones (owner priority, 2026-10-24)
+
+These are **intermediate dogfooding milestones**, not a replacement for the Phase 1 daily-driver scope. Preserve the existing task IDs, contracts, hard rules, and accepted ADRs. P1-00 hardening remains the first task. This plan change does not authorize agents to alter accepted interfaces or skip dependencies.
+
+**Alpha A — manual commitment loop.** After P1-00, prioritize P1-02, P1-05, P1-01, P1-03 and the new P1-44. P1-44 provides a small commitment-first VS Code surface using the existing API, independent of P1-10, P1-23 and the calendar. The owner can capture a commitment, inspect provenance/audit history, list `mine` and `owed_to_me`, edit due dates, snooze, complete, drop and reopen, and return the next morning. Use synthetic data first; use permitted work data only on the owner's machine. **Exit:** five consecutive workdays of use; record capture time, friction, missing follow-up semantics and failures. P1-28 remains the full person/goals/commitment view and must reuse, not duplicate, P1-44's UI primitives.
+
+**Alpha B — assisted capture, narrow experiment.** After the manual loop, P1-46 tests pasted synthetic meeting excerpts and optional owner-approved real excerpts, with no connector dependency. The model outputs proposals with *source spans* and confidence; nothing becomes active without triage. This is a throwaway spike and does not implement the production `commitment.extract` pipeline. Evaluate false positives, missed explicit promises, duplicates, and false-done suggestions. Record findings and any proposed design changes for owner review; do not silently change ADR 0007.
+
+**Follow-up semantics gate.** P1-45 tests the existing commitment state machine and audit trail against reminders, partial fulfilment, changed deadlines, undated triggers, and repeated follow-ups. Where audit events cannot represent meaningful user-facing history, propose a separate interaction/event model and the necessary spec/ADR change *before* implementing it. Do not confuse an operational audit log with a history of conversations or reminders.
+
+**Suggested evaluation measures (provisional, not achieved):** manual capture under 10 seconds; proposal triage under 8 seconds; accepted-suggestion precision ≥90%; explicit-commitment recall ≥80% on a labelled set; duplicate proposal rate <5%; daily use ≥4 workdays/week. Track recovered forgotten commitments and false completion suggestions separately. Acceptance rate ≥70% remains a product metric, but is not a substitute for independently labelled precision/recall.
+
+**Execution order:** P1-00 first. Then run the independent foundational lanes allowed by the task board. Prioritize the commitment vertical slice and P1-44 before calendar-dependent dashboard widgets. P1-45 follows P1-02; P1-46 follows P1-04 and P1-02. The owner reviews Alpha A and Alpha B before broadening automation. Remaining Phase 1 tasks and P1-33 still apply.
+
 ## Global Constraints
 
 Everything in Phase 0's Global Constraints applies, plus:
@@ -143,6 +157,12 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [ ] **P1-36** Trust and exit: health panel, open data folder, export, delete all data — deps: P1-05, P1-12, P1-15 — claim: —
 - [ ] **P1-42** Automatic daily backups with rotation — deps: Phase 0 — claim: —
 - [ ] **P1-37** *manual + CI* Marketplace and Open VSX publishing — deps: P0-15, P1-36 — claim: owner (steps 1 and 4); an agent may do steps 2, 3 and 5
+
+**Commitment-first validation (new intermediate milestones)**
+
+- [ ] **P1-44** Minimal commitment loop UI + dogfood checklist — deps: P1-01, P1-02, P1-03, P1-05 — claim: —
+- [ ] **P1-45** Follow-up semantics tests and model review — deps: P1-02 — claim: —
+- [ ] **P1-46** *spike* Pasted-text commitment extraction evaluation — deps: P1-02, P1-04 — claim: —
 
 **Close-out**
 
@@ -1753,3 +1773,54 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 **Acceptance (the Phase 1 done criterion):**
 - The e2e test is green in CI.
 - *(owner, after merge)* The owner has completed the dogfood checklist, planning every morning in EM OS for a week, including `/emos-capture` pulling Slack saved items and reminders.
+
+
+---
+
+## Commitment-first additions (2026-10-24)
+
+### Task P1-44: Minimal commitment loop UI
+
+**Dependencies:** P1-01, P1-02, P1-03, P1-05. This is deliberately independent of P1-10 and P1-23.
+
+**Files:** `packages/extension/src/commitments-alpha/` (new UI and tests), plus the minimum command/registration files required to expose this view. If a shared existing file or contract must change outside this boundary, stop and request owner approval of the Files list; do not bypass the agent protocol.
+
+**Interfaces:** Consume existing `commitments.list|get|create|update|complete|snooze|drop|reopen`, `commitments.quickCapture` and `people.resolve` operations. Do not change their schemas. Render two separate lists, `mine` and `owed_to_me`, with due/overdue, snooze, source and audit affordances. Quick capture must handle `needs_person` without guessing. Keep the UI accessible by keyboard and usable without a calendar or connector.
+
+**Steps:**
+- [ ] Add tests for empty state, create, ambiguous person, edit, complete, snooze, drop, reopen and both directions.
+- [ ] Implement the smallest functional VS Code view/command surface, using the existing extension RPC bridge and API.
+- [ ] Verify source/audit display and absence of silent state changes; no new autonomous writes.
+- [ ] Run `npm run ci`; owner verifies the five-workday dogfood checklist after merge.
+- [ ] Document reusable components for P1-28 and the future dashboard.
+
+**Acceptance:** The owner can manage both directions of commitments end-to-end before the calendar/dashboard is built. Manual dogfood observations are recorded without real work content in the public repo.
+
+### Task P1-45: Follow-up semantics tests and model review
+
+**Dependencies:** P1-02.
+
+**Files:** `packages/core/src/commitments/follow-up-scenarios.test.ts`, `docs/plans/commitment-follow-up-review.md` (new). No schema or API changes in this task.
+
+**Steps:**
+- [ ] Write synthetic scenarios: promise vs intention; undated promise; repeat reminder without duplication; incomplete delivery; deadline renegotiation with original promise retained; trigger-based obligation; a completed commitment resurfacing in sync.
+- [ ] Mark each scenario as supported, unsupported or requiring a product decision. Tests for existing behavior should pass; unresolved behavior must be explicitly documented rather than forced into an invented contract.
+- [ ] Review whether `audit_events` is sufficient for user-visible follow-up interactions. If not, propose a distinct interaction/event entity, lifecycle, provenance and deduplication rules.
+- [ ] If changes cross an accepted ADR, write a proposed superseding ADR in a separate owner-reviewed change; do not rewrite an accepted ADR.
+
+**Acceptance:** A concise gap analysis with reproducible tests and an explicit owner decision list; no premature implementation of a new domain model.
+
+### Task P1-46: Pasted-text commitment extraction spike
+
+**Dependencies:** P1-02, P1-04. **Marker:** spike (experiment, not production integration).
+
+**Files:** `spikes/p1-46/` (synthetic corpus, runner, labelled evaluation and report); append a dated spike result to `docs/adr/0007-commitment-pipeline-triage.md` only after owner review and in accordance with the ADR protocol.
+
+**Steps:**
+- [ ] Build a labelled synthetic set with explicit promises, requests, intentions, quoted historical statements, cancellations, ambiguous owners, duplicates, due-date changes and partial completions.
+- [ ] Compare structured model extraction against the labelled set; require source-item IDs and exact supporting spans, and flag uncertain owner/due-date inference.
+- [ ] Evaluate precision, recall, duplicate rate, triage time and false-completion rate separately; report counts and examples, not just percentages.
+- [ ] Show proposals for human accept/edit/merge/reject; do not auto-activate or contact external systems.
+- [ ] Report privacy constraints, cost/latency and recommended changes, if any, for the owner's decision.
+
+**Acceptance:** Reproducible synthetic evaluation and honest results. Any production pipeline or new contract requires its own planned task and appropriate ADR review.
