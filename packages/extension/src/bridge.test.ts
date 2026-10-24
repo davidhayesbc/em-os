@@ -122,6 +122,22 @@ describe("bridge.attach", () => {
     });
   });
 
+  it.each(["service.shutdown", "backup.create"])(
+    "rejects host-only op %s without calling the service",
+    async (op) => {
+      const { webview, conn } = setup();
+      webview.deliver({ kind: "rpc", reqId: op, op, input: {} });
+      await flush();
+      expect(conn.call).not.toHaveBeenCalled();
+      expect(webview.posted).toContainEqual({
+        kind: "rpc-result",
+        reqId: op,
+        ok: false,
+        error: { code: "not_found", message: "Unknown op" },
+      });
+    },
+  );
+
   it("sends the connection state on ready and on every change", () => {
     const { webview, setState } = setup();
     webview.deliver({ kind: "ready" });

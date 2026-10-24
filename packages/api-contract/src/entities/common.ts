@@ -7,15 +7,16 @@ export type IsoDateTime = z.infer<typeof IsoDateTime>;
 
 const LOCAL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-/** True for a real calendar date (`2026-02-29` is not one): round-trips through `Date.UTC`. */
+/** True for a real calendar date (`2026-02-29` is not one): round-trips through a UTC `Date`. */
 function isRealDate(s: string): boolean {
   const m = LOCAL_DATE.exec(s);
   if (!m) return false;
   const y = Number(m[1]);
   const mo = Number(m[2]);
   const d = Number(m[3]);
-  const t = new Date(Date.UTC(y, mo - 1, d));
-  t.setUTCFullYear(y); // Date.UTC maps years 0-99 to 1900-1999
+  const t = new Date(0);
+  // Setting all fields together avoids Date.UTC's special mapping of years 0-99 to 1900-1999.
+  t.setUTCFullYear(y, mo - 1, d);
   return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d;
 }
 

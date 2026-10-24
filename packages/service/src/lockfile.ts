@@ -1,4 +1,4 @@
-// Single-instance lock: `run/service.lock` holds `{"pid":…,"startedAt":…}` (JSON). The old
+// Single-instance lock holds `{ pid, startedAt, uptimeAtStart }` (JSON). The old
 // pid-only format (`1234\n`) is still read.
 import {
   closeSync,
@@ -90,21 +90,34 @@ function readPid(path: string): number | null | "missing" {
   return parseLockPid(text);
 }
 
+function readUptimeAtStart(path: string): number | null {
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8")) as { uptimeAtStart?: unknown } | null;
+    return typeof value?.uptimeAtStart === "number" && value.uptimeAtStart >= 0
+      ? value.uptimeAtStart
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * True if the lock file was last written before the system booted: its owner cannot still be
  * running, even if a process with that pid (recycled after the reboot) is alive now.
  */
 function predatesBoot(path: string, now: number, uptimeSec: number): boolean {
+  const uptimeAtStart = readUptimeAtStart(path);
+  if (uptimeAtStart !== null && uptimeSec < uptimeAtStart) return true;
   let mtimeMs: number;
   try {
     mtimeMs = statSync(path).mtimeMs;
   } catch {
     return false;
   }
-  return mtimeMs < now - uptimeSec * 1000;
+  return mtimeMs < now - (uptimeSec + 120) * 1000;
 }
 
-function tryCreate(path: string, pid: number, startedAt: string): boolean {
+function tryCreate(path: string, pid: number, startedAt: string, uptimeAtStart: number): boolean {
   let fd: number;
   try {
     fd = openSync(path, "wx", 0o600);
@@ -113,7 +126,7 @@ function tryCreate(path: string, pid: number, startedAt: string): boolean {
     throw e;
   }
   try {
-    writeSync(fd, `${JSON.stringify({ pid, startedAt })}\n`);
+    writeSync(fd, `${JSON.stringify({ pid, startedAt, uptimeAtStart })}\n`);
   } finally {
     closeSync(fd);
   }
@@ -140,7 +153,9 @@ export async function acquireLock(path: string, opts: AcquireLockOptions = {}): 
   const uptimeSec = opts.uptimeSec ?? uptime;
 
   for (let attempt = 0; attempt < 10; attempt++) {
-    if (tryCreate(path, pid, new Date(now()).toISOString())) return makeLock(path, pid);
+    if (tryCreate(path, pid, new Date(now()).toISOString(), uptimeSec())) {
+      return makeLock(path, pid);
+    }
 
     let owner = readPid(path);
     if (owner === null) {

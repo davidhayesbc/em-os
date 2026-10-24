@@ -67,7 +67,7 @@ export interface LauncherOptions {
   /** `health.get` on a located service: its versions, `"incompatible"` (409), or null (failed). */
   health?: (ep: ServiceEndpoint) => Promise<HealthVersions | "incompatible" | null>;
   /** `service.shutdown`; resolves true if the service accepted. */
-  shutdown?: (ep: ServiceEndpoint) => Promise<boolean>;
+  shutdown?: (ep: ServiceEndpoint, pid: number) => Promise<boolean>;
   /** Last resort when a replaced service doesn't release its lock. Default `process.kill`. */
   kill?: (pid: number) => void;
   /** How long a replaced service gets to release the lock before it is killed (default 5 s). */
@@ -100,9 +100,9 @@ async function defaultHealth(ep: ServiceEndpoint): Promise<HealthVersions | "inc
   }
 }
 
-async function defaultShutdown(ep: ServiceEndpoint): Promise<boolean> {
+async function defaultShutdown(ep: ServiceEndpoint, pid: number): Promise<boolean> {
   try {
-    return (await rpcClient(ep).call("service.shutdown", {})).ok === true;
+    return (await rpcClient(ep).call("service.shutdown", { pid })).ok === true;
   } catch {
     return false;
   }
@@ -218,9 +218,9 @@ export function createLauncher(opts: LauncherOptions): Launcher {
   }
 
   /** The lock is gone, or its owner is dead. */
-  function lockReleased(dataDir: string): boolean {
+  function lockReleased(dataDir: string, expectedPid: number): boolean {
     const owner = readLockPid(dataDir);
-    return owner === null || !isAlive(owner);
+    return owner === null || owner !== expectedPid || !isAlive(owner);
   }
 
   async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
@@ -234,8 +234,8 @@ export function createLauncher(opts: LauncherOptions): Launcher {
 
   /** Stops a mismatched service: `service.shutdown`, wait for the lock, else kill its pid. */
   async function replace(dataDir: string, old: { ep: ServiceEndpoint; pid: number }) {
-    const accepted = await shutdown(old.ep);
-    if (accepted && (await waitFor(() => lockReleased(dataDir), stopTimeoutMs))) return;
+    const accepted = await shutdown(old.ep, old.pid);
+    if (accepted && (await waitFor(() => lockReleased(dataDir, old.pid), stopTimeoutMs))) return;
     try {
       kill(old.pid);
     } catch {

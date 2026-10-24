@@ -54,7 +54,7 @@ export interface ServiceDeps {
    * Asks the service on `port` to stop via the `service.shutdown` op. Resolves true if it
    * accepted. Default: the RPC client with a 3 s timeout; any failure resolves false.
    */
-  requestShutdown?: (port: number, token: string) => Promise<boolean>;
+  requestShutdown?: (port: number, token: string, pid: number) => Promise<boolean>;
   /** Fallback when `service.shutdown` fails: SIGTERM (Windows: `process.kill(pid)`). */
   kill?: (pid: number, signal?: NodeJS.Signals) => void;
   /** Is this pid still running? Default: `process.kill(pid, 0)`. */
@@ -101,7 +101,7 @@ function removeLeftovers(dataDir: string, pid: number): void {
   }
 }
 
-async function defaultRequestShutdown(port: number, token: string): Promise<boolean> {
+async function defaultRequestShutdown(port: number, token: string, pid: number): Promise<boolean> {
   const fetchWithTimeout: typeof fetch = (url, init) =>
     fetch(url, { ...init, signal: AbortSignal.timeout(3000) });
   try {
@@ -109,7 +109,7 @@ async function defaultRequestShutdown(port: number, token: string): Promise<bool
       transport: httpTransport(baseUrl(port), fetchWithTimeout),
       token,
     });
-    return (await client.call("service.shutdown", {})).ok === true;
+    return (await client.call("service.shutdown", { pid })).ok === true;
   } catch {
     return false;
   }
@@ -228,7 +228,7 @@ export function createServiceCommand(deps: ServiceDeps = {}): Command {
     // First ask nicely, on every OS: the op stops the service gracefully (lock, service.json).
     const token = readToken(dataDir);
     let stopped =
-      token !== null && (await requestShutdown(svc.info.port, token)) && (await waitStopped());
+      token !== null && (await requestShutdown(svc.info.port, token, pid)) && (await waitStopped());
     if (!stopped) {
       // Fallback: an older service without the op, a wrong token or a hung shutdown.
       try {

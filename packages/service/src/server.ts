@@ -356,7 +356,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
         (res) => {
           // The handler asked to stop: do it once this response is on the wire.
           if (!shutdownRequested) return;
-          res.on("finish", () => shutdown?.());
+          res.on("close", () => shutdown?.());
         },
       ),
     );

@@ -145,3 +145,12 @@ CI run `39520158278` on `main` (commit `a33ff8d`) passed every job on `windows-l
   - **Checklist item 1, FTS5:** no automated test creates an FTS5 table yet, on any OS. Tracked in P1-00.
   - **Checklist item 2, Windows Credential Manager:** `EMOS_TEST_KEYCHAIN=1` runs on macOS CI only. Tracked in P1-00.
   - **Checklist item 4, Defender, SmartScreen and outliving VS Code on a real Windows desktop:** CI runners don't exercise these. This is an owner check on a real machine.
+
+## Verification (2026-10-24)
+
+- **Checklist item 1, FTS5:** P1-00 adds a permanent FTS5 create/insert/`MATCH` test to the
+  cross-platform test suite.
+- **Checklist item 2, Windows Credential Manager:** Ruling R3 keeps the real-keychain round trip
+  (`EMOS_TEST_KEYCHAIN=1`) on macOS CI only. Windows packaging and service startup remain covered
+  by CI; Credential Manager is retained as an owner desktop check because a hosted runner does not
+  provide a representative interactive user session.

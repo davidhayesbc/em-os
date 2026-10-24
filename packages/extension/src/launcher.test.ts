@@ -295,6 +295,7 @@ describe("version-aware attach", () => {
     const kill = vi.fn();
     const ep = await createLauncher({ ...w.opts, health, shutdown, kill }).ensureService(dataDir);
     expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(shutdown).toHaveBeenCalledWith(expect.anything(), OLD_PID);
     expect(kill).not.toHaveBeenCalled();
     expect(w.spawn).toHaveBeenCalledTimes(1);
     expect(ep.baseUrl).toBe(`http://127.0.0.1:${LIVE_PORT}`);
@@ -334,6 +335,21 @@ describe("version-aware attach", () => {
     }).ensureService(dataDir);
     expect(kill).toHaveBeenCalledTimes(1);
     expect(ep.baseUrl).toBe(`http://127.0.0.1:${LIVE_PORT}`);
+  });
+
+  it("treats a lock reassigned to a different pid as released without killing the old pid", async () => {
+    const dataDir = tmpDataDir();
+    const { w, health } = withOldService(dataDir, {
+      serviceVersion: "0.9.0",
+      apiVersion: 1,
+    });
+    const shutdown = vi.fn(async () => {
+      writeFileSync(join(dataDir, "run", "service.lock"), JSON.stringify({ pid: 9090 }));
+      return true;
+    });
+    const kill = vi.fn();
+    await createLauncher({ ...w.opts, health, shutdown, kill }).ensureService(dataDir);
+    expect(kill).not.toHaveBeenCalled();
   });
 
   it("an unreachable health check does not kill anything (attaches as before)", async () => {

@@ -65,6 +65,9 @@ const due = (over: Partial<{ date: string; time: string | null; timeZone: string
 });
 
 describe("LocalDate rejects impossible dates", () => {
+  it("accepts leap day in year 0000", () => {
+    expect(LocalDate.safeParse("0000-02-29").success).toBe(true);
+  });
   it.each(["2026-02-28", "2028-02-29", "2026-12-31", "2026-01-01", "0001-01-01"])(
     "accepts %s",
     (d) => {

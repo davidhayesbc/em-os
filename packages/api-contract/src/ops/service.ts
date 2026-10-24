@@ -8,6 +8,6 @@ import { defineOp } from "../op.js";
  */
 export const serviceShutdown = defineOp({
   name: "service.shutdown",
-  input: z.object({}),
+  input: z.object({ pid: z.number().int().positive().optional() }),
   output: z.object({ ok: z.literal(true) }),
 });

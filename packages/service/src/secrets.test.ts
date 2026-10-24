@@ -83,6 +83,19 @@ describe("secretStoreKind (test-only EMOS_SECRET_STORE switch)", () => {
     ).toEqual({ kind: "keychain", ignored: true });
   });
 
+  it.each(["darwin", "win32"] as const)(
+    "treats a case variant of the %s platform default as the default",
+    (platform) => {
+      const home = tmpDir();
+      const platformDefault = resolveDataDir({}, platform, home);
+      const caseVariant = platformDefault.toUpperCase();
+      const ctx = { dataDir: caseVariant, platform, homedir: home };
+      expect(
+        secretStoreKind({ EMOS_SECRET_STORE: "memory", EMOS_DATA_DIR: caseVariant }, ctx),
+      ).toEqual({ kind: "keychain", ignored: true });
+    },
+  );
+
   it("ignores unknown values", () => {
     const { dataDir, ctx } = setup();
     expect(
