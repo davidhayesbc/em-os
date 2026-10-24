@@ -98,7 +98,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 **Slices (data + ops)**
 
 - [ ] **P1-01** People, identities and person notes slice — deps: P1-05 — claim: —
-- [ ] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: —
+- [ ] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: coder · p1-02-commitments-goals
 - [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: —
 - [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
 - [ ] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: —
