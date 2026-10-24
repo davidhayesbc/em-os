@@ -93,7 +93,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Phase 0 carry-over (do first)**
 
-- [ ] **P1-00** Phase 0 hardening: host-only ops in the webview bridge, a case-insensitive data-dir gate, a shutdown pid guard — deps: Phase 0 — claim: —
+- [ ] **P1-00** Phase 0 hardening: host-only ops in the webview bridge, a case-insensitive data-dir gate, a shutdown pid guard — deps: Phase 0 — claim: coder · p1-00-phase0-hardening
 
 **Slices (data + ops)**
 
