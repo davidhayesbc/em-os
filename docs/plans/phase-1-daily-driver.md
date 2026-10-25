@@ -101,7 +101,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [ ] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: coder · p1-02-commitments-goals
 - [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: —
 - [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
-- [ ] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: coder · p1-05-settings-profile-layout
+- [x] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: done · e7aa721
 
 **Core logic (pure)**
 
@@ -432,7 +432,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [x] **Step 2: Run.** Expected: FAIL.
 - [x] **Step 3: Implement.**
 - [x] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-05): profile, rank config and layouts`.
+- [x] **Step 5: Commit** `feat(p1-05): profile, rank config and layouts`.
 
 **Acceptance:** All configurable defaults live in one validated profile.
 
