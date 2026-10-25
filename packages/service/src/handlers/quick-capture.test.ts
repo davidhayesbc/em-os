@@ -65,6 +65,49 @@ describe("commitments.quickCapture API", () => {
     ).resolves.toMatchObject({ status: "needs_person", candidates: [] });
   });
 
+  it("resolves a parsed person query against an identity handle", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", personInput("Morgan Lee"));
+    const counterpart = await client.call("people.create", personInput("Jordan Patel", ["JP"]));
+    await client.call("people.addIdentity", {
+      personId: counterpart.id,
+      source: "chat",
+      handle: "@alex",
+      confirmed: true,
+    });
+    await client.call("settings.update", { patch: { selfPersonId: self.id } });
+
+    const result = await client.call("commitments.quickCapture", { text: "Send update @alex" });
+
+    expect(result).toMatchObject({
+      status: "created",
+      commitment: { title: "Send update", status: "active", counterpartId: counterpart.id },
+    });
+  });
+
+  it("returns needs_person when name and identity-handle matches disagree", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", personInput("Morgan Lee"));
+    const nameMatch = await client.call("people.create", personInput("Alex Rivera"));
+    const handleMatch = await client.call("people.create", personInput("Jordan Patel"));
+    await client.call("people.addIdentity", {
+      personId: handleMatch.id,
+      source: "chat",
+      handle: "@alex",
+      confirmed: true,
+    });
+    await client.call("settings.update", { patch: { selfPersonId: self.id } });
+
+    const result = await client.call("commitments.quickCapture", { text: "Send update @alex" });
+
+    expect(result).toMatchObject({ status: "needs_person", parsed: { personQuery: "alex" } });
+    if (result.status !== "needs_person") throw new Error("Expected person choice");
+    expect(result.candidates.map((candidate) => candidate.id)).toEqual([
+      nameMatch.id,
+      handleMatch.id,
+    ]);
+  });
+
   it("rejects an explicit nonexistent counterpartId with not_found", async () => {
     const client = await setup();
     const self = await client.call("people.create", personInput("Alex Rivera"));

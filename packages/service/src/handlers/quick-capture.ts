@@ -21,7 +21,14 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
   } else if (parsed.personQuery) {
     const people = ctx.store.people.list();
     const identities = people.flatMap((person) => ctx.store.people.identities(person.id));
-    const candidates = resolvePerson(parsed.personQuery, people, identities);
+    const candidates = [
+      ...new Map(
+        [
+          ...resolvePerson(parsed.personQuery, people, identities),
+          ...resolvePerson(`@${parsed.personQuery}`, people, identities),
+        ].map((person) => [person.id, person]),
+      ).values(),
+    ];
     const [candidate] = candidates;
     if (candidates.length !== 1 || !candidate)
       return { status: "needs_person", parsed, candidates };
