@@ -1,10 +1,11 @@
-import type { NewCommitment } from "@emos/api-contract";
+import type { NewCommitment, ServerEvent } from "@emos/api-contract";
 import { fixedClock } from "@emos/core";
 import { createCommitmentsRepo, openDb } from "@emos/store-sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ServiceContext } from "../context.js";
 import {
   commitmentsComplete,
+  commitmentsCreate,
   commitmentsGet,
   commitmentsReopen,
   commitmentsSnooze,
@@ -14,11 +15,25 @@ const now = "2026-10-24T12:00:00.000Z";
 let db: ReturnType<typeof openDb>;
 let sequence = 0;
 let ctx: ServiceContext;
+let published: ServerEvent[];
 
 function person(id: string): void {
   db.prepare(`INSERT INTO people
     (id, display_name, relationship, aliases, archived, occurred_at, captured_at, updated_at, retention_state)
     VALUES (?, ?, 'other', '[]', 0, ?, ?, ?, 'active')`).run(id, id, now, now, now);
+}
+
+function source(id: string): void {
+  db.prepare(`INSERT INTO source_items
+    (id, connector_id, external_id, kind, origin, text, content_hash, sensitivity,
+     occurred_at, captured_at, updated_at, retention_state)
+    VALUES (?, 'fixture', ?, 'note', 'manual', 'Synthetic note', 'hash', 'normal', ?, ?, ?, 'active')`).run(
+    id,
+    id,
+    now,
+    now,
+    now,
+  );
 }
 
 function input(over: Partial<NewCommitment> = {}): NewCommitment {
@@ -50,6 +65,7 @@ function input(over: Partial<NewCommitment> = {}): NewCommitment {
 beforeEach(() => {
   db = openDb(":memory:");
   sequence = 0;
+  published = [];
   person("per_owner");
   const commitments = createCommitmentsRepo(db, {
     now: () => new Date(now),
@@ -60,7 +76,10 @@ beforeEach(() => {
     store: { transaction: <T>(fn: () => T): T => db.transaction(fn), commitments },
     clock: fixedClock(now),
     ids: { next: (prefix: string) => `${prefix}_${++sequence}` },
-    events: { publish: () => undefined, subscribe: () => () => undefined },
+    events: {
+      publish: (event: ServerEvent) => published.push(event),
+      subscribe: () => () => undefined,
+    },
   } as unknown as ServiceContext;
 });
 afterEach(() => db.close());
@@ -68,6 +87,29 @@ afterEach(() => db.close());
 const repo = () => ctx.store.commitments;
 
 describe("commitment handlers", () => {
+  it("create rejects a missing source without persisting or publishing", () => {
+    expect(() => commitmentsCreate(ctx, { ...input(), sourceIds: ["src_missing"] })).toThrowError(
+      expect.objectContaining({ code: "not_found" }),
+    );
+
+    expect(repo().list({})).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) count FROM commitment_sources").get()).toEqual({ count: 0 });
+    expect(published).toEqual([]);
+  });
+
+  it("create persists and publishes a commitment linked to a valid source", async () => {
+    source("src_1");
+
+    const created = await commitmentsCreate(ctx, { ...input(), sourceIds: ["src_1"] });
+
+    expect(
+      repo()
+        .sources(created.id)
+        .map((item) => item.id),
+    ).toEqual(["src_1"]);
+    expect(published).toEqual([{ type: "items.changed", entity: "commitment", ids: [created.id] }]);
+  });
+
   it("snooze stores snoozedUntil", () => {
     const c = repo().create(input());
     const result = commitmentsSnooze(ctx, { id: c.id, until: "2026-10-26T09:00:00.000Z" });
@@ -102,14 +144,7 @@ describe("commitment handlers", () => {
   });
 
   it("get returns linked sources and audit", async () => {
-    db.prepare(`INSERT INTO source_items
-      (id, connector_id, external_id, kind, origin, text, content_hash, sensitivity,
-       occurred_at, captured_at, updated_at, retention_state)
-      VALUES ('src_1', 'fixture', 'item-1', 'note', 'manual', 'Synthetic note', 'hash', 'normal', ?, ?, ?, 'active')`).run(
-      now,
-      now,
-      now,
-    );
+    source("src_1");
     const c = repo().create(input(), ["src_1"]);
     commitmentsSnooze(ctx, { id: c.id, until: "2026-10-26T09:00:00.000Z" });
     const result = await commitmentsGet(ctx, { id: c.id });

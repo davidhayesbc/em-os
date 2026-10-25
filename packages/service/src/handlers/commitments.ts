@@ -53,6 +53,11 @@ export const commitmentsCreate: Handler<"commitments.create"> = (ctx, input) =>
   ctx.store.transaction(() => {
     const { sourceIds, ...requested } = input;
     validateForeignIds(ctx, requested);
+    for (const sourceId of sourceIds ?? []) {
+      if (!exists(ctx, "source_items", sourceId)) {
+        throw new ApiError("not_found", "sourceId not found");
+      }
+    }
     const value: NewCommitment =
       requested.createdBy === "user"
         ? requested
