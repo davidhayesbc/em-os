@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs";
 import { request as httpRequest } from "node:http";
+import { createConnection } from "node:net";
 import {
+  API_VERSION,
   ApiError,
   createClient,
   defineOp,
@@ -133,6 +135,152 @@ async function streamOversizedBodyUntilTerminated(
       });
     };
     writeNext();
+  });
+}
+
+type SlowOversizedResult = {
+  status: number;
+  headers: Record<string, string>;
+  body: unknown;
+  capCrossedAt: number;
+  responseStartedAt: number;
+  totalBodyBytesSent: number;
+  bytesSentAfterCap: number;
+};
+
+/**
+ * Crosses the 1 MiB body limit quickly, then trickles 1 KiB chunks every 150 ms forever
+ * (chunked encoding, no terminating chunk) until the server rejects the upload. Used to
+ * assert the time-based drain bound fires before the byte-based drain bound.
+ */
+async function trickleOversizedBodyUntilRejected(
+  port: number,
+  token: string,
+): Promise<SlowOversizedResult> {
+  return new Promise((resolve, reject) => {
+    const LIMIT = 1024 * 1024;
+    const FAST_CHUNK = 1024 * 1024 + 1024; // 1 MiB + 1 KiB
+    const SLOW_CHUNK = 1024;
+    const SLOW_INTERVAL_MS = 150;
+
+    const headers = [
+      "POST /rpc/health.get HTTP/1.1",
+      `Host: 127.0.0.1:${port}`,
+      "Transfer-Encoding: chunked",
+      "Content-Type: application/json",
+      `Authorization: Bearer ${token}`,
+      `X-EMOS-API: ${API_VERSION}`,
+      "",
+      "",
+    ].join("\r\n");
+
+    let totalBodyBytesSent = 0;
+    let capCrossed = false;
+    let capCrossedAt = 0;
+    let responseStartedAt = 0;
+    let headerParsed = false;
+    let ended = false;
+    let timer: NodeJS.Timeout | undefined;
+
+    const headerBuffer: Buffer[] = [];
+    let status = 0;
+    const headersOut: Record<string, string> = {};
+    let bodyChunks: Buffer[] = [];
+    let bodyBytesReceived = 0;
+    let contentLength = -1;
+
+    const finish = () => {
+      if (ended) return;
+      ended = true;
+      if (timer) clearTimeout(timer);
+      const text = Buffer.concat(bodyChunks).toString("utf8");
+      let json: unknown;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = undefined;
+      }
+      socket.end();
+      resolve({
+        status,
+        headers: headersOut,
+        body: json,
+        capCrossedAt,
+        responseStartedAt,
+        totalBodyBytesSent,
+        bytesSentAfterCap: Math.max(0, totalBodyBytesSent - LIMIT),
+      });
+    };
+
+    const tryParseHeaders = (): boolean => {
+      const buf = Buffer.concat(headerBuffer);
+      const end = buf.indexOf("\r\n\r\n");
+      if (end === -1) return false;
+      const headerText = buf.slice(0, end).toString("utf8");
+      const headerLines = headerText.split("\r\n");
+      const statusLine = headerLines.shift() ?? "";
+      status = Number(statusLine.split(" ")[1]) || 0;
+      for (const line of headerLines) {
+        const idx = line.indexOf(":");
+        if (idx === -1) continue;
+        headersOut[line.slice(0, idx).toLowerCase()] = line.slice(idx + 1).trim();
+      }
+      const rest = buf.slice(end + 4);
+      bodyChunks = [rest];
+      bodyBytesReceived = rest.length;
+      contentLength = Number(headersOut["content-length"]);
+      if (Number.isFinite(contentLength) && bodyBytesReceived >= contentLength) {
+        finish();
+      }
+      return true;
+    };
+
+    const encodeChunk = (data: Buffer): Buffer =>
+      Buffer.concat([Buffer.from(`${data.length.toString(16)}\r\n`), data, Buffer.from("\r\n")]);
+
+    const sendChunk = (size: number) => {
+      if (ended || socket.destroyed) return;
+      const data = Buffer.alloc(size, "x");
+      totalBodyBytesSent += size;
+      if (!capCrossed && totalBodyBytesSent > LIMIT) {
+        capCrossed = true;
+        capCrossedAt = Date.now();
+      }
+      socket.write(encodeChunk(data), (err) => {
+        if (err || ended || socket.destroyed) return;
+        if (capCrossed) {
+          timer = setTimeout(() => sendChunk(SLOW_CHUNK), SLOW_INTERVAL_MS);
+        }
+      });
+    };
+
+    const socket = createConnection({ host: "127.0.0.1", port });
+
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      if (ended) return;
+      reject(error);
+    });
+
+    socket.on("close", () => {
+      if (!ended) finish();
+    });
+
+    socket.on("data", (chunk: Buffer) => {
+      if (!responseStartedAt) responseStartedAt = Date.now();
+      if (!headerParsed) {
+        headerBuffer.push(chunk);
+        headerParsed = tryParseHeaders();
+        if (!headerParsed) return;
+      } else {
+        bodyChunks.push(chunk);
+        bodyBytesReceived += chunk.length;
+        if (Number.isFinite(contentLength) && bodyBytesReceived >= contentLength) {
+          finish();
+        }
+      }
+    });
+
+    socket.write(headers, () => sendChunk(FAST_CHUNK));
   });
 }
 
@@ -343,6 +491,29 @@ describe("POST /rpc/:op over HTTP", () => {
       expect(result.uploadedBytes).toBeGreaterThanOrEqual(OVERSIZED_UPLOAD_TERMINATION_BYTES);
     }
     expect(result.uploadedBytes).toBeLessThan(2 * 1024 * 1024);
+  });
+
+  it("times out a slow trickle of an oversized chunked upload within the drain-timer bound", async () => {
+    const svc = await startTestService();
+    const result = await Promise.race([
+      trickleOversizedBodyUntilRejected(svc.port, svc.token),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("slow oversized upload was not rejected in time")),
+          5_000,
+        ),
+      ),
+    ]);
+
+    expect(result.status).toBe(413);
+    expect(result.body).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    expect(result.headers.connection).toBe("close");
+    expect(result.bytesSentAfterCap).toBeLessThan(64 * 1024 + 1024);
+    expect(result.responseStartedAt - result.capCrossedAt).toBeGreaterThanOrEqual(0);
+    expect(result.responseStartedAt - result.capCrossedAt).toBeLessThan(2_500);
+
+    const health = await request(svc.port, { method: "GET", path: "/health/ping" });
+    expect(health.status).toBe(200);
   });
 
   it("accepts a body just under 1 MiB", async () => {
