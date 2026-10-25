@@ -1,3 +1,4 @@
+import { ApiError } from "@emos/api-contract";
 import { parseQuickCapture, resolvePerson } from "@emos/core";
 import type { Handler } from "../context.js";
 
@@ -15,7 +16,7 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
   let resolvedCounterpartId = counterpartId ?? null;
   if (resolvedCounterpartId) {
     if (!ctx.store.people.get(resolvedCounterpartId)) {
-      return { status: "invalid", message: "Counterpart not found" };
+      throw new ApiError("not_found", "counterpartId not found");
     }
   } else if (parsed.personQuery) {
     const people = ctx.store.people.list();

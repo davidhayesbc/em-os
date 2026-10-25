@@ -65,6 +65,19 @@ describe("commitments.quickCapture API", () => {
     ).resolves.toMatchObject({ status: "needs_person", candidates: [] });
   });
 
+  it("rejects an explicit nonexistent counterpartId with not_found", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", personInput("Alex Rivera"));
+    await client.call("settings.update", { patch: { selfPersonId: self.id } });
+
+    await expect(
+      client.call("commitments.quickCapture", {
+        text: "Send hiring feedback",
+        counterpartId: "per_missing",
+      }),
+    ).rejects.toMatchObject({ code: "not_found", message: "counterpartId not found" });
+  });
+
   it("creates an active audited user commitment when counterpartId is explicit", async () => {
     const client = await setup();
     const self = await client.call("people.create", personInput("Alex Rivera"));
