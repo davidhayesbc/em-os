@@ -12,6 +12,16 @@ import {
 } from "./commitments.js";
 import { goalsCreate, goalsList, goalsUpdate } from "./goals.js";
 import { healthGet } from "./health.js";
+import {
+  peopleAddIdentity,
+  peopleCreate,
+  peopleGet,
+  peopleList,
+  peopleResolve,
+  peopleUpdate,
+  personNotesCreate,
+  personNotesList,
+} from "./people.js";
 import { serviceShutdown } from "./service.js";
 import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
 
@@ -36,4 +46,12 @@ export const ops = {
   "settings.update": settingsUpdate,
   "layout.get": layoutGet,
   "layout.set": layoutSet,
+  "people.list": peopleList,
+  "people.get": peopleGet,
+  "people.create": peopleCreate,
+  "people.update": peopleUpdate,
+  "people.addIdentity": peopleAddIdentity,
+  "people.resolve": peopleResolve,
+  "personNotes.create": personNotesCreate,
+  "personNotes.list": personNotesList,
 } as const;

@@ -3,6 +3,7 @@ import type { Db } from "./driver.js";
 import { createAccomplishmentsRepo } from "./repos/accomplishments.js";
 import { createCommitmentsRepo } from "./repos/commitments.js";
 import { createGoalsRepo } from "./repos/goals.js";
+import { createPeopleRepo } from "./repos/people.js";
 import { createSettingsRepo } from "./repos/settings.js";
 
 /**
@@ -16,5 +17,6 @@ export function createStore(db: Db): Store {
     goals: createGoalsRepo(db),
     accomplishments: createAccomplishmentsRepo(db),
     settings: createSettingsRepo(db),
+    people: createPeopleRepo(db),
   };
 }

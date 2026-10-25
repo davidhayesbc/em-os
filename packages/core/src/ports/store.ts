@@ -10,4 +10,5 @@ export interface Store {
   goals: import("./repos/goals.js").GoalsRepo;
   accomplishments: import("./repos/accomplishments.js").AccomplishmentsRepo;
   settings: SettingsRepo;
+  people: import("./repos/people.js").PeopleRepo;
 }
