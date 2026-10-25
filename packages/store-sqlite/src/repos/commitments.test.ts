@@ -64,6 +64,37 @@ describe("CommitmentsRepo", () => {
     expect(r.audit(c.id).map((event) => event.action)).toEqual(["pin", "unpin"]);
   });
 
+  it.each(["import", "system"] as const)(
+    "prevents a %s actor from reactivating a terminal commitment",
+    (actor) => {
+      const r = repo();
+      const done = r.create(input({ status: "done", completedAt: now }));
+
+      expect(() =>
+        r.save(
+          { ...done, status: "active", completedAt: null, updatedAt: now },
+          { action: "edit", actor },
+        ),
+      ).toThrowError("Only a user can reopen a terminal commitment");
+      expect(r.get(done.id)).toMatchObject({ status: "done", completedAt: now });
+      expect(r.audit(done.id)).toEqual([]);
+    },
+  );
+
+  it("permits an audited user reopen of a terminal commitment", () => {
+    const r = repo();
+    const dropped = r.create(input({ status: "dropped", dropReason: "user" }));
+
+    const reopened = r.save(
+      { ...dropped, status: "active", dropReason: null, updatedAt: now },
+      { action: "reopen", actor: "user" },
+    );
+
+    expect(reopened).toMatchObject({ status: "active", dropReason: null });
+    expect(r.get(dropped.id)).toMatchObject({ status: "active", dropReason: null });
+    expect(r.audit(dropped.id).map((event) => event.action)).toEqual(["reopen"]);
+  });
+
   it("filters active commitments owed to me", () => {
     const r = repo();
     const wanted = r.create(input({ direction: "owed_to_me" }));

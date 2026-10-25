@@ -11,11 +11,14 @@ export function nextOccurrence(r: Recurrence, after: LocalDate): LocalDate {
   }
   if (r.freq === "weekly") {
     const weekdays = [...(r.byWeekday ?? [date.getUTCDay()])].sort((a, b) => a - b);
-    for (let days = 1; days <= r.interval * 7; days++) {
-      const candidate = new Date(date);
-      candidate.setUTCDate(candidate.getUTCDate() + days);
-      if (weekdays.includes(candidate.getUTCDay())) return format(candidate);
+    const remaining = weekdays.find((weekday) => weekday > date.getUTCDay());
+    if (remaining !== undefined) {
+      date.setUTCDate(date.getUTCDate() + remaining - date.getUTCDay());
+      return format(date);
     }
+    const first = weekdays[0] ?? date.getUTCDay();
+    date.setUTCDate(date.getUTCDate() - date.getUTCDay() + r.interval * 7 + first);
+    return format(date);
   }
   const day = r.byMonthDay ?? date.getUTCDate();
   const first = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + r.interval, 1));

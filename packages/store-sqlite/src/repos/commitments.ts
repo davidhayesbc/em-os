@@ -126,6 +126,13 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
     save(c, audit): Commitment {
       const previous = this.get(c.id);
       if (!previous) throw new Error(`Unknown commitment ${c.id}`);
+      if (
+        (previous.status === "done" || previous.status === "dropped") &&
+        c.status === "active" &&
+        (audit.actor !== "user" || audit.action !== "reopen")
+      ) {
+        throw new Error("Only a user can reopen a terminal commitment");
+      }
       const diff: AuditEvent["diff"] = {};
       for (const [key] of fields)
         if (JSON.stringify(previous[key]) !== JSON.stringify(c[key])) {
