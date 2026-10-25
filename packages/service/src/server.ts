@@ -38,6 +38,9 @@ import {
 const POSIX = process.platform !== "win32";
 const LOOPBACK = "127.0.0.1";
 const RPC_PATH = /^\/rpc\/([A-Za-z0-9._-]{1,128})$/;
+// Let ordinary finite oversized uploads finish so clients receive the 413 without a write reset,
+// but do not let a chunked client hold the request open indefinitely after crossing the limit.
+const OVERSIZED_BODY_DRAIN_TIMEOUT_MS = 1_000;
 
 export interface StartServiceOptions {
   dataDir: string;
@@ -94,9 +97,13 @@ function sendJson(res: ServerResponse, { status, body }: RpcResult, extra = {}):
   res.end(text);
 }
 
-class BodyTooLarge extends Error {}
+class BodyTooLarge extends Error {
+  constructor(readonly drainTimedOut = false) {
+    super();
+  }
+}
 
-/** Reads the body as UTF-8, draining before rejecting when it exceeds `limit` bytes. */
+/** Reads UTF-8, draining oversized bodies for at most `OVERSIZED_BODY_DRAIN_TIMEOUT_MS`. */
 function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolveBody, reject) => {
     const declared = Number(req.headers["content-length"]);
@@ -104,26 +111,52 @@ function readBody(req: IncomingMessage, limit: number): Promise<string> {
     let size = 0;
     let done = false;
     let tooLarge = Number.isFinite(declared) && declared > limit;
-    req.on("data", (c: Buffer) => {
+    let drainTimer: NodeJS.Timeout | undefined;
+
+    const cleanup = () => {
+      if (drainTimer) clearTimeout(drainTimer);
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+    };
+    const startBoundedDrain = () => {
+      if (drainTimer) return;
+      drainTimer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        cleanup();
+        req.pause();
+        reject(new BodyTooLarge(true));
+      }, OVERSIZED_BODY_DRAIN_TIMEOUT_MS);
+    };
+    const onData = (c: Buffer) => {
       if (done) return;
       size += c.length;
       if (size > limit) {
         tooLarge = true;
+        startBoundedDrain();
         return;
       }
       if (!tooLarge) chunks.push(c);
-    });
-    req.on("end", () => {
+    };
+    const onEnd = () => {
       if (done) return;
       done = true;
+      cleanup();
       if (tooLarge) reject(new BodyTooLarge());
       else resolveBody(Buffer.concat(chunks).toString("utf8"));
-    });
-    req.on("error", (e) => {
+    };
+    const onError = (e: Error) => {
       if (done) return;
       done = true;
+      cleanup();
       reject(e);
-    });
+    };
+
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+    if (tooLarge) startBoundedDrain();
   });
 }
 
@@ -191,9 +224,11 @@ function createRequestListener(
     } catch (e) {
       if (e instanceof BodyTooLarge) {
         log.warn("rpc.body_too_large");
+        if (e.drainTimedOut) res.once("finish", () => req.destroy());
         sendJson(
           res,
           errorResult("invalid_input", `Request body exceeds ${config.maxBodyBytes} bytes`, 413),
+          e.drainTimedOut ? { Connection: "close" } : {},
         );
       } else {
         req.destroy();

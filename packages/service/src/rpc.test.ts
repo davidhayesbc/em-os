@@ -80,6 +80,36 @@ async function sendOversizedBodyInTwoParts(
   return { responseBeforeUploadFinished, ...result };
 }
 
+async function sendOversizedBodyWithoutEnding(
+  port: number,
+  token: string,
+): Promise<{ status: number; json: unknown }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        method: "POST",
+        path: "/rpc/health.get",
+        headers: authHeaders(token),
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            json: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+          });
+        });
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.write(Buffer.alloc(1024 * 1024 + 1, "x"));
+  });
+}
+
 describe("dispatchRpc", () => {
   it("validates input, calls the handler with parsed input and wraps the result", async () => {
     const res = await dispatch(JSON.stringify({ text: "héllo" }), okHandler);
@@ -270,6 +300,18 @@ describe("POST /rpc/:op over HTTP", () => {
       expect(res.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
     },
   );
+
+  it("bounds draining when an oversized chunked upload never ends", async () => {
+    const svc = await startTestService();
+    const result = await Promise.race([
+      sendOversizedBodyWithoutEnding(svc.port, svc.token),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("oversized upload was not bounded")), 2_500),
+      ),
+    ]);
+    expect(result.status).toBe(413);
+    expect(result.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+  });
 
   it("accepts a body just under 1 MiB", async () => {
     const svc = await startTestService();
