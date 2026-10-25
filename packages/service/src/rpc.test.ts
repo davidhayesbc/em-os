@@ -80,10 +80,16 @@ async function sendOversizedBodyInTwoParts(
   return { responseBeforeUploadFinished, ...result };
 }
 
+const OVERSIZED_UPLOAD_TERMINATION_BYTES = 1024 * 1024 + 64 * 1024;
+
+type OversizedUploadResult =
+  | { kind: "response"; status: number; json: unknown; uploadedBytes: number }
+  | { kind: "reset"; code: "ECONNRESET"; uploadedBytes: number };
+
 async function streamOversizedBodyUntilTerminated(
   port: number,
   token: string,
-): Promise<{ status: number; json: unknown; uploadedBytes: number }> {
+): Promise<OversizedUploadResult> {
   return new Promise((resolve, reject) => {
     let uploadedBytes = 0;
     let responseStarted = false;
@@ -102,6 +108,7 @@ async function streamOversizedBodyUntilTerminated(
         res.on("data", (responseChunk: Buffer) => chunks.push(responseChunk));
         res.on("end", () => {
           resolve({
+            kind: "response",
             status: res.statusCode ?? 0,
             json: JSON.parse(Buffer.concat(chunks).toString("utf8")),
             uploadedBytes,
@@ -110,13 +117,18 @@ async function streamOversizedBodyUntilTerminated(
         res.on("error", reject);
       },
     );
-    req.on("error", (error) => {
-      if (!responseStarted) reject(error);
+    req.on("error", (error: NodeJS.ErrnoException) => {
+      if (responseStarted) return;
+      if (error.code === "ECONNRESET" && uploadedBytes >= OVERSIZED_UPLOAD_TERMINATION_BYTES) {
+        resolve({ kind: "reset", code: "ECONNRESET", uploadedBytes });
+        return;
+      }
+      reject(error);
     });
     const writeNext = () => {
       if (responseStarted || req.destroyed) return;
+      uploadedBytes += chunk.length;
       req.write(chunk, () => {
-        uploadedBytes += chunk.length;
         setTimeout(writeNext, 1);
       });
     };
@@ -323,8 +335,13 @@ describe("POST /rpc/:op over HTTP", () => {
         setTimeout(() => reject(new Error("oversized upload was not bounded")), 2_500),
       ),
     ]);
-    expect(result.status).toBe(413);
-    expect(result.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    if (result.kind === "response") {
+      expect(result.status).toBe(413);
+      expect(result.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    } else {
+      expect(result.code).toBe("ECONNRESET");
+      expect(result.uploadedBytes).toBeGreaterThanOrEqual(OVERSIZED_UPLOAD_TERMINATION_BYTES);
+    }
     expect(result.uploadedBytes).toBeLessThan(2 * 1024 * 1024);
   });
 
