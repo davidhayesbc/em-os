@@ -9,7 +9,7 @@ import {
   type ErrorCode,
   httpTransport,
 } from "@emos/api-contract";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { ServiceContext } from "./context.js";
 import { type AnyHandler, dispatchRpc, statusForCode } from "./rpc.js";
@@ -142,8 +142,6 @@ type SlowOversizedResult = {
   status: number;
   headers: Record<string, string>;
   body: unknown;
-  capCrossedAt: number;
-  responseStartedAt: number;
   totalBodyBytesSent: number;
   bytesSentAfterCap: number;
 };
@@ -176,8 +174,6 @@ async function trickleOversizedBodyUntilRejected(
 
     let totalBodyBytesSent = 0;
     let capCrossed = false;
-    let capCrossedAt = 0;
-    let responseStartedAt = 0;
     let headerParsed = false;
     let ended = false;
     let timer: NodeJS.Timeout | undefined;
@@ -205,8 +201,6 @@ async function trickleOversizedBodyUntilRejected(
         status,
         headers: headersOut,
         body: json,
-        capCrossedAt,
-        responseStartedAt,
         totalBodyBytesSent,
         bytesSentAfterCap: Math.max(0, totalBodyBytesSent - LIMIT),
       });
@@ -244,7 +238,6 @@ async function trickleOversizedBodyUntilRejected(
       totalBodyBytesSent += size;
       if (!capCrossed && totalBodyBytesSent > LIMIT) {
         capCrossed = true;
-        capCrossedAt = Date.now();
       }
       socket.write(encodeChunk(data), (err) => {
         if (err || ended || socket.destroyed) return;
@@ -266,7 +259,6 @@ async function trickleOversizedBodyUntilRejected(
     });
 
     socket.on("data", (chunk: Buffer) => {
-      if (!responseStartedAt) responseStartedAt = Date.now();
       if (!headerParsed) {
         headerBuffer.push(chunk);
         headerParsed = tryParseHeaders();
@@ -495,26 +487,34 @@ describe("POST /rpc/:op over HTTP", () => {
 
   it("times out a slow trickle of an oversized chunked upload within the drain-timer bound", async () => {
     const svc = await startTestService();
-    const result = await Promise.race([
-      trickleOversizedBodyUntilRejected(svc.port, svc.token),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("slow oversized upload was not rejected in time")),
-          5_000,
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const result = await Promise.race([
+        trickleOversizedBodyUntilRejected(svc.port, svc.token),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("slow oversized upload was not rejected in time")),
+            5_000,
+          ),
         ),
-      ),
-    ]);
+      ]);
 
-    expect(result.status).toBe(413);
-    expect(result.body).toMatchObject({ ok: false, error: { code: "invalid_input" } });
-    expect(result.headers.connection).toBe("close");
-    expect(result.bytesSentAfterCap).toBeLessThan(64 * 1024 + 1024);
-    expect(result.responseStartedAt - result.capCrossedAt).toBeGreaterThanOrEqual(0);
-    // Leave 900 ms of scheduling slack while ensuring a 2 s drain timer cannot pass.
-    expect(result.responseStartedAt - result.capCrossedAt).toBeLessThan(1_900);
+      expect(result.status).toBe(413);
+      expect(result.body).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+      expect(result.headers.connection).toBe("close");
+      expect(result.bytesSentAfterCap).toBeLessThan(64 * 1024 + 1024);
+      // Observe the real server scheduling its bounded drain. Unlike a client-side
+      // timestamp or write count, this boundary excludes loopback transport delay.
+      const boundedDrainDelays = setTimeoutSpy.mock.calls
+        .map(([, delay]) => delay)
+        .filter((delay) => typeof delay === "number" && delay >= 500 && delay < 5_000);
+      expect(boundedDrainDelays).toEqual([1_000]);
 
-    const health = await request(svc.port, { method: "GET", path: "/health/ping" });
-    expect(health.status).toBe(200);
+      const health = await request(svc.port, { method: "GET", path: "/health/ping" });
+      expect(health.status).toBe(200);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   it("accepts a body just under 1 MiB", async () => {
