@@ -72,5 +72,9 @@ describe("parseQuickCapture", () => {
       due: { date: "2026-10-20" },
       recurrence: { freq: "daily", interval: 1, byWeekday: null, byMonthDay: null },
     });
+    expect(parseQuickCapture("Plan !every-month !2026-11-04", now, timeZone)).toMatchObject({
+      due: { date: "2026-11-04" },
+      recurrence: { freq: "monthly", interval: 1, byWeekday: null, byMonthDay: 4 },
+    });
   });
 });

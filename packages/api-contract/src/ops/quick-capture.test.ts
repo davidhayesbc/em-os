@@ -26,8 +26,8 @@ describe("commitments.quickCapture contract", () => {
   });
 
   it("represents invalid input messages", () => {
-    expect(commitmentsQuickCapture.output.parse({ status: "invalid", message: "Finish setup first" })).toEqual(
-      { status: "invalid", message: "Finish setup first" },
-    );
+    expect(
+      commitmentsQuickCapture.output.parse({ status: "invalid", message: "Finish setup first" }),
+    ).toEqual({ status: "invalid", message: "Finish setup first" });
   });
 });

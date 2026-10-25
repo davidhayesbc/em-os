@@ -1,4 +1,4 @@
-import { resolvePerson, parseQuickCapture } from "@emos/core";
+import { parseQuickCapture, resolvePerson } from "@emos/core";
 import type { Handler } from "../context.js";
 
 export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
@@ -6,7 +6,8 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
   { text, counterpartId },
 ) => {
   const profile = ctx.store.settings.getProfile();
-  if (!profile.selfPersonId) return { status: "invalid", message: "Finish setup first" };
+  const selfPersonId = profile.selfPersonId;
+  if (!selfPersonId) return { status: "invalid", message: "Finish setup first" };
 
   const parsed = parseQuickCapture(text, ctx.clock.now(), profile.displayTimeZone);
   if ("error" in parsed) return { status: "invalid", message: "A title is required" };
@@ -20,8 +21,10 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
     const people = ctx.store.people.list();
     const identities = people.flatMap((person) => ctx.store.people.identities(person.id));
     const candidates = resolvePerson(parsed.personQuery, people, identities);
-    if (candidates.length !== 1) return { status: "needs_person", parsed, candidates };
-    resolvedCounterpartId = candidates[0]!.id;
+    const [candidate] = candidates;
+    if (candidates.length !== 1 || !candidate)
+      return { status: "needs_person", parsed, candidates };
+    resolvedCounterpartId = candidate.id;
   }
 
   return ctx.store.transaction(() => {
@@ -34,7 +37,7 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
       due: parsed.due,
       tags: parsed.tags,
       createdBy: "user",
-      ownerId: profile.selfPersonId!,
+      ownerId: selfPersonId,
       counterpartId: resolvedCounterpartId,
       goalId: null,
       meetingId: null,

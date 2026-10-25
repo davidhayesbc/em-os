@@ -99,7 +99,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 - [x] **P1-01** People, identities and person notes slice — deps: P1-05 — claim: done · 865b585
 - [x] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: done · b968a63
-- [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: coder · p1-03-quick-capture
+- [x] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: done · 2cc4310
 - [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
 - [x] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: done · e7aa721
 
@@ -347,7 +347,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - the remaining words, single-spaced, form the title.
 - Op: `commitments.quickCapture { text, counterpartId?: string } → { status: "created", commitment } | { status: "needs_person", parsed: ParsedCapture, candidates: Person[] } | { status: "invalid", message: string }`. A `personQuery` with zero matches → `needs_person` with empty candidates (the UI offers "create person"). If `profile.selfPersonId` is null → `{ status: "invalid", message: "Finish setup first" }`.
 
-- [ ] **Step 1: Write the failing tests** (now `2026-10-20T16:00Z`, zone `America/Los_Angeles`, a Tuesday):
+- [x] **Step 1: Write the failing tests** (now `2026-10-20T16:00Z`, zone `America/Los_Angeles`, a Tuesday):
   ```ts
   expect(parseQuickCapture("Send hiring feedback @sam !fri !p1 #hiring", now, tz)).toEqual({ title: "Send hiring feedback", direction: "mine", personQuery: "sam", due: { date: "2026-10-23", time: null, timeZone: tz }, priority: 1, urgency: null, tags: ["hiring"] });
   expect(parseQuickCapture("wait @jordan API spec !thu", now, tz)).toMatchObject({ direction: "owed_to_me", title: "API spec", due: { date: "2026-10-22" } });
@@ -357,10 +357,10 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   expect(parseQuickCapture("EOW update !every-fri", now, tz)).toMatchObject({ recurrence: { freq: "weekly", interval: 1, byWeekday: [5] }, due: { date: "2026-10-23" } });
   // op: two Sams → needs_person with 2 candidates; with counterpartId → created
   ```
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-03): one-line quick capture`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-03): one-line quick capture`.
 
 **Acceptance:** One line creates a fully-fielded active commitment. Ambiguity never silently picks a person.
 

@@ -28,10 +28,12 @@ async function setup() {
 describe("commitments.quickCapture API", () => {
   it("requires setup before capturing", async () => {
     const client = await setup();
-    await expect(client.call("commitments.quickCapture", { text: "Send update" })).resolves.toEqual({
-      status: "invalid",
-      message: "Finish setup first",
-    });
+    await expect(client.call("commitments.quickCapture", { text: "Send update" })).resolves.toEqual(
+      {
+        status: "invalid",
+        message: "Finish setup first",
+      },
+    );
   });
 
   it("returns every candidate when person resolution is ambiguous", async () => {
@@ -88,9 +90,7 @@ describe("commitments.quickCapture API", () => {
     });
     if (result.status !== "created") throw new Error("Expected created commitment");
     const fetched = await client.call("commitments.get", { id: result.commitment.id });
-    expect(fetched.audit).toEqual([
-      expect.objectContaining({ action: "create", actor: "user" }),
-    ]);
+    expect(fetched.audit).toEqual([expect.objectContaining({ action: "create", actor: "user" })]);
   });
 
   it("reports an empty parsed title as invalid", async () => {

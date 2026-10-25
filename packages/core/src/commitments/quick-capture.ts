@@ -87,7 +87,9 @@ export function parseQuickCapture(
     }
     const weekdayMatch = /^!(sun|mon|tue|wed|thu|fri|sat)$/.exec(lower);
     if (weekdayMatch) {
-      dueDate = nextWeekday(today, weekdays[weekdayMatch[1]!]!);
+      const target = weekdays[weekdayMatch[1] ?? ""];
+      if (target === undefined) throw new Error("Unreachable weekday token");
+      dueDate = nextWeekday(today, target);
       continue;
     }
     const fixedDate = lower.startsWith("!") ? lower.slice(1) : "";
@@ -107,20 +109,19 @@ export function parseQuickCapture(
     }
     const weeklyMatch = /^!every-(sun|mon|tue|wed|thu|fri|sat)$/.exec(lower);
     if (weeklyMatch) {
-      const target = weekdays[weeklyMatch[1]!]!;
+      const target = weekdays[weeklyMatch[1] ?? ""];
+      if (target === undefined) throw new Error("Unreachable weekly token");
       recurrence = { freq: "weekly", interval: 1, byWeekday: [target], byMonthDay: null };
       dueDate ??= nextWeekday(today, target);
       continue;
     }
     if (lower === "!every-month") {
-      const monthlyDate = dueDate ?? today;
       recurrence = {
         freq: "monthly",
         interval: 1,
         byWeekday: null,
-        byMonthDay: Number(monthlyDate.slice(8, 10)),
+        byMonthDay: null,
       };
-      dueDate ??= today;
       continue;
     }
     if (token.startsWith("#") && token.length > 1) {
@@ -132,6 +133,10 @@ export function parseQuickCapture(
 
   const normalizedTitle = title.join(" ").trim();
   if (!normalizedTitle) return { error: "empty_title" };
+  if (recurrence?.freq === "monthly") {
+    dueDate ??= today;
+    recurrence = { ...recurrence, byMonthDay: Number(dueDate.slice(8, 10)) };
+  }
   return {
     title: normalizedTitle,
     direction,
