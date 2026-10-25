@@ -11,7 +11,12 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
   if (!selfPersonId) return { status: "invalid", message: "Finish setup first" };
 
   const parsed = parseQuickCapture(text, ctx.clock.now(), profile.displayTimeZone);
-  if ("error" in parsed) return { status: "invalid", message: "A title is required" };
+  if ("error" in parsed) {
+    return {
+      status: "invalid",
+      message: parsed.error === "empty_title" ? "A title is required" : "Due date is out of range",
+    };
+  }
 
   let resolvedCounterpartId = counterpartId ?? null;
   if (resolvedCounterpartId) {

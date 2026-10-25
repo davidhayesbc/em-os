@@ -159,4 +159,18 @@ describe("commitments.quickCapture API", () => {
       message: "A title is required",
     });
   });
+
+  it("rejects an out-of-range relative date without persisting a commitment", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", personInput("Alex Rivera"));
+    await client.call("settings.update", { patch: { selfPersonId: self.id } });
+
+    await expect(
+      client.call("commitments.quickCapture", { text: "Send update !+100000000d" }),
+    ).resolves.toEqual({
+      status: "invalid",
+      message: "Due date is out of range",
+    });
+    await expect(client.call("commitments.list", {})).resolves.toEqual([]);
+  });
 });

@@ -39,6 +39,12 @@ describe("parseQuickCapture", () => {
     });
   });
 
+  it("rejects relative day offsets outside the supported date range", () => {
+    expect(parseQuickCapture("x !+100000000d", now, timeZone)).toEqual({
+      error: "invalid_due_date",
+    });
+  });
+
   it("rejects captures containing only metadata", () => {
     expect(parseQuickCapture("@sam !p1", now, timeZone)).toEqual({ error: "empty_title" });
   });

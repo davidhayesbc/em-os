@@ -44,7 +44,7 @@ export function parseQuickCapture(
   text: string,
   now: Date,
   timeZone: string,
-): ParsedCapture | { error: "empty_title" } {
+): ParsedCapture | { error: "empty_title" | "invalid_due_date" } {
   const tokens = text.trim().split(/\s+/).filter(Boolean);
   const today = toLocalDate(now, timeZone) as LocalDate;
   let direction: Direction = "mine";
@@ -99,7 +99,13 @@ export function parseQuickCapture(
     }
     const relativeMatch = /^!\+(\d+)d$/.exec(lower);
     if (relativeMatch) {
-      dueDate = addLocalDays(today, Number(relativeMatch[1])) as LocalDate;
+      try {
+        const relativeDate = addLocalDays(today, Number(relativeMatch[1]));
+        if (!isLocalDate(relativeDate)) return { error: "invalid_due_date" };
+        dueDate = relativeDate;
+      } catch {
+        return { error: "invalid_due_date" };
+      }
       continue;
     }
     if (lower === "!every-day") {
