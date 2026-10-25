@@ -65,6 +65,19 @@ describe("commitments.quickCapture API", () => {
     ).resolves.toMatchObject({ status: "needs_person", candidates: [] });
   });
 
+  it("rejects captures with multiple distinct person mentions", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", personInput("Alex Rivera"));
+    await client.call("people.create", personInput("Sam Chen", ["Sam"]));
+    await client.call("people.create", personInput("Jordan Patel", ["Jordan"]));
+    await client.call("settings.update", { patch: { selfPersonId: self.id } });
+
+    await expect(
+      client.call("commitments.quickCapture", { text: "Ping @sam about @jordan review" }),
+    ).resolves.toEqual({ status: "invalid", message: "Choose one person" });
+    await expect(client.call("commitments.list", {})).resolves.toEqual([]);
+  });
+
   it("resolves a parsed person query against an identity handle", async () => {
     const client = await setup();
     const self = await client.call("people.create", personInput("Morgan Lee"));
@@ -119,6 +132,47 @@ describe("commitments.quickCapture API", () => {
         counterpartId: "per_missing",
       }),
     ).rejects.toMatchObject({ code: "not_found", message: "counterpartId not found" });
+  });
+
+  it("rejects an empty explicit counterpartId instead of resolving text", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", personInput("Alex Rivera"));
+    await client.call("people.create", personInput("Sam Chen", ["Sam"]));
+    await client.call("settings.update", { patch: { selfPersonId: self.id } });
+
+    await expect(
+      client.call("commitments.quickCapture", { text: "Send update @sam", counterpartId: "" }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(client.call("commitments.list", {})).resolves.toEqual([]);
+  });
+
+  it("rejects self as an explicit counterpart", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", personInput("Alex Rivera"));
+    await client.call("settings.update", { patch: { selfPersonId: self.id } });
+
+    await expect(
+      client.call("commitments.quickCapture", { text: "Send update", counterpartId: self.id }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(client.call("commitments.list", {})).resolves.toEqual([]);
+  });
+
+  it("rejects an archived explicit counterpart", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", personInput("Alex Rivera"));
+    const archived = await client.call("people.create", {
+      ...personInput("Sam Chen"),
+      archived: true,
+    });
+    await client.call("settings.update", { patch: { selfPersonId: self.id } });
+
+    await expect(
+      client.call("commitments.quickCapture", {
+        text: "Send update",
+        counterpartId: archived.id,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(client.call("commitments.list", {})).resolves.toEqual([]);
   });
 
   it("creates an active audited user commitment when counterpartId is explicit", async () => {

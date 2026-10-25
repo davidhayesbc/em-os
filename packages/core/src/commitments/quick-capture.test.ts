@@ -27,6 +27,16 @@ describe("parseQuickCapture", () => {
     });
   });
 
+  it("rejects more than one distinct person mention", () => {
+    expect(parseQuickCapture("Ping @sam about @jordan review", now, timeZone)).toEqual({
+      error: "multiple_people",
+    });
+    expect(parseQuickCapture("Ping @sam about @SAM review", now, timeZone)).toMatchObject({
+      title: "Ping about review",
+      personQuery: "sam",
+    });
+  });
+
   it("includes today when resolving weekday tokens", () => {
     expect(parseQuickCapture("x !tue", now, timeZone)).toMatchObject({
       due: { date: "2026-10-20" },
@@ -57,13 +67,9 @@ describe("parseQuickCapture", () => {
     });
   });
 
-  it("parses fixed dates, urgency, daily/monthly recurrence, tags, and first-person wins", () => {
+  it("parses fixed dates, urgency, daily/monthly recurrence, and tags", () => {
     expect(
-      parseQuickCapture(
-        "Plan @sam @jordan !2026-11-04 !soon !p2 #alpha #beta !every-month",
-        now,
-        timeZone,
-      ),
+      parseQuickCapture("Plan @sam !2026-11-04 !soon !p2 #alpha #beta !every-month", now, timeZone),
     ).toEqual({
       title: "Plan",
       direction: "mine",

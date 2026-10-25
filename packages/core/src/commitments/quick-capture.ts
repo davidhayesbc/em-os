@@ -44,7 +44,7 @@ export function parseQuickCapture(
   text: string,
   now: Date,
   timeZone: string,
-): ParsedCapture | { error: "empty_title" | "invalid_due_date" } {
+): ParsedCapture | { error: "empty_title" | "invalid_due_date" | "multiple_people" } {
   const tokens = text.trim().split(/\s+/).filter(Boolean);
   const today = toLocalDate(now, timeZone) as LocalDate;
   let direction: Direction = "mine";
@@ -64,7 +64,11 @@ export function parseQuickCapture(
   for (const token of tokens) {
     const lower = token.toLowerCase();
     if (lower.startsWith("@") && lower.length > 1) {
-      personQuery ??= token.slice(1);
+      const query = token.slice(1);
+      if (personQuery !== null && personQuery.toLowerCase() !== query.toLowerCase()) {
+        return { error: "multiple_people" };
+      }
+      personQuery ??= query;
       continue;
     }
     const priorityMatch = /^!p([0-3])$/.exec(lower);
