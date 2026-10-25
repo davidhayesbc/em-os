@@ -57,7 +57,7 @@ export interface SecretStoreContext {
 
 function real(path: string): string {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     return resolve(path);
   }
@@ -91,7 +91,13 @@ export function secretStoreKind(
     ctx.homedir ?? homedir(),
   );
   const chosen = real(override);
-  if (real(ctx.dataDir) !== chosen || real(platformDefault) === chosen) {
+  const platform = ctx.platform ?? process.platform;
+  const comparable = (path: string) =>
+    platform === "darwin" || platform === "win32" ? path.toLocaleLowerCase("en-US") : path;
+  if (
+    comparable(real(ctx.dataDir)) !== comparable(chosen) ||
+    comparable(real(platformDefault)) === comparable(chosen)
+  ) {
     return { kind: "keychain", ignored: true };
   }
   return { kind: "memory", ignored: false };

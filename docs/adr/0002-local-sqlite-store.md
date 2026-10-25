@@ -128,3 +128,8 @@ Timings are medians of five runs, in milliseconds (FTS5 / plain). The runtimes a
 
 - **WAL, migrations and online backup:** CI run `39520158278` passed the store-sqlite tests under Node 24 on `windows-latest` and `macos-14`.
 - **FTS5:** pending. No automated test creates an FTS5 table yet. P1-00 adds one, so FTS5 availability is checked on every CI run.
+
+## Verification (2026-10-24)
+
+- **FTS5:** P1-00 adds a permanent test that creates an FTS5 virtual table, inserts rows and runs
+  a `MATCH` query. The test runs in the macOS and Windows CI jobs.

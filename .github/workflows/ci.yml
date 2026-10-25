@@ -21,7 +21,8 @@ jobs:
       matrix:
         os: [macos-14, windows-latest]
         # Ruling R3: the real-keychain round-trip test (EMOS_TEST_KEYCHAIN=1) runs on macOS only.
-        # TODO: try it on Windows (Credential Manager) once CI runs, and enable it if it passes.
+        # Windows CI verifies packaging and service startup; Credential Manager remains an owner
+        # desktop check because the hosted runner cannot provide a representative user session.
         include:
           - os: macos-14
             test-keychain: "1"

@@ -14,7 +14,12 @@ describe("service.shutdown", () => {
       transport: httpTransport(`http://127.0.0.1:${svc.port}`),
       token: svc.token,
     });
-    await expect(client.call("service.shutdown", {})).resolves.toEqual({ ok: true });
+    await expect(client.call("service.shutdown", { pid: process.pid + 1 })).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await expect(client.call("service.shutdown", { pid: process.pid })).resolves.toEqual({
+      ok: true,
+    });
     const paths = runtimePaths(svc.dataDir);
     for (let i = 0; i < 100 && (existsSync(paths.lock) || shutdowns === 0); i++) {
       await new Promise((r) => setTimeout(r, 10));

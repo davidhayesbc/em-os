@@ -38,6 +38,10 @@ import {
 const POSIX = process.platform !== "win32";
 const LOOPBACK = "127.0.0.1";
 const RPC_PATH = /^\/rpc\/([A-Za-z0-9._-]{1,128})$/;
+// Let ordinary finite oversized uploads finish so clients receive the 413 without a write reset,
+// but do not let a chunked client hold the request open or send unbounded bytes after the limit.
+const OVERSIZED_BODY_DRAIN_TIMEOUT_MS = 1_000;
+const OVERSIZED_BODY_DRAIN_BYTES = 64 * 1024;
 
 export interface StartServiceOptions {
   dataDir: string;
@@ -94,64 +98,77 @@ function sendJson(res: ServerResponse, { status, body }: RpcResult, extra = {}):
   res.end(text);
 }
 
-class BodyTooLarge extends Error {}
+class BodyTooLarge extends Error {
+  constructor(readonly drainTimedOut = false) {
+    super();
+  }
+}
 
-/** Reads the body as UTF-8, rejecting with BodyTooLarge past `limit` bytes. */
+/** Reads UTF-8, with bounded time and bytes for gracefully draining oversized bodies. */
 function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolveBody, reject) => {
     const declared = Number(req.headers["content-length"]);
-    if (Number.isFinite(declared) && declared > limit) {
-      reject(new BodyTooLarge());
-      return;
-    }
     const chunks: Buffer[] = [];
     let size = 0;
     let done = false;
-    req.on("data", (c: Buffer) => {
+    let tooLarge = Number.isFinite(declared) && declared > limit;
+    let drainTimer: NodeJS.Timeout | undefined;
+
+    const cleanup = () => {
+      if (drainTimer) clearTimeout(drainTimer);
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+    };
+    const startBoundedDrain = () => {
+      if (drainTimer) return;
+      drainTimer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        cleanup();
+        req.pause();
+        reject(new BodyTooLarge(true));
+      }, OVERSIZED_BODY_DRAIN_TIMEOUT_MS);
+    };
+    const abortBoundedDrain = () => {
+      done = true;
+      cleanup();
+      req.pause();
+      reject(new BodyTooLarge(true));
+    };
+    const onData = (c: Buffer) => {
       if (done) return;
       size += c.length;
       if (size > limit) {
-        done = true;
-        reject(new BodyTooLarge());
+        tooLarge = true;
+        if (size >= limit + OVERSIZED_BODY_DRAIN_BYTES) {
+          abortBoundedDrain();
+          return;
+        }
+        startBoundedDrain();
         return;
       }
-      chunks.push(c);
-    });
-    req.on("end", () => {
+      if (!tooLarge) chunks.push(c);
+    };
+    const onEnd = () => {
       if (done) return;
       done = true;
-      resolveBody(Buffer.concat(chunks).toString("utf8"));
-    });
-    req.on("error", (e) => {
+      cleanup();
+      if (tooLarge) reject(new BodyTooLarge());
+      else resolveBody(Buffer.concat(chunks).toString("utf8"));
+    };
+    const onError = (e: Error) => {
       if (done) return;
       done = true;
+      cleanup();
       reject(e);
-    });
-  });
-}
+    };
 
-/** Most of an oversized upload we discard so the client can read the 413 before we close. */
-const DRAIN_LIMIT_BYTES = 8 * 1024 * 1024;
-const DRAIN_TIMEOUT_MS = 5000;
-
-/**
- * Responds 413 with `Connection: close`. The rest of the upload is read and discarded (up to
- * DRAIN_LIMIT_BYTES / DRAIN_TIMEOUT_MS), because closing a socket the client is still writing
- * to makes it see ECONNRESET instead of the response. Past either limit the socket is dropped.
- */
-function rejectTooLarge(req: IncomingMessage, res: ServerResponse, limit: number): void {
-  sendJson(res, errorResult("invalid_input", `Request body exceeds ${limit} bytes`, 413), {
-    Connection: "close",
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+    if (tooLarge) startBoundedDrain();
   });
-  let drained = 0;
-  const timer = setTimeout(() => req.destroy(), DRAIN_TIMEOUT_MS);
-  timer.unref();
-  req.on("data", (c: Buffer) => {
-    drained += c.length;
-    if (drained > DRAIN_LIMIT_BYTES) req.destroy();
-  });
-  req.on("close", () => clearTimeout(timer));
-  req.resume();
 }
 
 function createRequestListener(
@@ -218,7 +235,12 @@ function createRequestListener(
     } catch (e) {
       if (e instanceof BodyTooLarge) {
         log.warn("rpc.body_too_large");
-        rejectTooLarge(req, res, config.maxBodyBytes);
+        if (e.drainTimedOut) res.once("finish", () => req.destroy());
+        sendJson(
+          res,
+          errorResult("invalid_input", `Request body exceeds ${config.maxBodyBytes} bytes`, 413),
+          e.drainTimedOut ? { Connection: "close" } : {},
+        );
       } else {
         req.destroy();
       }
@@ -356,7 +378,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
         (res) => {
           // The handler asked to stop: do it once this response is on the wire.
           if (!shutdownRequested) return;
-          res.on("finish", () => shutdown?.());
+          res.on("close", () => shutdown?.());
         },
       ),
     );

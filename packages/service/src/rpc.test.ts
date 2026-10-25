@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import {
   ApiError,
   createClient,
@@ -38,6 +39,102 @@ async function dispatch(body: string, handler: AnyHandler, opts: { op?: string }
 const okHandler: AnyHandler = (_ctx, input) => ({
   length: (input as { text: string }).text.length,
 });
+
+async function sendOversizedBodyInTwoParts(
+  port: number,
+  token: string,
+  chunked: boolean,
+): Promise<{ responseBeforeUploadFinished: boolean; status: number; json: unknown }> {
+  const first = Buffer.alloc(1024 * 1024 + 1, "x");
+  const second = Buffer.from("x");
+  let uploadFinished = false;
+  let responseBeforeUploadFinished = false;
+
+  const response = new Promise<{ status: number; json: unknown }>((resolve, reject) => {
+    const headers = authHeaders(token);
+    if (!chunked) headers["content-length"] = String(first.length + second.length);
+    const req = httpRequest(
+      { host: "127.0.0.1", port, method: "POST", path: "/rpc/health.get", headers },
+      (res) => {
+        if (!uploadFinished) responseBeforeUploadFinished = true;
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            json: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+          });
+        });
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.write(first);
+    setTimeout(() => {
+      uploadFinished = true;
+      req.end(second);
+    }, 50);
+  });
+
+  const result = await response;
+  return { responseBeforeUploadFinished, ...result };
+}
+
+const OVERSIZED_UPLOAD_TERMINATION_BYTES = 1024 * 1024 + 64 * 1024;
+
+type OversizedUploadResult =
+  | { kind: "response"; status: number; json: unknown; uploadedBytes: number }
+  | { kind: "reset"; code: "ECONNRESET"; uploadedBytes: number };
+
+async function streamOversizedBodyUntilTerminated(
+  port: number,
+  token: string,
+): Promise<OversizedUploadResult> {
+  return new Promise((resolve, reject) => {
+    let uploadedBytes = 0;
+    let responseStarted = false;
+    const chunk = Buffer.alloc(16 * 1024, "x");
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        method: "POST",
+        path: "/rpc/health.get",
+        headers: authHeaders(token),
+      },
+      (res) => {
+        responseStarted = true;
+        const chunks: Buffer[] = [];
+        res.on("data", (responseChunk: Buffer) => chunks.push(responseChunk));
+        res.on("end", () => {
+          resolve({
+            kind: "response",
+            status: res.statusCode ?? 0,
+            json: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+            uploadedBytes,
+          });
+        });
+        res.on("error", reject);
+      },
+    );
+    req.on("error", (error: NodeJS.ErrnoException) => {
+      if (responseStarted) return;
+      if (error.code === "ECONNRESET" && uploadedBytes >= OVERSIZED_UPLOAD_TERMINATION_BYTES) {
+        resolve({ kind: "reset", code: "ECONNRESET", uploadedBytes });
+        return;
+      }
+      reject(error);
+    });
+    const writeNext = () => {
+      if (responseStarted || req.destroyed) return;
+      uploadedBytes += chunk.length;
+      req.write(chunk, () => {
+        setTimeout(writeNext, 1);
+      });
+    };
+    writeNext();
+  });
+}
 
 describe("dispatchRpc", () => {
   it("validates input, calls the handler with parsed input and wraps the result", async () => {
@@ -218,6 +315,35 @@ describe("POST /rpc/:op over HTTP", () => {
       expect(res.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
     },
   );
+
+  it.each([false, true])(
+    "drains an oversized upload before returning 413 (chunked: %s)",
+    async (chunked) => {
+      const svc = await startTestService();
+      const res = await sendOversizedBodyInTwoParts(svc.port, svc.token, chunked);
+      expect(res.responseBeforeUploadFinished).toBe(false);
+      expect(res.status).toBe(413);
+      expect(res.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    },
+  );
+
+  it("stops consuming an oversized chunked upload at the drain-byte bound", async () => {
+    const svc = await startTestService();
+    const result = await Promise.race([
+      streamOversizedBodyUntilTerminated(svc.port, svc.token),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("oversized upload was not bounded")), 2_500),
+      ),
+    ]);
+    if (result.kind === "response") {
+      expect(result.status).toBe(413);
+      expect(result.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    } else {
+      expect(result.code).toBe("ECONNRESET");
+      expect(result.uploadedBytes).toBeGreaterThanOrEqual(OVERSIZED_UPLOAD_TERMINATION_BYTES);
+    }
+    expect(result.uploadedBytes).toBeLessThan(2 * 1024 * 1024);
+  });
 
   it("accepts a body just under 1 MiB", async () => {
     const svc = await startTestService();

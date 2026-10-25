@@ -46,15 +46,48 @@ describe("isPidAlive", () => {
 });
 
 describe("acquireLock", () => {
-  it("creates the lock file containing { pid, startedAt } as JSON", async () => {
+  it("creates the lock file containing { pid, startedAt, uptimeAtStart } as JSON", async () => {
     const file = join(tmpDir(), "service.lock");
-    const lock = await acquireLock(file, { now: () => Date.parse("2026-10-20T16:00:00.000Z") });
+    const lock = await acquireLock(file, {
+      now: () => Date.parse("2026-10-20T16:00:00.000Z"),
+      uptimeSec: () => 3600,
+    });
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
       pid: process.pid,
       startedAt: "2026-10-20T16:00:00.000Z",
+      uptimeAtStart: 3600,
     });
     lock.release();
     expect(existsSync(file)).toBe(false);
+  });
+
+  it("reclaims a live-pid lock when current uptime proves the machine rebooted", async () => {
+    const file = join(tmpDir(), "service.lock");
+    writeFileSync(
+      file,
+      JSON.stringify({ pid: 4242, startedAt: "2026-10-20T15:00:00.000Z", uptimeAtStart: 5000 }),
+    );
+    const lock = await acquireLock(file, {
+      pid: 1001,
+      isAlive: () => true,
+      uptimeSec: () => 100,
+    });
+    expect(parseLockPid(readFileSync(file, "utf8"))).toBe(1001);
+    lock.release();
+  });
+
+  it("keeps a live lock whose mtime is within the 120 second boot-time margin", async () => {
+    const file = join(tmpDir(), "service.lock");
+    writeFileSync(file, JSON.stringify({ pid: 4242, startedAt: "2026-10-20T15:00:00.000Z" }));
+    const now = Date.parse("2026-10-20T16:00:00.000Z");
+    utimesSync(file, new Date(now - 3660_000), new Date(now - 3660_000));
+    await expect(
+      acquireLock(file, {
+        isAlive: () => true,
+        now: () => now,
+        uptimeSec: () => 3600,
+      }),
+    ).rejects.toBeInstanceOf(AlreadyRunningError);
   });
 
   it("still honours a live lock in the old pid-only format", async () => {

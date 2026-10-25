@@ -30,12 +30,14 @@ export const ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "emos.reconnect",
 ]);
 
+export const HOST_ONLY_OPS: ReadonlySet<string> = new Set(["service.shutdown", "backup.create"]);
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 function isKnownOp(op: string): boolean {
-  return Object.hasOwn(ops, op);
+  return Object.hasOwn(ops, op) && !HOST_ONLY_OPS.has(op);
 }
 
 export function attach(

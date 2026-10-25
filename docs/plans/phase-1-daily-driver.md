@@ -93,7 +93,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Phase 0 carry-over (do first)**
 
-- [ ] **P1-00** Phase 0 hardening: host-only ops in the webview bridge, a case-insensitive data-dir gate, a shutdown pid guard — deps: Phase 0 — claim: coder · p1-00-phase0-hardening
+- [x] **P1-00** Phase 0 hardening: host-only ops in the webview bridge, a case-insensitive data-dir gate, a shutdown pid guard — deps: Phase 0 — claim: done · b64c05f
 
 **Slices (data + ops)**
 
@@ -188,15 +188,15 @@ Starting lanes (no Phase 1 dependencies): P1-02, P1-04, P1-05, P1-12, P1-16 and 
 
 **Changes:**
 
-1. **Host-only ops.** Add `HOST_ONLY_OPS = new Set(["service.shutdown", "backup.create"])` to the extension bridge. `isKnownOp` accepts an op only when `Object.hasOwn(ops, op)` and the op is not in that set. A test asserts the webview gets `not_found` for both ops.
-2. **Memory secret-store gate.** `real()` must use `realpathSync.native`. On `darwin` and `win32`, compare the chosen data dir against the platform default case-insensitively, so a case variant of the default selects the keychain. Add a case-variant test.
-3. **Shutdown guard.** `service.shutdown` gets an optional `{ pid }` input and is refused unless `pid === process.pid`. The launcher sends the pid it read from `service.json`.
-4. **Shutdown trigger.** Trigger shutdown on the response's `close` event, not `finish`.
-5. **Lock release.** In the launcher, `lockReleased` treats a lock that names a different pid as released, so it never kills a pid that has already exited.
-6. **`isRealDate`.** Use `setUTCFullYear(y, m - 1, d)` so years 0000–0099 are handled correctly. A test covers `0000-02-29`.
-7. **Lock staleness.** Add a 120 s margin to the boot-time check, and store `uptimeAtStart` in the lock JSON. Treat `os.uptime() < uptimeAtStart` as proof of a reboot.
-8. **FTS5 check.** Add a store-sqlite test that creates an FTS5 virtual table, inserts rows and runs a `MATCH` query, so FTS5 availability is proven on every CI OS. This closes the ADR 0002 Verification item.
-9. **Windows keychain in CI.** Enable `EMOS_TEST_KEYCHAIN=1` on the `windows-latest` test job. If Credential Manager isn't usable on the runner, record that in ADR 0001 Verification and keep it macOS-only. This closes, or documents, the ADR 0001 checklist item 2.
+- [x] **Host-only ops.** Add `HOST_ONLY_OPS = new Set(["service.shutdown", "backup.create"])` to the extension bridge. `isKnownOp` accepts an op only when `Object.hasOwn(ops, op)` and the op is not in that set. A test asserts the webview gets `not_found` for both ops.
+- [x] **Memory secret-store gate.** `real()` must use `realpathSync.native`. On `darwin` and `win32`, compare the chosen data dir against the platform default case-insensitively, so a case variant of the default selects the keychain. Add a case-variant test.
+- [x] **Shutdown guard.** `service.shutdown` gets an optional `{ pid }` input and is refused unless `pid === process.pid`. The launcher sends the pid it read from `service.json`.
+- [x] **Shutdown trigger.** Trigger shutdown on the response's `close` event, not `finish`.
+- [x] **Lock release.** In the launcher, `lockReleased` treats a lock that names a different pid as released, so it never kills a pid that has already exited.
+- [x] **`isRealDate`.** Use `setUTCFullYear(y, m - 1, d)` so years 0000–0099 are handled correctly. A test covers `0000-02-29`.
+- [x] **Lock staleness.** Add a 120 s margin to the boot-time check, and store `uptimeAtStart` in the lock JSON. Treat `os.uptime() < uptimeAtStart` as proof of a reboot.
+- [x] **FTS5 check.** Add a store-sqlite test that creates an FTS5 virtual table, inserts rows and runs a `MATCH` query, so FTS5 availability is proven on every CI OS. This closes the ADR 0002 Verification item.
+- [x] **Windows keychain in CI.** Enable `EMOS_TEST_KEYCHAIN=1` on the `windows-latest` test job. If Credential Manager isn't usable on the runner, record that in ADR 0001 Verification and keep it macOS-only. This closes, or documents, the ADR 0001 checklist item 2.
 
 **Acceptance:** each change has a test, `npm run ci` passes, and the smoke test passes.
 
