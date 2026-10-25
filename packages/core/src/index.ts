@@ -12,3 +12,5 @@ export * from "./ports/store.js";
 export * from "./time/zoned.js";
 export * from "./ports/repos/settings.js";
 export * from "./settings/defaults.js";
+export * from "./people/index.js";
+export * from "./ports/repos/people.js";

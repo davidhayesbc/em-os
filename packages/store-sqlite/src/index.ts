@@ -15,3 +15,4 @@ export { createGoalsRepo } from "./repos/goals.js";
 export { createStore } from "./store.js";
 export { toDbInstant } from "./time.js";
 export { createSettingsRepo } from "./repos/settings.js";
+export { createPeopleRepo } from "./repos/people.js";
