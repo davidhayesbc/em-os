@@ -24,6 +24,7 @@ import {
 } from "./people.js";
 import { serviceShutdown } from "./service.js";
 import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
+import { commitmentsQuickCapture } from "./quick-capture.js";
 
 // Append-only registry, keyed by op name. Other tasks add entries.
 export const ops = {
@@ -54,4 +55,5 @@ export const ops = {
   "people.resolve": peopleResolve,
   "personNotes.create": personNotesCreate,
   "personNotes.list": personNotesList,
+  "commitments.quickCapture": commitmentsQuickCapture,
 } as const;

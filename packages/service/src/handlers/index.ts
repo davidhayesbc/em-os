@@ -26,6 +26,7 @@ import {
 } from "./people.js";
 import { serviceShutdown } from "./service.js";
 import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
+import { commitmentsQuickCapture } from "./quick-capture.js";
 
 // Append-only registry, keyed by op name (see @emos/api-contract ops). Other tasks add entries.
 export const handlers: { [N in OpName]?: Handler<N> } = {
@@ -56,4 +57,5 @@ export const handlers: { [N in OpName]?: Handler<N> } = {
   "people.resolve": peopleResolve,
   "personNotes.create": personNotesCreate,
   "personNotes.list": personNotesList,
+  "commitments.quickCapture": commitmentsQuickCapture,
 };

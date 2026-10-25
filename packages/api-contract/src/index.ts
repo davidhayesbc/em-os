@@ -13,3 +13,4 @@ export * from "./ops/index.js";
 export * from "./ops/people.js";
 export { serviceShutdown } from "./ops/service.js";
 export * from "./ops/settings.js";
+export * from "./ops/quick-capture.js";
