@@ -46,7 +46,23 @@ describe("op registry", () => {
   });
 
   it("derives op types from the registry", () => {
-    expectTypeOf<OpName>().toEqualTypeOf<"health.get" | "backup.create" | "service.shutdown">();
+    expectTypeOf<OpName>().toEqualTypeOf<
+      | "health.get"
+      | "backup.create"
+      | "service.shutdown"
+      | "commitments.list"
+      | "commitments.get"
+      | "commitments.create"
+      | "commitments.update"
+      | "commitments.complete"
+      | "commitments.snooze"
+      | "commitments.drop"
+      | "commitments.reopen"
+      | "commitments.pin"
+      | "goals.list"
+      | "goals.create"
+      | "goals.update"
+    >();
     expectTypeOf<OpOutput<"service.shutdown">>().toEqualTypeOf<{ ok: true }>();
     expectTypeOf<OpInput<"health.get">>().toEqualTypeOf<Record<string, never>>();
     expectTypeOf<OpOutput<"health.get">["apiVersion"]>().toEqualTypeOf<number>();

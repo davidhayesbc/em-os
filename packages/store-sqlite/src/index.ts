@@ -8,5 +8,8 @@ export { type Migration, migrate, pendingMigrations } from "./migrate.js";
 export { migrations } from "./migrations/index.js";
 export { type OpenDbOptions, openDb } from "./open.js";
 export { assertNotInGitCheckout, type DataLayout, dataLayout, resolveDataDir } from "./paths.js";
+export { createAccomplishmentsRepo } from "./repos/accomplishments.js";
+export { createCommitmentsRepo } from "./repos/commitments.js";
+export { createGoalsRepo } from "./repos/goals.js";
 export { createStore } from "./store.js";
 export { toDbInstant } from "./time.js";
