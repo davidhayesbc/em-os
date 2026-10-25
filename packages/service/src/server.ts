@@ -96,31 +96,28 @@ function sendJson(res: ServerResponse, { status, body }: RpcResult, extra = {}):
 
 class BodyTooLarge extends Error {}
 
-/** Reads the body as UTF-8, rejecting with BodyTooLarge past `limit` bytes. */
+/** Reads the body as UTF-8, draining before rejecting when it exceeds `limit` bytes. */
 function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolveBody, reject) => {
     const declared = Number(req.headers["content-length"]);
-    if (Number.isFinite(declared) && declared > limit) {
-      reject(new BodyTooLarge());
-      return;
-    }
     const chunks: Buffer[] = [];
     let size = 0;
     let done = false;
+    let tooLarge = Number.isFinite(declared) && declared > limit;
     req.on("data", (c: Buffer) => {
       if (done) return;
       size += c.length;
       if (size > limit) {
-        done = true;
-        reject(new BodyTooLarge());
+        tooLarge = true;
         return;
       }
-      chunks.push(c);
+      if (!tooLarge) chunks.push(c);
     });
     req.on("end", () => {
       if (done) return;
       done = true;
-      resolveBody(Buffer.concat(chunks).toString("utf8"));
+      if (tooLarge) reject(new BodyTooLarge());
+      else resolveBody(Buffer.concat(chunks).toString("utf8"));
     });
     req.on("error", (e) => {
       if (done) return;
@@ -128,30 +125,6 @@ function readBody(req: IncomingMessage, limit: number): Promise<string> {
       reject(e);
     });
   });
-}
-
-/** Most of an oversized upload we discard so the client can read the 413 before we close. */
-const DRAIN_LIMIT_BYTES = 8 * 1024 * 1024;
-const DRAIN_TIMEOUT_MS = 5000;
-
-/**
- * Responds 413 with `Connection: close`. The rest of the upload is read and discarded (up to
- * DRAIN_LIMIT_BYTES / DRAIN_TIMEOUT_MS), because closing a socket the client is still writing
- * to makes it see ECONNRESET instead of the response. Past either limit the socket is dropped.
- */
-function rejectTooLarge(req: IncomingMessage, res: ServerResponse, limit: number): void {
-  sendJson(res, errorResult("invalid_input", `Request body exceeds ${limit} bytes`, 413), {
-    Connection: "close",
-  });
-  let drained = 0;
-  const timer = setTimeout(() => req.destroy(), DRAIN_TIMEOUT_MS);
-  timer.unref();
-  req.on("data", (c: Buffer) => {
-    drained += c.length;
-    if (drained > DRAIN_LIMIT_BYTES) req.destroy();
-  });
-  req.on("close", () => clearTimeout(timer));
-  req.resume();
 }
 
 function createRequestListener(
@@ -218,7 +191,10 @@ function createRequestListener(
     } catch (e) {
       if (e instanceof BodyTooLarge) {
         log.warn("rpc.body_too_large");
-        rejectTooLarge(req, res, config.maxBodyBytes);
+        sendJson(
+          res,
+          errorResult("invalid_input", `Request body exceeds ${config.maxBodyBytes} bytes`, 413),
+        );
       } else {
         req.destroy();
       }

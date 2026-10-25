@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import {
   ApiError,
   createClient,
@@ -38,6 +39,46 @@ async function dispatch(body: string, handler: AnyHandler, opts: { op?: string }
 const okHandler: AnyHandler = (_ctx, input) => ({
   length: (input as { text: string }).text.length,
 });
+
+async function sendOversizedBodyInTwoParts(
+  port: number,
+  token: string,
+  chunked: boolean,
+): Promise<{ responseBeforeUploadFinished: boolean; status: number; json: unknown }> {
+  const first = Buffer.alloc(1024 * 1024 + 1, "x");
+  const second = Buffer.from("x");
+  let uploadFinished = false;
+  let responseBeforeUploadFinished = false;
+
+  const response = new Promise<{ status: number; json: unknown }>((resolve, reject) => {
+    const headers = authHeaders(token);
+    if (!chunked) headers["content-length"] = String(first.length + second.length);
+    const req = httpRequest(
+      { host: "127.0.0.1", port, method: "POST", path: "/rpc/health.get", headers },
+      (res) => {
+        if (!uploadFinished) responseBeforeUploadFinished = true;
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            json: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+          });
+        });
+        res.on("error", reject);
+      },
+    );
+    req.on("error", reject);
+    req.write(first);
+    setTimeout(() => {
+      uploadFinished = true;
+      req.end(second);
+    }, 50);
+  });
+
+  const result = await response;
+  return { responseBeforeUploadFinished, ...result };
+}
 
 describe("dispatchRpc", () => {
   it("validates input, calls the handler with parsed input and wraps the result", async () => {
@@ -214,6 +255,17 @@ describe("POST /rpc/:op over HTTP", () => {
         body,
         chunked,
       });
+      expect(res.status).toBe(413);
+      expect(res.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    },
+  );
+
+  it.each([false, true])(
+    "drains an oversized upload before returning 413 (chunked: %s)",
+    async (chunked) => {
+      const svc = await startTestService();
+      const res = await sendOversizedBodyInTwoParts(svc.port, svc.token, chunked);
+      expect(res.responseBeforeUploadFinished).toBe(false);
       expect(res.status).toBe(413);
       expect(res.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
     },
