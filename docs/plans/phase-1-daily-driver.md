@@ -97,7 +97,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Slices (data + ops)**
 
-- [ ] **P1-01** People, identities and person notes slice — deps: P1-05 — claim: coder · p1-01-people-slice
+- [x] **P1-01** People, identities and person notes slice — deps: P1-05 — claim: done · 865b585
 - [x] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: done · b968a63
 - [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: —
 - [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
@@ -254,17 +254,17 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
   For notes, `occurredAt` is the start of `date` in the display time zone (default today), and `origin` is `"manual"`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `resolvePerson("zoe", …)` matches `Zoë Quinn`.
   - `resolvePerson("sam", …)` returns both Sams.
   - `findIdentity("chat","@ALEX")` matches `@alex`.
   - A note defaults to `people_sensitive` and today's date.
   - A backdated note `date: "2026-09-01"` sorts before today's.
   - `people.get` for an unknown id → `not_found`.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.** Use NFD normalisation with diacritics stripped for matching.
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-01): people, identities and person notes`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.** Use NFD normalisation with diacritics stripped for matching.
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-01): people, identities and person notes`.
 
 **Acceptance:** People and notes can be created, listed and resolved through the API. Ambiguous names return all candidates.
 
