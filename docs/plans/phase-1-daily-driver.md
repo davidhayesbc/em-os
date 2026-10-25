@@ -98,7 +98,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 **Slices (data + ops)**
 
 - [ ] **P1-01** People, identities and person notes slice — deps: P1-05 — claim: —
-- [ ] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: coder · p1-02-commitments-goals
+- [x] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: done · b968a63
 - [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: —
 - [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
 - [x] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: done · e7aa721
@@ -302,7 +302,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - **Recurrence:** `export function nextOccurrence(r: Recurrence, after: LocalDate): LocalDate` in `core/src/commitments/recurrence.ts`. Completing a commitment that has a `recurrence` also creates the next occurrence in the same transaction: same `seriesId`, `status: "active"`, and `due.date = nextOccurrence(recurrence, completed due date or today)`.
 - **Accomplishments repo** (owned here; P1-11 and P1-21 consume it): `interface AccomplishmentsRepo { create(a: NewAccomplishment, sourceIds?: string[]): Accomplishment; list(f?: { subjectPersonId?: string; from?: IsoDateTime; to?: IsoDateTime }): Accomplishment[] }`. Source links go in `record_sources`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `complete` sets `completedAt` and `status: "done"`.
   - `complete` on a `dropped` item throws `conflict`.
   - `reopen` by `actor: "system"` throws.
@@ -314,10 +314,10 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - Monthly on day 31 after `"2026-01-31"` → `"2026-02-28"`.
   - Completing a weekly item creates one new active item with the same `seriesId`.
   - `commitments.get` returns sources and audit.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-02): commitments and goals with audited transitions`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-02): commitments and goals with audited transitions`.
 
 **Acceptance:** Every transition is audited. A re-run import or sync can never move a `done` or `dropped` item back to active, because only `reopen` by `actor: "user"` can.
 

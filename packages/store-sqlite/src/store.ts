@@ -1,5 +1,8 @@
 import type { Store } from "@emos/core";
 import type { Db } from "./driver.js";
+import { createAccomplishmentsRepo } from "./repos/accomplishments.js";
+import { createCommitmentsRepo } from "./repos/commitments.js";
+import { createGoalsRepo } from "./repos/goals.js";
 import { createSettingsRepo } from "./repos/settings.js";
 
 /**
@@ -9,6 +12,9 @@ import { createSettingsRepo } from "./repos/settings.js";
 export function createStore(db: Db): Store {
   return {
     transaction: <T>(fn: () => T): T => db.transaction(fn),
+    commitments: createCommitmentsRepo(db),
+    goals: createGoalsRepo(db),
+    accomplishments: createAccomplishmentsRepo(db),
     settings: createSettingsRepo(db),
   };
 }
