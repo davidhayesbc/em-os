@@ -64,20 +64,42 @@ describe("CommitmentsRepo", () => {
     expect(r.audit(c.id).map((event) => event.action)).toEqual(["pin", "unpin"]);
   });
 
-  it.each(["import", "system"] as const)(
-    "prevents a %s actor from reactivating a terminal commitment",
-    (actor) => {
+  it.each([
+    ["import", "done", "active"],
+    ["system", "done", "active"],
+    ["import", "done", "proposed"],
+    ["system", "dropped", "snoozed"],
+  ] as const)(
+    "prevents a %s actor from moving a terminal %s commitment to %s",
+    (actor, terminalStatus, attemptedStatus) => {
       const r = repo();
-      const done = r.create(input({ status: "done", completedAt: now }));
+      const terminal = r.create(
+        input({
+          status: terminalStatus,
+          completedAt: terminalStatus === "done" ? now : null,
+          dropReason: terminalStatus === "dropped" ? "user" : null,
+        }),
+      );
 
       expect(() =>
         r.save(
-          { ...done, status: "active", completedAt: null, updatedAt: now },
+          {
+            ...terminal,
+            status: attemptedStatus,
+            completedAt: null,
+            dropReason: null,
+            snoozedUntil: attemptedStatus === "snoozed" ? now : null,
+            updatedAt: now,
+          },
           { action: "edit", actor },
         ),
       ).toThrowError("Only a user can reopen a terminal commitment");
-      expect(r.get(done.id)).toMatchObject({ status: "done", completedAt: now });
-      expect(r.audit(done.id)).toEqual([]);
+      expect(r.get(terminal.id)).toMatchObject({
+        status: terminalStatus,
+        completedAt: terminalStatus === "done" ? now : null,
+        dropReason: terminalStatus === "dropped" ? "user" : null,
+      });
+      expect(r.audit(terminal.id)).toEqual([]);
     },
   );
 
