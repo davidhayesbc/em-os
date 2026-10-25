@@ -59,6 +59,7 @@ describe("op registry", () => {
       | "commitments.drop"
       | "commitments.reopen"
       | "commitments.pin"
+      | "commitments.quickCapture"
       | "goals.list"
       | "goals.create"
       | "goals.update"

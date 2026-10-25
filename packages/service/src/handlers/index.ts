@@ -24,6 +24,7 @@ import {
   personNotesCreate,
   personNotesList,
 } from "./people.js";
+import { commitmentsQuickCapture } from "./quick-capture.js";
 import { serviceShutdown } from "./service.js";
 import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
 
@@ -56,4 +57,5 @@ export const handlers: { [N in OpName]?: Handler<N> } = {
   "people.resolve": peopleResolve,
   "personNotes.create": personNotesCreate,
   "personNotes.list": personNotesList,
+  "commitments.quickCapture": commitmentsQuickCapture,
 };
