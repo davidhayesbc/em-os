@@ -21,6 +21,24 @@ const defaults: Deps = { now: () => new Date(), id: (prefix) => `${prefix}_${ran
 const json = <T>(value: unknown): T => JSON.parse(value as string) as T;
 const bool = (value: unknown): boolean => value === 1;
 
+function isUniqueConstraint(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "errcode" in error &&
+    (error as { errcode?: unknown }).errcode === 2067
+  );
+}
+
+function runWithConflict<T>(message: string, run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (isUniqueConstraint(error)) throw new ApiError("conflict", message, { cause: error });
+    throw error;
+  }
+}
+
 function mapPerson(row: Row): Person {
   return {
     id: row.id as string,
@@ -81,22 +99,26 @@ export function createPeopleRepo(db: Db, deps: Partial<Deps> = {}): PeopleRepo {
         updatedAt: at,
         retentionState: input.retentionState ?? "active",
       };
-      db.prepare(`INSERT INTO people
-        (id,display_name,relationship,pronouns,aliases,role,time_zone,archived,one_on_one_cadence_days,occurred_at,captured_at,updated_at,retention_state)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-        person.id,
-        person.displayName,
-        person.relationship,
-        person.pronouns,
-        JSON.stringify(person.aliases),
-        person.role,
-        person.timeZone,
-        Number(person.archived),
-        person.oneOnOneCadenceDays,
-        person.occurredAt,
-        person.capturedAt,
-        person.updatedAt,
-        person.retentionState,
+      runWithConflict("A self person already exists", () =>
+        db
+          .prepare(`INSERT INTO people
+          (id,display_name,relationship,pronouns,aliases,role,time_zone,archived,one_on_one_cadence_days,occurred_at,captured_at,updated_at,retention_state)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .run(
+            person.id,
+            person.displayName,
+            person.relationship,
+            person.pronouns,
+            JSON.stringify(person.aliases),
+            person.role,
+            person.timeZone,
+            Number(person.archived),
+            person.oneOnOneCadenceDays,
+            person.occurredAt,
+            person.capturedAt,
+            person.updatedAt,
+            person.retentionState,
+          ),
       );
       return person;
     },
@@ -104,20 +126,24 @@ export function createPeopleRepo(db: Db, deps: Partial<Deps> = {}): PeopleRepo {
       const current = this.get(id);
       if (!current) throw new ApiError("not_found", "Person not found");
       const person: Person = { ...current, ...patch, id, updatedAt: toDbInstant(d.now()) };
-      db.prepare(`UPDATE people SET
-        display_name=?,relationship=?,pronouns=?,aliases=?,role=?,time_zone=?,archived=?,one_on_one_cadence_days=?,occurred_at=?,updated_at=?,retention_state=? WHERE id=?`).run(
-        person.displayName,
-        person.relationship,
-        person.pronouns,
-        JSON.stringify(person.aliases),
-        person.role,
-        person.timeZone,
-        Number(person.archived),
-        person.oneOnOneCadenceDays,
-        person.occurredAt,
-        person.updatedAt,
-        person.retentionState,
-        id,
+      runWithConflict("A self person already exists", () =>
+        db
+          .prepare(`UPDATE people SET
+          display_name=?,relationship=?,pronouns=?,aliases=?,role=?,time_zone=?,archived=?,one_on_one_cadence_days=?,occurred_at=?,updated_at=?,retention_state=? WHERE id=?`)
+          .run(
+            person.displayName,
+            person.relationship,
+            person.pronouns,
+            JSON.stringify(person.aliases),
+            person.role,
+            person.timeZone,
+            Number(person.archived),
+            person.oneOnOneCadenceDays,
+            person.occurredAt,
+            person.updatedAt,
+            person.retentionState,
+            id,
+          ),
       );
       return person;
     },
@@ -126,6 +152,8 @@ export function createPeopleRepo(db: Db, deps: Partial<Deps> = {}): PeopleRepo {
       return row ? mapPerson(row) : null;
     },
     list(filter = {}) {
+      if (filter.relationship && filter.relationship.length > 6)
+        throw new ApiError("invalid_input", "At most 6 relationship filters are allowed");
       const where: string[] = [];
       const values: unknown[] = [];
       if (!filter.includeArchived) where.push("archived=0");
@@ -150,18 +178,22 @@ export function createPeopleRepo(db: Db, deps: Partial<Deps> = {}): PeopleRepo {
         updatedAt: at,
         retentionState: input.retentionState ?? "active",
       };
-      db.prepare(`INSERT INTO identities
-        (id,person_id,source,handle,confirmed,occurred_at,captured_at,updated_at,retention_state)
-        VALUES (?,?,?,?,?,?,?,?,?)`).run(
-        identity.id,
-        identity.personId,
-        identity.source,
-        identity.handle,
-        Number(identity.confirmed),
-        identity.occurredAt,
-        identity.capturedAt,
-        identity.updatedAt,
-        identity.retentionState,
+      runWithConflict("Identity handle already exists for this source", () =>
+        db
+          .prepare(`INSERT INTO identities
+          (id,person_id,source,handle,confirmed,occurred_at,captured_at,updated_at,retention_state)
+          VALUES (?,?,?,?,?,?,?,?,?)`)
+          .run(
+            identity.id,
+            identity.personId,
+            identity.source,
+            identity.handle,
+            Number(identity.confirmed),
+            identity.occurredAt,
+            identity.capturedAt,
+            identity.updatedAt,
+            identity.retentionState,
+          ),
       );
       return identity;
     },

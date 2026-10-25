@@ -74,4 +74,35 @@ describe("people API", () => {
       code: "not_found",
     });
   });
+
+  it("returns conflict for duplicate identity handles and a second self person", async () => {
+    const client = await setup();
+    const self = await client.call("people.create", { ...personInput, relationship: "self" });
+    const other = await client.call("people.create", {
+      ...personInput,
+      displayName: "Sam Chen",
+      relationship: "peer",
+    });
+    const identity = {
+      personId: self.id,
+      source: "chat" as const,
+      handle: "@alex",
+      confirmed: true,
+    };
+    await client.call("people.addIdentity", identity);
+
+    await expect(client.call("people.addIdentity", identity)).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await expect(
+      client.call("people.create", {
+        ...personInput,
+        displayName: "Sam Chen",
+        relationship: "self",
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      client.call("people.update", { id: other.id, patch: { relationship: "self" } }),
+    ).rejects.toMatchObject({ code: "conflict" });
+  });
 });
