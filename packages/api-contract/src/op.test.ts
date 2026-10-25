@@ -62,6 +62,10 @@ describe("op registry", () => {
       | "goals.list"
       | "goals.create"
       | "goals.update"
+      | "settings.get"
+      | "settings.update"
+      | "layout.get"
+      | "layout.set"
     >();
     expectTypeOf<OpOutput<"service.shutdown">>().toEqualTypeOf<{ ok: true }>();
     expectTypeOf<OpInput<"health.get">>().toEqualTypeOf<Record<string, never>>();

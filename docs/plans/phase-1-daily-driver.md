@@ -101,7 +101,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [x] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: done · b968a63
 - [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: —
 - [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
-- [ ] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: —
+- [x] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: done · e7aa721
 
 **Core logic (pure)**
 
@@ -424,15 +424,15 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   ```
 - Ops: `settings.get → Profile`, `settings.update {patch} → Profile` (deep-merged and re-validated), `layout.get {surface}`, `layout.set {surface, layout}`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - A fresh store returns `DEFAULT_PROFILE` with `onboarded: false`.
   - A patch to `workingHours.start` keeps the other fields.
   - An invalid time zone `"Mars/Base"` → `invalid_input` (validated via `Intl.supportedValuesOf("timeZone")`).
   - A layout round-trips.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-05): profile, rank config and layouts`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-05): profile, rank config and layouts`.
 
 **Acceptance:** All configurable defaults live in one validated profile.
 

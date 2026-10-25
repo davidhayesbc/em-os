@@ -3,6 +3,7 @@ import type { Db } from "./driver.js";
 import { createAccomplishmentsRepo } from "./repos/accomplishments.js";
 import { createCommitmentsRepo } from "./repos/commitments.js";
 import { createGoalsRepo } from "./repos/goals.js";
+import { createSettingsRepo } from "./repos/settings.js";
 
 /**
  * The `Store` port (@emos/core) over SQLite. APPEND-ONLY: each Phase 1 slice adds one line
@@ -14,5 +15,6 @@ export function createStore(db: Db): Store {
     commitments: createCommitmentsRepo(db),
     goals: createGoalsRepo(db),
     accomplishments: createAccomplishmentsRepo(db),
+    settings: createSettingsRepo(db),
   };
 }

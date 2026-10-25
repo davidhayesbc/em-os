@@ -15,6 +15,7 @@ import {
 import { goalsCreate, goalsList, goalsUpdate } from "./goals.js";
 import { healthGet } from "./health.js";
 import { serviceShutdown } from "./service.js";
+import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
 
 // Append-only registry, keyed by op name (see @emos/api-contract ops). Other tasks add entries.
 export const handlers: { [N in OpName]?: Handler<N> } = {
@@ -33,4 +34,8 @@ export const handlers: { [N in OpName]?: Handler<N> } = {
   "goals.list": goalsList,
   "goals.create": goalsCreate,
   "goals.update": goalsUpdate,
+  "settings.get": settingsGet,
+  "settings.update": settingsUpdate,
+  "layout.get": layoutGet,
+  "layout.set": layoutSet,
 };
