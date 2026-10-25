@@ -1,4 +1,4 @@
-import { ApiError } from "@emos/api-contract";
+import { ApiError, NewCommitmentSchema } from "@emos/api-contract";
 import { parseQuickCapture, resolvePerson } from "@emos/core";
 import type { Handler } from "../context.js";
 
@@ -14,15 +14,24 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
   if ("error" in parsed) {
     return {
       status: "invalid",
-      message: parsed.error === "empty_title" ? "A title is required" : "Due date is out of range",
+      message:
+        parsed.error === "empty_title"
+          ? "A title is required"
+          : parsed.error === "multiple_people"
+            ? "Choose one person"
+            : "Due date is out of range",
     };
   }
 
-  let resolvedCounterpartId = counterpartId ?? null;
-  if (resolvedCounterpartId) {
-    if (!ctx.store.people.get(resolvedCounterpartId)) {
-      throw new ApiError("not_found", "counterpartId not found");
+  let resolvedCounterpartId: string | null = null;
+  if (counterpartId !== undefined) {
+    if (!counterpartId) throw new ApiError("invalid_input", "counterpartId must not be empty");
+    const counterpart = ctx.store.people.get(counterpartId);
+    if (!counterpart) throw new ApiError("not_found", "counterpartId not found");
+    if (counterpart.id === selfPersonId || counterpart.archived) {
+      throw new ApiError("invalid_input", "counterpartId must identify an active counterpart");
     }
+    resolvedCounterpartId = counterpart.id;
   } else if (parsed.personQuery) {
     const people = ctx.store.people.list();
     const identities = people.flatMap((person) => ctx.store.people.identities(person.id));
@@ -40,29 +49,39 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
     resolvedCounterpartId = candidate.id;
   }
 
+  if (resolvedCounterpartId) {
+    const counterpart = ctx.store.people.get(resolvedCounterpartId);
+    if (!counterpart || counterpart.id === selfPersonId || counterpart.archived) {
+      throw new ApiError("invalid_input", "counterpartId must identify an active counterpart");
+    }
+  }
+
+  const input = NewCommitmentSchema.safeParse({
+    direction: parsed.direction,
+    status: "active",
+    dropReason: null,
+    urgency: parsed.urgency,
+    priority: parsed.priority,
+    due: parsed.due,
+    tags: parsed.tags,
+    createdBy: "user",
+    ownerId: selfPersonId,
+    counterpartId: resolvedCounterpartId,
+    goalId: null,
+    meetingId: null,
+    title: parsed.title,
+    notes: "",
+    pinned: false,
+    effortMinutes: null,
+    snoozedUntil: null,
+    completedAt: null,
+    recurrence: parsed.recurrence,
+    seriesId: null,
+  });
+  if (!input.success) throw new ApiError("invalid_input", "Invalid commitment");
+
   return ctx.store.transaction(() => {
-    const commitment = ctx.store.commitments.create({
-      direction: parsed.direction,
-      status: "active",
-      dropReason: null,
-      urgency: parsed.urgency,
-      priority: parsed.priority,
-      due: parsed.due,
-      tags: parsed.tags,
-      createdBy: "user",
-      ownerId: selfPersonId,
-      counterpartId: resolvedCounterpartId,
-      goalId: null,
-      meetingId: null,
-      title: parsed.title,
-      notes: "",
-      pinned: false,
-      effortMinutes: null,
-      snoozedUntil: null,
-      completedAt: null,
-      recurrence: parsed.recurrence,
-      seriesId: null,
-    });
+    const commitment = ctx.store.commitments.create(input.data);
     ctx.events.publish({ type: "items.changed", entity: "commitment", ids: [commitment.id] });
     return { status: "created" as const, commitment };
   });

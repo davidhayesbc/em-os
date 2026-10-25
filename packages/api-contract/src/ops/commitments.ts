@@ -11,7 +11,7 @@ import {
 } from "../entities/index.js";
 import { defineOp } from "../op.js";
 
-const NewCommitment = Commitment.omit({
+export const NewCommitmentSchema = Commitment.omit({
   id: true,
   capturedAt: true,
   updatedAt: true,
@@ -21,6 +21,7 @@ const NewCommitment = Commitment.omit({
   occurredAt: Commitment.shape.occurredAt.optional(),
   retentionState: Commitment.shape.retentionState.optional(),
 });
+const NewCommitment = NewCommitmentSchema;
 const Id = z.object({ id: z.string() });
 export const commitmentsList = defineOp({
   name: "commitments.list",
