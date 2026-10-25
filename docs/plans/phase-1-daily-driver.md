@@ -86,6 +86,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 3. **Empty state** (first run before onboarding, no meetings, no commitments). Expected: the dashboard renders an empty state with "Run setup" or "Add your first item", with no errors. Pinned in P1-10 (`today.test.ts › empty store`) and P1-23 (`Header.test.tsx › empty`).
 4. **Ambiguous person names** (two people match `@sam`, or `get_person("Sam")`). Expected: quick capture asks the user to pick, and MCP returns a candidate list instead of guessing. Pinned in P1-03 and P1-15.
 5. **Completing an item mid-day.** Expected: the top 5 stays stable for the day, with the done item struck through and the progress ring advancing. It's not replaced silently; it's only refreshed on explicit "Refresh plan". Pinned in P1-10 (`today.test.ts › day plan is stable`).
+6. **Person-note MCP filtering (security finding L5, P1-47).** A note mix of every sensitivity level × retention state, queried with `allowSensitive` true/false and with/without an explicit person target, must yield exactly the allowed set over MCP while the repository still returns all of them. Pinned in P1-15 (`policy.test.ts`, the MCP `people.test.ts` cases and the repo/service boundary guards).
 
 ---
 
@@ -836,18 +837,26 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - CLI:
     - `emos mcp token create <name> [--allow-sensitive]` prints the token and the line `claude mcp add --transport http emos http://127.0.0.1:<port>/mcp --header "Authorization: Bearer <token>"`. It also stores the token in the keychain as `emos/mcp/<name>`.
     - `emos mcp --client <name>` is a stdio ↔ HTTP bridge that forwards JSON-RPC messages unchanged.
-- **Policy** (`policy.ts`):
-  - `private` content is always removed.
+- **Policy** (`policy.ts` — a pure function of record set × client policy × request shape, no transport or store dependency, so it unit-tests without MCP):
+  - Retention first (ADR 0004): `excluded` and `purged` records are never returned by any tool, resource or log — a `purged` tombstone is never re-surfaced as a note. `archived` records return only in reads that carry an explicit time scope (ADR 0004 retrieval order); `get_person`'s `notes` carry no range parameter, so they return `active` notes only.
+  - `private` content is always removed — even when `allowSensitive` is true, because the MCP client's model approvals are unknown to EM OS (ADR 0012).
   - `people_sensitive` content (person notes, 1:1 notes) is included only if `allowSensitive` **and** the call targets a person explicitly (`get_person`, or `person` set in `list_commitments`).
   - `get_meeting` on a 1:1 returns notes only under the same rule.
-  - Excluded or purged records are never returned.
+  - When person notes are withheld (`allowSensitive: false`), the `notes` key is omitted entirely (absent key, not `[]`). The ambiguous-name `matches` payload carries only `{ id, displayName, role }` — never notes.
+
+- **Person-note boundary (security finding L5, PR #43 security review; follow-up recorded as P1-47):** `PeopleRepo.notes`, `people.get` and `personNotes.list` intentionally stay unfiltered — authorized non-MCP consumers (the UI today, Ask later) need complete results across every sensitivity and retention state. **Do not move the filtering into `PeopleRepo`.** The MCP boundary owns the projection: `policy.ts` applies it server-side on every call (never cached across requests, never delegated to the client), and every MCP person-note surface — `get_person`, `get_meeting` on 1:1s, person-profile Markdown resources (ADR 0013), and Phase 3 `search` only via `include_sensitive` — routes through the same filter. Because the filter is the only place this logic lives, a repo-side guard test pins the repository's completeness so it cannot silently migrate inboard.
 
 - [ ] **Step 1: Write the failing tests** (MCP `Client` over `InMemoryTransport`, or HTTP against `startService`).
   - A missing or revoked token → 401.
   - `get_person("sam")` with two Sams → `matches` of length 2.
   - `get_person` with `allowSensitive: false` → no `notes` key.
   - With `allowSensitive: true` → notes are included.
-  - A `private` note never appears.
+  - A `private` note never appears — in `get_person`, in `get_meeting` notes or person-profile Markdown resources, and never in the logs either (requests are logged as ids and counts only, ADR 0013).
+  - With `allowSensitive: true`, `get_person` returns `active` `normal` and `people_sensitive` notes; an `archived` note (no explicit time scope exists for it in Phase 1) and an `excluded` note are absent from the result.
+  - A `purged` person note (tombstone, `text` emptied) never appears in `get_person` results, even for a sensitive-allowed client.
+  - Ambiguous-name `matches` never carry notes or note text — only `{ id, displayName, role }`.
+  - Boundary guard in `store-sqlite/src/repos/people.test.ts`: `PeopleRepo.notes` still returns every note — `private`, `people_sensitive` and `normal`, across `active`/`archived`/`excluded`/`purged` states (constructible via `NewPersonNote.retentionState`) — with a comment linking L5/P1-47, so the MCP filter cannot migrate into the repository.
+  - Service guard in `service/src/handlers/people.test.ts`: `people.get` and `personNotes.list` keep returning complete authorized results, including `private` notes.
   - `today` returns top items with their `why`.
   - The stdio bridge round-trips `tools/list`.
 - [ ] **Step 2: Run.** Expected: FAIL.
@@ -855,7 +864,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(p1-15): read-only emos mcp server with per-client tokens`.
 
-**Acceptance:** After `claude mcp add …`, Claude Code answers "what do I owe Sam?" from EM OS data. A client without sensitive access never sees person notes.
+**Acceptance:** After `claude mcp add …`, Claude Code answers "what do I owe Sam?" from EM OS data. A client without sensitive access never sees person notes. No MCP tool, resource or log ever returns `private` content or an `excluded`/`purged` record under any client policy (L5); `people_sensitive` notes appear only under the pinned `allowSensitive` + explicit-person-target rule; `archived` notes stay out of scope-less reads — and `PeopleRepo.notes`, `people.get` and `personNotes.list` keep returning complete authorized results for non-MCP consumers.
 
 ---
 
