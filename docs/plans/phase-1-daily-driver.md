@@ -424,14 +424,14 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   ```
 - Ops: `settings.get → Profile`, `settings.update {patch} → Profile` (deep-merged and re-validated), `layout.get {surface}`, `layout.set {surface, layout}`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - A fresh store returns `DEFAULT_PROFILE` with `onboarded: false`.
   - A patch to `workingHours.start` keeps the other fields.
   - An invalid time zone `"Mars/Base"` → `invalid_input` (validated via `Intl.supportedValuesOf("timeZone")`).
   - A layout round-trips.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(p1-05): profile, rank config and layouts`.
 
 **Acceptance:** All configurable defaults live in one validated profile.

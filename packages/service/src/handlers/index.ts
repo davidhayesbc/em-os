@@ -3,10 +3,15 @@ import type { Handler } from "../context.js";
 import { backupCreate } from "./backup.js";
 import { healthGet } from "./health.js";
 import { serviceShutdown } from "./service.js";
+import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
 
 // Append-only registry, keyed by op name (see @emos/api-contract ops). Other tasks add entries.
 export const handlers: { [N in OpName]?: Handler<N> } = {
   "health.get": healthGet,
   "backup.create": backupCreate,
   "service.shutdown": serviceShutdown,
+  "settings.get": settingsGet,
+  "settings.update": settingsUpdate,
+  "layout.get": layoutGet,
+  "layout.set": layoutSet,
 };

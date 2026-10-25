@@ -9,3 +9,4 @@ export { backupCreate } from "./ops/backup.js";
 export { healthGet } from "./ops/health.js";
 export * from "./ops/index.js";
 export { serviceShutdown } from "./ops/service.js";
+export * from "./ops/settings.js";
