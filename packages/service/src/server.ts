@@ -39,8 +39,9 @@ const POSIX = process.platform !== "win32";
 const LOOPBACK = "127.0.0.1";
 const RPC_PATH = /^\/rpc\/([A-Za-z0-9._-]{1,128})$/;
 // Let ordinary finite oversized uploads finish so clients receive the 413 without a write reset,
-// but do not let a chunked client hold the request open indefinitely after crossing the limit.
+// but do not let a chunked client hold the request open or send unbounded bytes after the limit.
 const OVERSIZED_BODY_DRAIN_TIMEOUT_MS = 1_000;
+const OVERSIZED_BODY_DRAIN_BYTES = 64 * 1024;
 
 export interface StartServiceOptions {
   dataDir: string;
@@ -103,7 +104,7 @@ class BodyTooLarge extends Error {
   }
 }
 
-/** Reads UTF-8, draining oversized bodies for at most `OVERSIZED_BODY_DRAIN_TIMEOUT_MS`. */
+/** Reads UTF-8, with bounded time and bytes for gracefully draining oversized bodies. */
 function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return new Promise((resolveBody, reject) => {
     const declared = Number(req.headers["content-length"]);
@@ -129,11 +130,21 @@ function readBody(req: IncomingMessage, limit: number): Promise<string> {
         reject(new BodyTooLarge(true));
       }, OVERSIZED_BODY_DRAIN_TIMEOUT_MS);
     };
+    const abortBoundedDrain = () => {
+      done = true;
+      cleanup();
+      req.pause();
+      reject(new BodyTooLarge(true));
+    };
     const onData = (c: Buffer) => {
       if (done) return;
       size += c.length;
       if (size > limit) {
         tooLarge = true;
+        if (size >= limit + OVERSIZED_BODY_DRAIN_BYTES) {
+          abortBoundedDrain();
+          return;
+        }
         startBoundedDrain();
         return;
       }

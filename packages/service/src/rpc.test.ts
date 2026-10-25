@@ -80,11 +80,14 @@ async function sendOversizedBodyInTwoParts(
   return { responseBeforeUploadFinished, ...result };
 }
 
-async function sendOversizedBodyWithoutEnding(
+async function streamOversizedBodyUntilTerminated(
   port: number,
   token: string,
-): Promise<{ status: number; json: unknown }> {
+): Promise<{ status: number; json: unknown; uploadedBytes: number }> {
   return new Promise((resolve, reject) => {
+    let uploadedBytes = 0;
+    let responseStarted = false;
+    const chunk = Buffer.alloc(16 * 1024, "x");
     const req = httpRequest(
       {
         host: "127.0.0.1",
@@ -94,19 +97,30 @@ async function sendOversizedBodyWithoutEnding(
         headers: authHeaders(token),
       },
       (res) => {
+        responseStarted = true;
         const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("data", (responseChunk: Buffer) => chunks.push(responseChunk));
         res.on("end", () => {
           resolve({
             status: res.statusCode ?? 0,
             json: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+            uploadedBytes,
           });
         });
         res.on("error", reject);
       },
     );
-    req.on("error", reject);
-    req.write(Buffer.alloc(1024 * 1024 + 1, "x"));
+    req.on("error", (error) => {
+      if (!responseStarted) reject(error);
+    });
+    const writeNext = () => {
+      if (responseStarted || req.destroyed) return;
+      req.write(chunk, () => {
+        uploadedBytes += chunk.length;
+        setTimeout(writeNext, 1);
+      });
+    };
+    writeNext();
   });
 }
 
@@ -301,16 +315,17 @@ describe("POST /rpc/:op over HTTP", () => {
     },
   );
 
-  it("bounds draining when an oversized chunked upload never ends", async () => {
+  it("stops consuming an oversized chunked upload at the drain-byte bound", async () => {
     const svc = await startTestService();
     const result = await Promise.race([
-      sendOversizedBodyWithoutEnding(svc.port, svc.token),
+      streamOversizedBodyUntilTerminated(svc.port, svc.token),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("oversized upload was not bounded")), 2_500),
       ),
     ]);
     expect(result.status).toBe(413);
     expect(result.json).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    expect(result.uploadedBytes).toBeLessThan(2 * 1024 * 1024);
   });
 
   it("accepts a body just under 1 MiB", async () => {
