@@ -161,7 +161,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 **Commitment-first validation (new intermediate milestones)**
 
 - [ ] **P1-44** Minimal commitment loop UI + dogfood checklist — deps: P1-01, P1-02, P1-03, P1-05 — claim: —
-- [ ] **P1-45** Follow-up semantics tests and model review — deps: P1-02 — claim: coder · p1-45-follow-up-semantics
+- [x] **P1-45** Follow-up semantics tests and model review — deps: P1-02 — claim: done · e8a9fbe
 - [ ] **P1-46** *spike* Pasted-text commitment extraction evaluation — deps: P1-02, P1-04 — claim: —
 
 **Close-out**
@@ -1803,10 +1803,10 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 **Files:** `packages/core/src/commitments/follow-up-scenarios.test.ts`, `docs/plans/commitment-follow-up-review.md` (new). No schema or API changes in this task.
 
 **Steps:**
-- [ ] Write synthetic scenarios: promise vs intention; undated promise; repeat reminder without duplication; incomplete delivery; deadline renegotiation with original promise retained; trigger-based obligation; a completed commitment resurfacing in sync.
-- [ ] Mark each scenario as supported, unsupported or requiring a product decision. Tests for existing behavior should pass; unresolved behavior must be explicitly documented rather than forced into an invented contract.
-- [ ] Review whether `audit_events` is sufficient for user-visible follow-up interactions. If not, propose a distinct interaction/event entity, lifecycle, provenance and deduplication rules.
-- [ ] If changes cross an accepted ADR, write a proposed superseding ADR in a separate owner-reviewed change; do not rewrite an accepted ADR.
+- [x] Write synthetic scenarios: promise vs intention; undated promise; repeat reminder without duplication; incomplete delivery; deadline renegotiation with original promise retained; trigger-based obligation; a completed commitment resurfacing in sync.
+- [x] Mark each scenario as supported, unsupported or requiring a product decision. Tests for existing behavior should pass; unresolved behavior must be explicitly documented rather than forced into an invented contract.
+- [x] Review whether `audit_events` is sufficient for user-visible follow-up interactions. If not, propose a distinct interaction/event entity, lifecycle, provenance and deduplication rules.
+- [x] If changes cross an accepted ADR, write a proposed superseding ADR in a separate owner-reviewed change; do not rewrite an accepted ADR.
 
 **Acceptance:** A concise gap analysis with reproducible tests and an explicit owner decision list; no premature implementation of a new domain model.
 
