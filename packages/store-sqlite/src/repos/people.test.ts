@@ -64,6 +64,13 @@ describe("PeopleRepo", () => {
     expect(r.list({ relationship: ["peer"] }).map((p) => p.id)).toEqual([alex.id]);
   });
 
+  it("rejects relationship filters larger than the relationship enum", () => {
+    const relationships = Array.from({ length: 40_000 }, () => "peer" as const);
+    expect(() => repo().list({ relationship: relationships })).toThrowError(
+      expect.objectContaining({ code: "invalid_input" }),
+    );
+  });
+
   it("finds identity handles case-insensitively", () => {
     const r = repo();
     const alex = r.create(newPerson("Alex Rivera"));
@@ -71,6 +78,23 @@ describe("PeopleRepo", () => {
 
     expect(r.findIdentity("chat", "@ALEX")).toEqual(added);
     expect(r.identities(alex.id)).toEqual([added]);
+  });
+
+  it("reports duplicate identities and a second self person as conflicts", () => {
+    const r = repo();
+    const alex = r.create(newPerson("Alex Rivera", "self"));
+    const sam = r.create(newPerson("Sam Chen"));
+    r.addIdentity(newIdentity(alex.id, "@alex"));
+
+    expect(() => r.addIdentity(newIdentity(alex.id, "@ALEX"))).toThrowError(
+      expect.objectContaining({ code: "conflict" }),
+    );
+    expect(() => r.create(newPerson("Sam Chen", "self"))).toThrowError(
+      expect.objectContaining({ code: "conflict" }),
+    );
+    expect(() => r.update(sam.id, { relationship: "self" })).toThrowError(
+      expect.objectContaining({ code: "conflict" }),
+    );
   });
 
   it("sorts notes chronologically", () => {

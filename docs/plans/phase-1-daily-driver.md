@@ -98,6 +98,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 **Slices (data + ops)**
 
 - [x] **P1-01** People, identities and person notes slice — deps: P1-05 — claim: done · 865b585
+- [ ] **P1-47** P1-01-H people slice security hardening — deps: P1-01 — claim: coder · p1-01-hardening
 - [x] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: done · b968a63
 - [ ] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: coder · p1-03-quick-capture
 - [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
@@ -267,6 +268,20 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [x] **Step 5: Commit** `feat(p1-01): people, identities and person notes`.
 
 **Acceptance:** People and notes can be created, listed and resolved through the API. Ambiguous names return all candidates.
+
+---
+
+### Task P1-47: P1-01-H people slice security hardening
+
+**Files:** `core/src/people/{resolve.ts,index.ts}`, `core/src/ports/repos/people.ts`, `store-sqlite/src/repos/people.ts`, `api-contract/src/ops/people.ts`, `service/src/handlers/people.ts` (plus tests beside each).
+
+- [x] Bound relationship filters, aliases, note text and tags.
+- [x] Accept only bounded HTTP(S) note source URLs.
+- [x] Return `conflict` for duplicate identity handles and a second self person.
+- [x] Record the MCP sensitivity/retention filtering requirement as follow-up work, without filtering the repository.
+- [x] Run `npm run ci`.
+
+**Acceptance:** Oversized people inputs fail validation, unsafe source URL schemes are rejected, uniqueness conflicts return HTTP 409, and the future MCP person surface owns sensitivity/retention filtering.
 
 ---
 

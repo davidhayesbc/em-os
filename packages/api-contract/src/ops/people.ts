@@ -16,6 +16,7 @@ const NewPerson = Person.omit({
   occurredAt: true,
   retentionState: true,
 }).extend({
+  aliases: z.array(z.string().max(200)).max(50),
   occurredAt: Person.shape.occurredAt.optional(),
   retentionState: Person.shape.retentionState.optional(),
 });
@@ -33,7 +34,7 @@ const NewIdentity = Identity.omit({
 export const peopleList = defineOp({
   name: "people.list",
   input: z.object({
-    relationship: z.array(Relationship).optional(),
+    relationship: z.array(Relationship).max(Relationship.options.length).optional(),
     includeArchived: z.boolean().optional(),
   }),
   output: z.array(Person),
@@ -63,11 +64,19 @@ export const personNotesCreate = defineOp({
   name: "personNotes.create",
   input: z.object({
     personId: z.string(),
-    text: z.string(),
+    text: z.string().max(100_000),
     date: LocalDate.optional(),
-    tags: z.array(z.string()).optional(),
+    tags: z.array(z.string().max(100)).max(50).optional(),
     sensitivity: Sensitivity.optional(),
-    sourceUrl: z.string().optional(),
+    sourceUrl: z
+      .string()
+      .max(2_048)
+      .url()
+      .refine((value) => {
+        const protocol = new URL(value).protocol;
+        return protocol === "http:" || protocol === "https:";
+      }, "Source URL must use HTTP or HTTPS")
+      .optional(),
   }),
   output: PersonNote,
 });
