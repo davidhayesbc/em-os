@@ -510,7 +510,8 @@ describe("POST /rpc/:op over HTTP", () => {
     expect(result.headers.connection).toBe("close");
     expect(result.bytesSentAfterCap).toBeLessThan(64 * 1024 + 1024);
     expect(result.responseStartedAt - result.capCrossedAt).toBeGreaterThanOrEqual(0);
-    expect(result.responseStartedAt - result.capCrossedAt).toBeLessThan(2_500);
+    // Leave 900 ms of scheduling slack while ensuring a 2 s drain timer cannot pass.
+    expect(result.responseStartedAt - result.capCrossedAt).toBeLessThan(1_900);
 
     const health = await request(svc.port, { method: "GET", path: "/health/ping" });
     expect(health.status).toBe(200);
