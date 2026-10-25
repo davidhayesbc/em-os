@@ -3,6 +3,7 @@ import { ApiError, type Goal, type NewGoal } from "@emos/api-contract";
 import type { GoalsRepo } from "@emos/core";
 import type { Db } from "../driver.js";
 import { toDbInstant } from "../time.js";
+import { appendAudit, createDiff, updateDiff } from "./audit.js";
 
 type Row = Record<string, unknown>;
 interface Deps {
@@ -41,45 +42,69 @@ export function createGoalsRepo(db: Db, deps: Partial<Deps> = {}): GoalsRepo {
         updatedAt: at,
         retentionState: g.retentionState ?? "active",
       };
-      db.prepare(
-        "INSERT INTO goals (id,title,slug,subject_person_id,horizon,kind,status,target_date,sensitivity,occurred_at,captured_at,updated_at,retention_state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-      ).run(
-        value.id,
-        value.title,
-        value.slug,
-        value.subjectPersonId,
-        value.horizon,
-        value.kind,
-        value.status,
-        value.targetDate,
-        value.sensitivity,
-        value.occurredAt,
-        value.capturedAt,
-        value.updatedAt,
-        value.retentionState,
-      );
+      db.transaction(() => {
+        db.prepare(
+          "INSERT INTO goals (id,title,slug,subject_person_id,horizon,kind,status,target_date,sensitivity,occurred_at,captured_at,updated_at,retention_state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ).run(
+          value.id,
+          value.title,
+          value.slug,
+          value.subjectPersonId,
+          value.horizon,
+          value.kind,
+          value.status,
+          value.targetDate,
+          value.sensitivity,
+          value.occurredAt,
+          value.capturedAt,
+          value.updatedAt,
+          value.retentionState,
+        );
+        appendAudit(
+          db,
+          d.id("mcl"),
+          "goal",
+          value.id,
+          "create",
+          "user",
+          value.capturedAt,
+          createDiff(value),
+        );
+      });
       return value;
     },
     update(id, patch) {
       const old = this.get(id);
       if (!old) throw new ApiError("not_found", "Goal not found");
       const value = { ...old, ...patch, updatedAt: toDbInstant(d.now()) };
-      db.prepare(
-        "UPDATE goals SET title=?,slug=?,subject_person_id=?,horizon=?,kind=?,status=?,target_date=?,sensitivity=?,occurred_at=?,updated_at=?,retention_state=? WHERE id=?",
-      ).run(
-        value.title,
-        value.slug,
-        value.subjectPersonId,
-        value.horizon,
-        value.kind,
-        value.status,
-        value.targetDate,
-        value.sensitivity,
-        value.occurredAt,
-        value.updatedAt,
-        value.retentionState,
-        id,
-      );
+      db.transaction(() => {
+        db.prepare(
+          "UPDATE goals SET title=?,slug=?,subject_person_id=?,horizon=?,kind=?,status=?,target_date=?,sensitivity=?,occurred_at=?,updated_at=?,retention_state=? WHERE id=?",
+        ).run(
+          value.title,
+          value.slug,
+          value.subjectPersonId,
+          value.horizon,
+          value.kind,
+          value.status,
+          value.targetDate,
+          value.sensitivity,
+          value.occurredAt,
+          value.updatedAt,
+          value.retentionState,
+          id,
+        );
+        appendAudit(
+          db,
+          d.id("mcl"),
+          "goal",
+          id,
+          "update",
+          "user",
+          value.updatedAt,
+          updateDiff(old, value),
+        );
+      });
       return value;
     },
     get(id) {

@@ -3,6 +3,7 @@ import type { AuditEvent, Commitment, NewCommitment, SourceItem } from "@emos/ap
 import type { CommitmentsRepo } from "@emos/core";
 import type { Db } from "../driver.js";
 import { toDbInstant } from "../time.js";
+import { appendAudit, createDiff } from "./audit.js";
 
 interface Deps {
   now(): Date;
@@ -120,6 +121,24 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
           "INSERT INTO commitment_sources (commitment_id, source_item_id) VALUES (?, ?)",
         );
         for (const id of sourceIds) link.run(value.id, id);
+        const actor =
+          value.createdBy === "import"
+            ? "import"
+            : value.createdBy === "mcp"
+              ? "mcp"
+              : value.createdBy === "extractor"
+                ? "system"
+                : "user";
+        appendAudit(
+          db,
+          d.id("mcl"),
+          "commitment",
+          value.id,
+          "create",
+          actor,
+          value.capturedAt,
+          createDiff(value),
+        );
       });
       return value;
     },

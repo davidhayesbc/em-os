@@ -94,6 +94,24 @@ describe("commitment handlers", () => {
 
     expect(repo().list({})).toEqual([]);
     expect(db.prepare("SELECT COUNT(*) count FROM commitment_sources").get()).toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) count FROM audit_events").get()).toEqual({ count: 0 });
+    expect(published).toEqual([]);
+  });
+
+  it.each([
+    ["done without completedAt", { status: "done", completedAt: null }],
+    ["active with completedAt", { status: "active", completedAt: now }],
+    ["snoozed without snoozedUntil", { status: "snoozed", snoozedUntil: null }],
+    ["active with snoozedUntil", { status: "active", snoozedUntil: now }],
+    ["dropped without dropReason", { status: "dropped", dropReason: null }],
+    ["active with dropReason", { status: "active", dropReason: "user" }],
+  ] as const)("create rejects %s without side effects", (_name, malformed) => {
+    expect(() => commitmentsCreate(ctx, input(malformed))).toThrowError(
+      expect.objectContaining({ code: "invalid_input" }),
+    );
+
+    expect(repo().list({})).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) count FROM audit_events").get()).toEqual({ count: 0 });
     expect(published).toEqual([]);
   });
 
@@ -108,6 +126,37 @@ describe("commitment handlers", () => {
         .map((item) => item.id),
     ).toEqual(["src_1"]);
     expect(published).toEqual([{ type: "items.changed", entity: "commitment", ids: [created.id] }]);
+    expect(repo().audit(created.id)).toEqual([
+      expect.objectContaining({
+        entity: "commitment",
+        entityId: created.id,
+        action: "create",
+        actor: "user",
+      }),
+    ]);
+  });
+
+  it("create normalizes imported lifecycle state and audits import provenance", async () => {
+    const created = await commitmentsCreate(
+      ctx,
+      input({
+        createdBy: "import",
+        status: "done",
+        completedAt: now,
+        snoozedUntil: now,
+        dropReason: "archived_on_import",
+      }),
+    );
+
+    expect(created).toMatchObject({
+      status: "proposed",
+      completedAt: null,
+      snoozedUntil: null,
+      dropReason: null,
+    });
+    expect(repo().audit(created.id)).toEqual([
+      expect.objectContaining({ action: "create", actor: "import" }),
+    ]);
   });
 
   it("snooze stores snoozedUntil", () => {
@@ -141,6 +190,16 @@ describe("commitment handlers", () => {
       seriesId: "series_weekly",
       due: { date: "2026-10-30" },
     });
+    const successor = series.find((item) => item.id !== c.id);
+    if (!successor) throw new Error("Missing recurrence successor");
+    expect(repo().audit(successor.id)).toEqual([
+      expect.objectContaining({
+        entity: "commitment",
+        entityId: successor.id,
+        action: "create",
+        actor: "user",
+      }),
+    ]);
   });
 
   it("get returns linked sources and audit", async () => {
@@ -149,6 +208,6 @@ describe("commitment handlers", () => {
     commitmentsSnooze(ctx, { id: c.id, until: "2026-10-26T09:00:00.000Z" });
     const result = await commitmentsGet(ctx, { id: c.id });
     expect(result.sources.map((source) => source.id)).toEqual(["src_1"]);
-    expect(result.audit.map((event) => event.action)).toEqual(["snooze"]);
+    expect(result.audit.map((event) => event.action)).toEqual(["create", "snooze"]);
   });
 });

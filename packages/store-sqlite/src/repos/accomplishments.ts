@@ -3,6 +3,7 @@ import type { Accomplishment, NewAccomplishment } from "@emos/api-contract";
 import type { AccomplishmentsRepo } from "@emos/core";
 import type { Db } from "../driver.js";
 import { toDbInstant } from "../time.js";
+import { appendAudit, createDiff } from "./audit.js";
 
 type Row = Record<string, unknown>;
 interface Deps {
@@ -60,6 +61,16 @@ export function createAccomplishmentsRepo(db: Db, deps: Partial<Deps> = {}): Acc
           "INSERT INTO record_sources (entity,entity_id,source_item_id) VALUES ('accomplishment',?,?)",
         );
         for (const id of sourceIds) stmt.run(value.id, id);
+        appendAudit(
+          db,
+          d.id("mcl"),
+          "accomplishment",
+          value.id,
+          "create",
+          "user",
+          value.capturedAt,
+          createDiff(value),
+        );
       });
       return value;
     },

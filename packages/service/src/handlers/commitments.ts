@@ -25,6 +25,15 @@ function validateForeignIds(ctx: ServiceContext, value: Partial<NewCommitment>):
     if (!exists(ctx, table, value[field])) throw new ApiError("not_found", `${field} not found`);
   }
 }
+function validateLifecycle(value: NewCommitment): void {
+  const valid =
+    (value.status === "done") === (value.completedAt !== null) &&
+    (value.status === "snoozed") === (value.snoozedUntil !== null) &&
+    (value.status === "dropped") === (value.dropReason !== null);
+  if (!valid) {
+    throw new ApiError("invalid_input", "Commitment lifecycle fields do not match its status");
+  }
+}
 function mutate(
   ctx: ServiceContext,
   id: string,
@@ -61,7 +70,14 @@ export const commitmentsCreate: Handler<"commitments.create"> = (ctx, input) =>
     const value: NewCommitment =
       requested.createdBy === "user"
         ? requested
-        : { ...requested, status: "proposed", completedAt: null, dropReason: null };
+        : {
+            ...requested,
+            status: "proposed",
+            completedAt: null,
+            dropReason: null,
+            snoozedUntil: null,
+          };
+    validateLifecycle(value);
     const created = ctx.store.commitments.create(value, sourceIds);
     publish(ctx, [created.id]);
     return created;

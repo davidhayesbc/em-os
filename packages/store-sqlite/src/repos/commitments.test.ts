@@ -55,13 +55,45 @@ function repo() {
 }
 
 describe("CommitmentsRepo", () => {
+  it("create appends exactly one complete create audit row", () => {
+    const r = repo();
+    const c = r.create(input());
+
+    const events = r.audit(c.id);
+    expect(events).toEqual([
+      expect.objectContaining({
+        entity: "commitment",
+        entityId: c.id,
+        action: "create",
+        actor: "user",
+        at: now,
+        diff: expect.objectContaining({
+          id: { from: null, to: c.id },
+          title: { from: null, to: c.title },
+          status: { from: null, to: "active" },
+        }),
+      }),
+    ]);
+    const created = events[0];
+    if (!created) throw new Error("Missing create audit event");
+    expect(Object.keys(created.diff)).toHaveLength(Object.keys(c).length);
+  });
+
+  it("a failed create rolls back both the commitment and audit row", () => {
+    const r = repo();
+
+    expect(() => r.create(input(), ["src_missing"])).toThrow();
+    expect(r.list({})).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) count FROM audit_events").get()).toEqual({ count: 0 });
+  });
+
   it("each save appends exactly one audit row", () => {
     const r = repo();
     const c = r.create(input());
     const changed: Commitment = { ...c, pinned: true, updatedAt: now };
     r.save(changed, { action: "pin", actor: "user" });
     r.save({ ...changed, pinned: false }, { action: "unpin", actor: "user" });
-    expect(r.audit(c.id).map((event) => event.action)).toEqual(["pin", "unpin"]);
+    expect(r.audit(c.id).map((event) => event.action)).toEqual(["create", "pin", "unpin"]);
   });
 
   it.each([
@@ -99,7 +131,7 @@ describe("CommitmentsRepo", () => {
         completedAt: terminalStatus === "done" ? now : null,
         dropReason: terminalStatus === "dropped" ? "user" : null,
       });
-      expect(r.audit(terminal.id)).toEqual([]);
+      expect(r.audit(terminal.id).map((event) => event.action)).toEqual(["create"]);
     },
   );
 
@@ -114,7 +146,7 @@ describe("CommitmentsRepo", () => {
 
     expect(reopened).toMatchObject({ status: "active", dropReason: null });
     expect(r.get(dropped.id)).toMatchObject({ status: "active", dropReason: null });
-    expect(r.audit(dropped.id).map((event) => event.action)).toEqual(["reopen"]);
+    expect(r.audit(dropped.id).map((event) => event.action)).toEqual(["create", "reopen"]);
   });
 
   it("filters active commitments owed to me", () => {
