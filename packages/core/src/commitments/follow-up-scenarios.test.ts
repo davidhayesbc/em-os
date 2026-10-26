@@ -80,9 +80,9 @@ describe("follow-up semantics scenario inventory", () => {
   it("repeat reminder without duplication — has no reminder identity or deduplication key", () => {
     const promise = commitment();
 
-    expect(Object.keys(promise)).not.toEqual(
-      expect.arrayContaining(["reminderId", "interactionId", "deduplicationKey"]),
-    );
+    for (const key of ["reminderId", "interactionId", "deduplicationKey"]) {
+      expect(Object.keys(promise)).not.toContain(key);
+    }
     expect(assessments["repeat reminder without duplication"]).toBe("unsupported");
   });
 
@@ -90,9 +90,9 @@ describe("follow-up semantics scenario inventory", () => {
     const promise = transition(commitment(), "edit", NOW);
 
     expect(promise.status).toBe("active");
-    expect(Object.keys(promise)).not.toEqual(
-      expect.arrayContaining(["fulfilledAmount", "remainingAmount", "partialCompletions"]),
-    );
+    for (const key of ["fulfilledAmount", "remainingAmount", "partialCompletions"]) {
+      expect(Object.keys(promise)).not.toContain(key);
+    }
     expect(assessments["incomplete delivery"]).toBe("requires product decision");
   });
 
@@ -126,7 +126,9 @@ describe("follow-up semantics scenario inventory", () => {
     });
 
     expect(obligation.due).toBeNull();
-    expect(Object.keys(obligation)).not.toEqual(expect.arrayContaining(["trigger", "triggeredAt"]));
+    for (const key of ["trigger", "triggeredAt"]) {
+      expect(Object.keys(obligation)).not.toContain(key);
+    }
     expect(assessments["trigger-based obligation"]).toBe("unsupported");
   });
 
