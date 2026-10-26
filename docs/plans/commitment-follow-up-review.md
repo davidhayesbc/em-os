@@ -36,6 +36,8 @@ If the owner approves a separate model, use a neutral entity such as `commitment
 - stable interaction ID;
 - commitment ID plus optional source item ID and exact source span;
 - kind: at minimum `reminder`, `response`, `partial_fulfilment`, `renegotiation`, `trigger_observed`, and `completion_observed`;
+- `sensitivity: normal | people_sensitive | private`, inherited at least from the source item or span and subject to the same retrieval and egress rules (`excluded` and `private` items are never exposed over MCP; `people_sensitive` is handled as described in ADR 0012);
+- `retention_state: active | archived | excluded | purged` (ADR 0004); the interaction participates in the same retention, exclusion and purge lifecycle as its source item, so a purged source must remove the retained span content, leaving at most the ADR 0004 tombstone (date, kind, source);
 - direction, sender person ID, recipient person IDs, channel/connector identity, and occurred/captured timestamps;
 - lifecycle state and optional supersedes/duplicate-of relationship;
 - structured payload specific to the kind (for example proposed due date or a bounded progress description), while retaining the source evidence;
@@ -53,11 +55,12 @@ Manual interactions may be accepted at creation. Connector retries must be idemp
 ### Provenance and deduplication
 
 1. Prefer a connector-scoped immutable external event/message ID; uniqueness is `(connector account, external ID, source span, kind)`.
-2. For sources without stable IDs, compute a versioned fingerprint from source item ID, normalized exact span, kind, direction, participants, and occurred-time bucket. Store the fingerprint inputs and algorithm version.
+2. For sources without stable IDs, compute a versioned fingerprint from connector account (`connectorId`), source item ID, normalized exact span, kind, direction, participants, and occurred-time bucket. Store the fingerprint inputs and algorithm version.
 3. An exact-key retry returns the existing interaction and does not add another timeline item or audit event.
-4. Similar but non-identical observations are merge proposals, never automatic destructive merges. A merge links `duplicateOf`/`supersedes` and preserves every source.
-5. Deduplicate interactions independently from commitments. Several legitimate reminders may refer to one commitment; one repeated source observation must not create several reminders.
-6. Accepting an interaction and changing a commitment are separate, atomic operations linked causally: the interaction records evidence; the audit event records the mutation.
+4. A fingerprint match across connector accounts must only produce a user-visible merge proposal that preserves both accounts' provenance; it is never an automatic dedup.
+5. Similar but non-identical observations are merge proposals, never automatic destructive merges. A merge links `duplicateOf`/`supersedes` and preserves every source.
+6. Deduplicate interactions independently from commitments. Several legitimate reminders may refer to one commitment; one repeated source observation must not create several reminders.
+7. Accepting an interaction and changing a commitment are separate, atomic operations linked causally: the interaction records evidence; the audit event records the mutation.
 
 ## Owner decisions required
 
@@ -66,9 +69,9 @@ Manual interactions may be accepted at creation. Connector retries must be idemp
 3. **Trigger semantics:** Which trigger types are allowed, who evaluates them, and does trigger observation activate, propose, or merely annotate an obligation?
 4. **Interaction entity:** Approve a distinct entity/timeline rather than overloading `audit_events`, including its name and minimum kinds.
 5. **Lifecycle:** Approve `proposed → accepted/rejected`, supersession, and the rule that machine observations never mutate terminal commitments without user action.
-6. **Provenance/privacy:** Define required source span, participant/channel visibility, connector retention, and treatment of deleted source content.
+6. **Source span and purge cascade:** Define required source span breadth and whether purging a source item cascades to derived interaction spans. Participant/channel visibility, sensitivity inheritance, retention schedules and treatment of deleted source content are governed by ADR 0004 and ADR 0012.
 7. **Deduplication:** Approve exact external-ID/fingerprint idempotency and human-reviewed semantic merges, including fingerprint versioning and time buckets.
 8. **Causality:** Decide whether accepting an interaction and applying an existing edit/transition must be one atomic command with reciprocal links.
-9. **ADR/spec follow-up:** If approved, schedule a separate schema/API/spec task and owner-reviewed ADR. That ADR must supplement or, where it changes pipeline triage/dedup rules, explicitly supersede the affected portion of accepted ADR 0007; this task does not edit ADR 0007.
+9. **ADR/spec follow-up:** If approved, schedule a separate schema/API/spec task and owner-reviewed ADR. That ADR must supplement or, where it changes pipeline triage/dedup rules, explicitly supersede the affected portion of accepted ADR 0007; it must also supplement or explicitly supersede ADR 0004 (retention), ADR 0009 (source links and provenance) and ADR 0012 (sensitivity, egress and privacy posture) where the interaction model touches those rules. This task does not edit any ADR, and `docs/adr/0007-commitment-pipeline-triage.md` stays untouched.
 
 No accepted ADR is changed by this review, and no schema, API, or interaction model is implemented here.
