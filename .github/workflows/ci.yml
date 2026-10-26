@@ -70,7 +70,7 @@ jobs:
           name: vsix-${{ matrix.os }}
           path: packages/extension/*.vsix
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
 
   gitleaks:
     name: gitleaks
