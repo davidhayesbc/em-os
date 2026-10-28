@@ -102,7 +102,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [x] **P1-47** P1-01-H people slice security hardening — deps: P1-01 — claim: done · 9d05c2c
 - [x] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: done · b968a63
 - [x] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: done · 2cc4310
-- [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
+- [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: coder · t_c2dce20b-p1-04-meetings-source-items
 - [x] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: done · e7aa721
 
 **Core logic (pure)**
