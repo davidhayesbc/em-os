@@ -52,6 +52,9 @@ artifacts/
 # Brainstorm / visual-companion scratch (local only)
 .superpowers/
 
+# Kanban worktree scratch directories
+.worktrees/
+
 # VSIX packaging and smoke-test output
 *.vsix
 .cache/
