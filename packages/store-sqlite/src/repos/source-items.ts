@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { NewSourceItem, SourceItem } from "@emos/api-contract";
+import { ApiError, type NewSourceItem, type SourceItem } from "@emos/api-contract";
 import type { SourceItemsRepo } from "@emos/core";
 import type { Db } from "../driver.js";
 import { toDbInstant } from "../time.js";
@@ -45,10 +45,43 @@ function mapSourceItem(row: Row): SourceItem {
   };
 }
 
+const SENSITIVITY_RANK: Record<SourceItem["sensitivity"], number> = {
+  normal: 0,
+  people_sensitive: 1,
+  private: 2,
+};
+
+function higherSensitivity(
+  a: SourceItem["sensitivity"],
+  b: SourceItem["sensitivity"],
+): SourceItem["sensitivity"] {
+  return SENSITIVITY_RANK[a] >= SENSITIVITY_RANK[b] ? a : b;
+}
+
+/** Tombstone payload: a purged source item must never carry source content. */
+function clearedPayload(): Pick<
+  SourceItem,
+  "text" | "contentHash" | "url" | "authorIdentityId" | "sections"
+> {
+  return {
+    text: "",
+    contentHash: "",
+    url: null,
+    authorIdentityId: null,
+    sections: null,
+  };
+}
+
 export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceItemsRepo {
   const d = { ...defaults, ...deps };
   return {
     upsert(input: NewSourceItem) {
+      // Explicit purged operations are intentionally unsupported at this phase. Reject them
+      // atomically instead of writing a content-retaining purged row.
+      if (input.retentionState === "purged") {
+        throw new ApiError("invalid_input", "Explicit purged retention is not supported");
+      }
+
       const at = toDbInstant(d.now());
       const value: SourceItem = {
         ...input,
@@ -86,16 +119,56 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
           .get<Row>(value.connectorId, value.externalId);
         if (!existingRow) throw error; // should not happen
         const existing = mapSourceItem(existingRow);
-        const isPurged = existing.retentionState === "purged";
-        // ADR 0004: purged tombstones keep date/kind/source; never restore content.
+
+        if (existing.retentionState === "purged") {
+          // Terminal tombstone: identity, date, kind and source are preserved; content is never
+          // restored and the record can never leave purged through upsert. If a legacy row still
+          // holds content, clear it now.
+          const payload =
+            existing.text === "" &&
+            existing.contentHash === "" &&
+            existing.url === null &&
+            existing.authorIdentityId === null &&
+            existing.sections === null
+              ? {
+                  text: existing.text,
+                  contentHash: existing.contentHash,
+                  url: existing.url,
+                  authorIdentityId: existing.authorIdentityId,
+                  sections: existing.sections,
+                }
+              : clearedPayload();
+          const item: SourceItem = {
+            ...existing,
+            ...payload,
+            retentionState: "purged",
+            updatedAt: at,
+          };
+          db.prepare(`UPDATE source_items SET
+            text = ?, content_hash = ?, url = ?, author_identity_id = ?, sections = ?,
+            retention_state = ?, updated_at = ?
+            WHERE id = ?`).run(
+            item.text,
+            item.contentHash,
+            item.url,
+            item.authorIdentityId,
+            item.sections === null ? null : JSON.stringify(item.sections),
+            item.retentionState,
+            item.updatedAt,
+            item.id,
+          );
+          return { item, created: false };
+        }
+
+        // Ordinary replay: never lower an existing source's sensitivity, but allow upgrades.
         const item: SourceItem = {
           ...existing,
-          text: isPurged ? existing.text : value.text,
-          contentHash: isPurged ? existing.contentHash : value.contentHash,
-          url: isPurged ? existing.url : value.url,
-          authorIdentityId: isPurged ? existing.authorIdentityId : value.authorIdentityId,
-          sensitivity: isPurged ? existing.sensitivity : value.sensitivity,
-          sections: isPurged ? existing.sections : value.sections,
+          text: value.text,
+          contentHash: value.contentHash,
+          url: value.url,
+          authorIdentityId: value.authorIdentityId,
+          sensitivity: higherSensitivity(existing.sensitivity, value.sensitivity),
+          sections: value.sections,
           // Preserve optional provenance when replay omits it; use defaults only for creation.
           occurredAt: input.occurredAt ? toDbInstant(input.occurredAt) : existing.occurredAt,
           retentionState: input.retentionState ?? existing.retentionState,

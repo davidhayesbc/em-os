@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { NewSourceItem } from "@emos/api-contract";
+import { ApiError, type NewSourceItem } from "@emos/api-contract";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../open.js";
 import { createSourceItemsRepo } from "./source-items.js";
@@ -37,6 +37,22 @@ const newItem = (overrides: Partial<NewSourceItem> = {}): NewSourceItem => ({
   sections: null,
   ...overrides,
 });
+
+/** Directly materialise a purged tombstone for tests that need one. */
+function makePurgedTombstone(
+  r: ReturnType<typeof repo>,
+  input: NewSourceItem,
+  occurredAt: string,
+): { id: string; occurredAt: string; capturedAt: string } {
+  const created = r.upsert({ ...input, occurredAt }).item;
+  db.prepare(
+    `UPDATE source_items
+     SET text = '', content_hash = '', url = NULL, author_identity_id = NULL, sections = NULL,
+         retention_state = 'purged'
+     WHERE id = ?`,
+  ).run(created.id);
+  return { id: created.id, occurredAt, capturedAt: created.capturedAt };
+}
 
 describe("SourceItemsRepo", () => {
   it("creates and retrieves a source item", () => {
@@ -105,20 +121,86 @@ describe("SourceItemsRepo", () => {
     expect(fractional.occurredAt).toBe("2026-01-01T09:00:00.123Z");
   });
 
-  it("does not resurrect purged tombstone content", () => {
+  it("rejects explicit purged retention on insert", () => {
     const r = repo();
-    const _first = r.upsert(newItem({ externalId: "purged", text: "Original" })).item;
-    const purged = r.upsert(
-      newItem({ externalId: "purged", text: "Still purged", retentionState: "purged" }),
-    ).item;
-    expect(purged.retentionState).toBe("purged");
-    expect(purged.text).toBe("Still purged");
+    expect(() =>
+      r.upsert(newItem({ externalId: "insert-purged", retentionState: "purged" })),
+    ).toThrow(ApiError);
+    expect(r.get("src_1")).toBeNull();
+    expect(
+      db.prepare("SELECT count(*) n FROM source_items WHERE external_id = ?").get("insert-purged"),
+    ).toEqual({ n: 0 });
+  });
 
-    // Ordinary replay without explicit retentionState must keep the tombstone.
-    const replay = r.upsert(newItem({ externalId: "purged", text: "Resurrect attempt" })).item;
+  it("rejects active->purged transition and leaves the row active", () => {
+    const r = repo();
+    const active = r.upsert(newItem({ externalId: "active-to-purged", text: "Original" })).item;
+    expect(() =>
+      r.upsert(newItem({ externalId: "active-to-purged", retentionState: "purged" })),
+    ).toThrow(ApiError);
+
+    const persisted = r.get(active.id);
+    expect(persisted).toEqual(active);
+    expect(persisted?.retentionState).toBe("active");
+    expect(persisted?.text).toBe("Original");
+  });
+
+  it("keeps a purged tombstone terminal and empty on replay", () => {
+    const r = repo();
+    const { id, occurredAt, capturedAt } = makePurgedTombstone(
+      r,
+      newItem({ externalId: "purged" }),
+      "2026-01-01T00:00:00.000Z",
+    );
+
+    const replay = r.upsert(
+      newItem({ externalId: "purged", text: "Resurrect attempt", sensitivity: "private" }),
+    ).item;
+    expect(replay.id).toBe(id);
     expect(replay.retentionState).toBe("purged");
-    expect(replay.text).toBe("Still purged");
+    expect(replay.text).toBe("");
+    expect(replay.contentHash).toBe("");
+    expect(replay.url).toBeNull();
+    expect(replay.authorIdentityId).toBeNull();
+    expect(replay.sections).toBeNull();
+    expect(replay.occurredAt).toBe(occurredAt);
+    expect(replay.capturedAt).toBe(capturedAt);
     expect(replay.updatedAt).toBe(now);
+    expect(replay.sensitivity).toBe("normal");
+    expect(r.get(id)).toEqual(replay);
+  });
+
+  it("clears legacy content from a purged row on first replay", () => {
+    const r = repo();
+    const active = r.upsert(newItem({ externalId: "legacy-purged", text: "Original" })).item;
+    // Simulate a legacy purged row that still carries content.
+    db.prepare("UPDATE source_items SET retention_state = 'purged' WHERE id = ?").run(active.id);
+
+    const replay = r.upsert(
+      newItem({ externalId: "legacy-purged", text: "New content", sensitivity: "private" }),
+    ).item;
+    expect(replay.id).toBe(active.id);
+    expect(replay.retentionState).toBe("purged");
+    expect(replay.text).toBe("");
+    expect(replay.contentHash).toBe("");
+    expect(replay.sections).toBeNull();
+    expect(replay.url).toBeNull();
+    expect(replay.authorIdentityId).toBeNull();
+    expect(r.get(active.id)).toEqual(replay);
+  });
+
+  it("purged->active/archived/excluded attempts do not leave purged", () => {
+    const r = repo();
+    const { id } = makePurgedTombstone(r, newItem({ externalId: "terminal" }), now);
+
+    for (const retentionState of ["active", "archived", "excluded"] as const) {
+      const attempt = r.upsert(
+        newItem({ externalId: "terminal", text: `Try ${retentionState}`, retentionState }),
+      ).item;
+      expect(attempt.id).toBe(id);
+      expect(attempt.retentionState).toBe("purged");
+      expect(attempt.text).toBe("");
+    }
   });
 
   it("advancing clock regression: historical, archived, excluded and purged rows keep provenance", () => {
@@ -146,15 +228,44 @@ describe("SourceItemsRepo", () => {
     expect(excludedReplay.occurredAt).toBe("2026-01-01T00:00:00.000Z");
     expect(excludedReplay.retentionState).toBe("excluded");
 
-    const purged = r.upsert(
-      newItem({ externalId: "purged-clock", text: "Tombstone", retentionState: "purged" }),
-    ).item;
+    const { id, occurredAt } = makePurgedTombstone(
+      r,
+      newItem({ externalId: "purged-clock" }),
+      "2025-12-01T00:00:00.000Z",
+    );
     const purgedReplay = r.upsert(
       newItem({ externalId: "purged-clock", text: "New content" }),
     ).item;
-    expect(purgedReplay.occurredAt).toBe(purged.occurredAt);
+    expect(purgedReplay.occurredAt).toBe(occurredAt);
     expect(purgedReplay.retentionState).toBe("purged");
-    expect(purgedReplay.text).toBe("Tombstone");
+    expect(purgedReplay.text).toBe("");
+    expect(purgedReplay.updatedAt).toBe(now);
+    expect(r.get(id)).toEqual(purgedReplay);
+  });
+
+  it("never lowers sensitivity on replay", () => {
+    const r = repo();
+    const first = r.upsert(
+      newItem({ externalId: "sens", text: "Original", sensitivity: "private" }),
+    ).item;
+    const replay = r.upsert(
+      newItem({ externalId: "sens", text: "Updated", sensitivity: "normal" }),
+    ).item;
+    expect(replay.id).toBe(first.id);
+    expect(replay.sensitivity).toBe("private");
+    expect(replay.text).toBe("Updated");
+  });
+
+  it("permits sensitivity upgrades on replay", () => {
+    const r = repo();
+    const first = r.upsert(
+      newItem({ externalId: "sens-up", text: "Original", sensitivity: "normal" }),
+    ).item;
+    const replay = r.upsert(
+      newItem({ externalId: "sens-up", text: "Updated", sensitivity: "private" }),
+    ).item;
+    expect(replay.sensitivity).toBe("private");
+    expect(r.get(first.id)?.sensitivity).toBe("private");
   });
 
   it("returns null for an unknown id", () => {
