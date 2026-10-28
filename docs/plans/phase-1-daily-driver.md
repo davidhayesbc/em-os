@@ -162,7 +162,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Commitment-first validation (new intermediate milestones)**
 
-- [ ] **P1-44** Minimal commitment loop UI + dogfood checklist — deps: P1-01, P1-02, P1-03, P1-05 — claim: coder · p1-44-manual-loop
+- [x] **P1-44** Minimal commitment loop UI + dogfood checklist — deps: P1-01, P1-02, P1-03, P1-05 — claim: done · a15f151
 - [x] **P1-45** Follow-up semantics tests and model review — deps: P1-02 — claim: done · e8a9fbe
 - [ ] **P1-46** *spike* Pasted-text commitment extraction evaluation — deps: P1-02, P1-04 — claim: —
 
