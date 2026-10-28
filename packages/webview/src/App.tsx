@@ -1,4 +1,5 @@
 import { command, useConnection } from "./bridge.js";
+import { CommitmentsSection } from "./commitments-alpha/CommitmentsSection.js";
 import { WidgetGrid } from "./grid/WidgetGrid.js";
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
   return (
     <main class="shell">
       <h1 class="visually-hidden">EM OS dashboard</h1>
+      <CommitmentsSection />
       <WidgetGrid />
     </main>
   );

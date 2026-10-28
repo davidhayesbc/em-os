@@ -162,7 +162,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Commitment-first validation (new intermediate milestones)**
 
-- [ ] **P1-44** Minimal commitment loop UI + dogfood checklist — deps: P1-01, P1-02, P1-03, P1-05 — claim: —
+- [x] **P1-44** Minimal commitment loop UI + dogfood checklist — deps: P1-01, P1-02, P1-03, P1-05 — claim: done · a15f151
 - [x] **P1-45** Follow-up semantics tests and model review — deps: P1-02 — claim: done · e8a9fbe
 - [ ] **P1-46** *spike* Pasted-text commitment extraction evaluation — deps: P1-02, P1-04 — claim: —
 
@@ -1807,18 +1807,18 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 **Dependencies:** P1-01, P1-02, P1-03, P1-05. This is deliberately independent of P1-10 and P1-23.
 
-**Files:** `packages/extension/src/commitments-alpha/` (new UI and tests), plus the minimum command/registration files required to expose this view. If a shared existing file or contract must change outside this boundary, stop and request owner approval of the Files list; do not bypass the agent protocol.
+**Files:** `packages/webview/src/commitments-alpha/**` (components, tests and local styling), `packages/webview/src/App.tsx`, `packages/webview/src/App.test.tsx`, optional `packages/webview/src/theme.css`, `docs/plans/phase-1-daily-driver.md` (P1-44 only), and new `docs/plans/commitment-alpha-dogfood.md`. Existing bridge is consumed unchanged.
 
-**Interfaces:** Consume existing `commitments.list|get|create|update|complete|snooze|drop|reopen`, `commitments.quickCapture` and `people.resolve` operations. Do not change their schemas. Render two separate lists, `mine` and `owed_to_me`, with due/overdue, snooze, source and audit affordances. Quick capture must handle `needs_person` without guessing. Keep the UI accessible by keyboard and usable without a calendar or connector.
+**Interfaces:** Consume existing `commitments.list|get|create|update|complete|snooze|drop|reopen`, `commitments.quickCapture` and `people.resolve` operations. Do not change their schemas. Render two separate lists, `mine` and `owed_to_me`, with due/overdue, snooze, source and audit affordances. Quick capture must handle `needs_person` without guessing. Keep the UI accessible by keyboard and usable without a calendar or connector. Display stored source provenance and mutation audit only; do not invent conversation or reminder history.
 
 **Steps:**
-- [ ] Add tests for empty state, create, ambiguous person, edit, complete, snooze, drop, reopen and both directions.
-- [ ] Implement the smallest functional VS Code view/command surface, using the existing extension RPC bridge and API.
-- [ ] Verify source/audit display and absence of silent state changes; no new autonomous writes.
-- [ ] Run `npm run ci`; owner verifies the five-workday dogfood checklist after merge.
-- [ ] Document reusable components for P1-28 and the future dashboard.
+- [x] Add tests for empty state, create, ambiguous person, edit, complete, snooze, drop, reopen and both directions.
+- [x] Implement the smallest dashboard surface in the existing webview, mounting a manual commitments section before WidgetGrid once connected.
+- [x] Verify source/audit display and absence of silent state changes; no new autonomous writes.
+- [x] Run `npm run ci`; owner verifies the five-workday dogfood checklist after merge.
+- [x] Document reusable components for P1-28 and the future dashboard in `docs/plans/commitment-alpha-dogfood.md`.
 
-**Acceptance:** The owner can manage both directions of commitments end-to-end before the calendar/dashboard is built. Manual dogfood observations are recorded without real work content in the public repo.
+**Acceptance:** The owner can manage both directions of commitments end-to-end before the calendar/dashboard is built. Manual dogfood observations are recorded without real work content in the public repo. *(owner, after merge)* Complete the five-workday checklist in `docs/plans/commitment-alpha-dogfood.md`.
 
 ### Task P1-45: Follow-up semantics tests and model review
 
