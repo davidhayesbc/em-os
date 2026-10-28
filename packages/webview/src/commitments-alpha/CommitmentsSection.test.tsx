@@ -1,4 +1,5 @@
 import type { ToHost } from "@emos/api-contract/bridge";
+import { parseQuickCapture } from "@emos/core";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App.js";
@@ -347,7 +348,7 @@ describe("Quick capture", () => {
     );
 
     const input = screen.getByLabelText("New commitment");
-    fireEvent.input(input, { target: { value: "Meet with Alex" } });
+    fireEvent.input(input, { target: { value: "Meet with @Alex" } });
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     await waitFor(() =>
@@ -412,7 +413,7 @@ describe("Quick capture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
     await waitFor(() => {
       const req = lastQuickCapture();
-      expect(req?.input).toMatchObject({ text: "Meet with Alex", counterpartId: "per_alex" });
+      expect(req?.input).toMatchObject({ text: "Meet with @Alex", counterpartId: "per_alex" });
     });
   });
 
@@ -426,7 +427,7 @@ describe("Quick capture", () => {
     );
 
     const input = screen.getByLabelText("New commitment") as HTMLInputElement;
-    fireEvent.input(input, { target: { value: "Ask Alex" } });
+    fireEvent.input(input, { target: { value: "Ask @Alex" } });
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
 
     await waitFor(() =>
@@ -467,7 +468,7 @@ describe("Quick capture", () => {
     await waitFor(() => expect(screen.getByText("Alex Rivera")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("Alex Rivera")).toBeNull();
-    expect(input.value).toBe("Ask Alex");
+    expect(input.value).toBe("Ask @Alex");
   });
 
   it("prevents duplicate capture clicks", async () => {
@@ -656,5 +657,452 @@ describe("No writes on read/render", () => {
         (m) => m.kind === "rpc" && /\.(create|update|complete|snooze|drop|reopen)$/.test(m.op),
       ),
     ).toBe(false);
+  });
+});
+
+describe("Quick capture grammar", () => {
+  it("advertised owed-to-me example parses with the real grammar", () => {
+    const parsed = parseQuickCapture(
+      "wait @Jordan the hiring plan !mon",
+      new Date("2026-10-28T12:00:00Z"),
+      "UTC",
+    );
+    expect(parsed).toMatchObject({
+      direction: "owed_to_me",
+      personQuery: "Jordan",
+      due: { date: "2026-11-02" },
+    });
+  });
+
+  it("advertised mine example parses with the real grammar", () => {
+    const parsed = parseQuickCapture(
+      "Send quarterly review @Sam !fri",
+      new Date("2026-10-28T12:00:00Z"),
+      "UTC",
+    );
+    expect(parsed).toMatchObject({
+      direction: "mine",
+      personQuery: "Sam",
+      due: { date: "2026-10-30" },
+    });
+  });
+});
+
+describe("Quick capture selection invalidation", () => {
+  it("editing text after selecting a candidate clears the selection and candidate list", async () => {
+    render(<App />);
+    connect();
+    resolveList("mine", []);
+    resolveList("owed_to_me", []);
+    await waitFor(() =>
+      expect(screen.getAllByText("Nothing here yet.").length).toBeGreaterThanOrEqual(2),
+    );
+
+    const input = screen.getByLabelText("New commitment") as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "Meet with @Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() =>
+      expect(host.posted.some((m) => m.kind === "rpc" && m.op === "commitments.quickCapture")).toBe(
+        true,
+      ),
+    );
+    resolveQuickCapture({
+      status: "needs_person",
+      parsed: {
+        title: "Meet with Alex",
+        direction: "mine",
+        personQuery: "alex",
+        due: null,
+        priority: null,
+        urgency: null,
+        tags: [],
+        recurrence: null,
+      },
+      candidates: [
+        {
+          id: "per_alex",
+          displayName: "Alex Rivera",
+          archived: false,
+          relationship: "peer",
+          role: null,
+          pronouns: null,
+          timeZone: null,
+          cadenceDays: null,
+          occurredAt: nowIso,
+          capturedAt: nowIso,
+          updatedAt: nowIso,
+          retentionState: "active",
+        },
+      ],
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("Alex Rivera")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Alex Rivera"));
+
+    // Editing the text invalidates the previous candidate selection.
+    fireEvent.input(input, { target: { value: "Send report @Sam" } });
+    expect(screen.queryByText("Alex Rivera")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => {
+      const req = lastQuickCapture();
+      expect(req?.input).toEqual({ text: "Send report @Sam", counterpartId: undefined });
+    });
+  });
+
+  it("cancelling and resubmitting unchanged text re-triggers ambiguity resolution", async () => {
+    render(<App />);
+    connect();
+    resolveList("mine", []);
+    resolveList("owed_to_me", []);
+    await waitFor(() =>
+      expect(screen.getAllByText("Nothing here yet.").length).toBeGreaterThanOrEqual(2),
+    );
+
+    const input = screen.getByLabelText("New commitment") as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "Ask @Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() =>
+      expect(host.posted.some((m) => m.kind === "rpc" && m.op === "commitments.quickCapture")).toBe(
+        true,
+      ),
+    );
+    resolveQuickCapture({
+      status: "needs_person",
+      parsed: {
+        title: "Ask Alex",
+        direction: "mine",
+        personQuery: "alex",
+        due: null,
+        priority: null,
+        urgency: null,
+        tags: [],
+        recurrence: null,
+      },
+      candidates: [
+        {
+          id: "per_alex",
+          displayName: "Alex Rivera",
+          archived: false,
+          relationship: "peer",
+          role: null,
+          pronouns: null,
+          timeZone: null,
+          cadenceDays: null,
+          occurredAt: nowIso,
+          capturedAt: nowIso,
+          updatedAt: nowIso,
+          retentionState: "active",
+        },
+      ],
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("Alex Rivera")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("Alex Rivera")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => {
+      const req = lastQuickCapture();
+      expect(req?.input).toEqual({ text: "Ask @Alex", counterpartId: undefined });
+    });
+  });
+});
+
+describe("Detail lifecycle guards", () => {
+  it("ignores a late detail response for a previously selected item", async () => {
+    render(<App />);
+    connect();
+    resolveList("mine", [
+      makeCommitment({ id: "c_a", title: "Item A" }),
+      makeCommitment({ id: "c_b", title: "Item B" }),
+    ]);
+    resolveList("owed_to_me", []);
+    await waitFor(() => expect(screen.getByText("Item A")).toBeTruthy());
+
+    // Select A but do not resolve its detail request.
+    fireEvent.click(screen.getByRole("button", { name: /Item A/ }));
+    await waitFor(() =>
+      expect(host.posted.filter((m) => isRpc(m, "commitments.get")).length).toBe(1),
+    );
+    const aGet = host.posted.findLast((m) => isRpc(m, "commitments.get"));
+    if (!aGet) throw new Error("missing commitments.get request for item A");
+
+    // Switch to B and resolve its detail.
+    fireEvent.click(screen.getByRole("button", { name: /Item B/ }));
+    await waitFor(() =>
+      expect(host.posted.filter((m) => isRpc(m, "commitments.get")).length).toBe(2),
+    );
+    resolveGet({
+      commitment: makeCommitment({ id: "c_b", title: "Item B" }),
+      sources: [],
+      audit: [],
+    });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Item B" })).toBeTruthy());
+
+    // A's late response must not overwrite B.
+    act(() =>
+      host.dispatch({
+        kind: "rpc-result",
+        reqId: aGet.reqId,
+        ok: true,
+        result: {
+          commitment: makeCommitment({ id: "c_a", title: "Item A" }),
+          sources: [],
+          audit: [],
+        },
+      }),
+    );
+    expect(screen.getByRole("heading", { name: "Item B" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Item A" })).toBeNull();
+  });
+
+  it("does not carry draft inputs across selected items", async () => {
+    render(<App />);
+    connect();
+    resolveList("mine", [
+      makeCommitment({ id: "c_a", title: "Item A" }),
+      makeCommitment({ id: "c_b", title: "Item B" }),
+    ]);
+    resolveList("owed_to_me", []);
+    await waitFor(() => expect(screen.getByText("Item A")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Item A/ }));
+    await waitFor(() =>
+      expect(host.posted.some((m) => m.kind === "rpc" && m.op === "commitments.get")).toBe(true),
+    );
+    resolveGet({
+      commitment: makeCommitment({ id: "c_a", title: "Item A" }),
+      sources: [],
+      audit: [],
+    });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Item A" })).toBeTruthy());
+
+    fireEvent.input(screen.getByLabelText("Edit due date"), { target: { value: "2026-12-01" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Item B/ }));
+    await waitFor(() =>
+      expect(host.posted.filter((m) => m.kind === "rpc" && m.op === "commitments.get").length).toBe(
+        2,
+      ),
+    );
+    resolveGet({
+      commitment: makeCommitment({ id: "c_b", title: "Item B" }),
+      sources: [],
+      audit: [],
+    });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Item B" })).toBeTruthy());
+    expect((screen.getByLabelText("Edit due date") as HTMLInputElement).value).toBe("");
+  });
+
+  it("action payloads stay tied to the currently selected item", async () => {
+    render(<App />);
+    connect();
+    resolveList("mine", [
+      makeCommitment({ id: "c_a", title: "Item A" }),
+      makeCommitment({ id: "c_b", title: "Item B" }),
+    ]);
+    resolveList("owed_to_me", []);
+    await waitFor(() => expect(screen.getByText("Item A")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Item A/ }));
+    await waitFor(() =>
+      expect(host.posted.some((m) => m.kind === "rpc" && m.op === "commitments.get")).toBe(true),
+    );
+    resolveGet({
+      commitment: makeCommitment({ id: "c_a", title: "Item A" }),
+      sources: [],
+      audit: [],
+    });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Item A" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    await waitFor(() => {
+      expect(lastComplete()?.input).toEqual({ id: "c_a" });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Item B/ }));
+    await waitFor(() =>
+      expect(host.posted.filter((m) => m.kind === "rpc" && m.op === "commitments.get").length).toBe(
+        2,
+      ),
+    );
+    resolveGet({
+      commitment: makeCommitment({ id: "c_b", title: "Item B" }),
+      sources: [],
+      audit: [],
+    });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Item B" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    await waitFor(() => {
+      expect(lastComplete()?.input).toEqual({ id: "c_b" });
+    });
+  });
+});
+
+describe("List overdue gating", () => {
+  it("does not flag completed or dropped commitments as overdue", async () => {
+    vi.setSystemTime(new Date("2026-10-29T12:00:00Z"));
+    render(<App />);
+    connect();
+    resolveList("mine", [
+      makeCommitment({
+        id: "c_done",
+        title: "Done item",
+        status: "done",
+        completedAt: nowIso,
+        due: { date: "2026-10-28", time: null, timeZone: "UTC" },
+      }),
+      makeCommitment({
+        id: "c_dropped",
+        title: "Dropped item",
+        status: "dropped",
+        dropReason: "user",
+        due: { date: "2026-10-28", time: null, timeZone: "UTC" },
+      }),
+    ]);
+    resolveList("owed_to_me", []);
+    await waitFor(() => expect(screen.getByText("Done item")).toBeTruthy());
+    expect(screen.queryByText("Overdue")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Done item/ }).getAttribute("aria-label"),
+    ).not.toContain("overdue");
+    expect(
+      screen.getByRole("button", { name: /Dropped item/ }).getAttribute("aria-label"),
+    ).not.toContain("overdue");
+  });
+});
+
+describe("Detail transition gating", () => {
+  it("proposed commitments only expose actions allowed by the service", async () => {
+    render(<App />);
+    connect();
+    const proposed = makeCommitment({
+      id: "c_prop",
+      title: "Proposed item",
+      status: "proposed",
+    });
+    resolveList("mine", [proposed]);
+    resolveList("owed_to_me", []);
+    await waitFor(() => expect(screen.getByText("Proposed item")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Proposed item/ }));
+    await waitFor(() =>
+      expect(host.posted.some((m) => m.kind === "rpc" && m.op === "commitments.get")).toBe(true),
+    );
+    resolveGet({ commitment: proposed, sources: [], audit: [] });
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Proposed item" })).toBeTruthy(),
+    );
+
+    expect(screen.queryByRole("button", { name: "Complete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Snooze" })).toBeNull();
+    expect(screen.queryByLabelText("Edit due date")).toBeNull();
+    expect(screen.getByRole("button", { name: "Drop" })).toBeTruthy();
+  });
+
+  it("snoozed commitments hide repeated snooze but keep complete/drop/edit", async () => {
+    render(<App />);
+    connect();
+    const snoozed = makeCommitment({
+      id: "c_snooze",
+      title: "Snoozed item",
+      status: "snoozed",
+      snoozedUntil: "2026-11-01T23:59:59.000Z",
+    });
+    resolveList("mine", [snoozed]);
+    resolveList("owed_to_me", []);
+    await waitFor(() => expect(screen.getByText("Snoozed item")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Snoozed item/ }));
+    await waitFor(() =>
+      expect(host.posted.some((m) => m.kind === "rpc" && m.op === "commitments.get")).toBe(true),
+    );
+    resolveGet({ commitment: snoozed, sources: [], audit: [] });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Snoozed item" })).toBeTruthy());
+
+    expect(screen.queryByRole("button", { name: "Snooze" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Complete" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Drop" })).toBeTruthy();
+    expect(screen.getByLabelText("Edit due date")).toBeTruthy();
+  });
+});
+
+describe("List refresh ordering", () => {
+  it("ignores stale list responses after a newer refresh is issued", async () => {
+    render(<App />);
+    connect();
+    resolveList("mine", []);
+    resolveList("owed_to_me", []);
+    await waitFor(() =>
+      expect(screen.getAllByText("Nothing here yet.").length).toBeGreaterThanOrEqual(2),
+    );
+
+    // Two overlapping refreshes: resolve the older pair first, then the newer.
+    act(() =>
+      host.dispatch({
+        kind: "event",
+        event: { type: "items.changed", entity: "commitment", ids: ["c1"] },
+      }),
+    );
+    act(() =>
+      host.dispatch({
+        kind: "event",
+        event: { type: "items.changed", entity: "commitment", ids: ["c2"] },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        host.posted.filter((m) => m.kind === "rpc" && m.op === "commitments.list").length,
+      ).toBe(6),
+    );
+
+    const mineListReqs = host.posted.filter((m) => isRpc(m, "commitments.list", "mine"));
+    const oldReq = mineListReqs[0];
+    const midReq = mineListReqs[1];
+    const newReq = mineListReqs[2];
+    if (!oldReq || !midReq || !newReq) throw new Error("expected three mine list requests");
+
+    act(() =>
+      host.dispatch({
+        kind: "rpc-result",
+        reqId: oldReq.reqId,
+        ok: true,
+        result: [makeCommitment({ id: "c_old", title: "Old mine" })],
+      }),
+    );
+    act(() =>
+      host.dispatch({
+        kind: "rpc-result",
+        reqId: midReq.reqId,
+        ok: true,
+        result: [makeCommitment({ id: "c_mid", title: "Mid mine" })],
+      }),
+    );
+    act(() =>
+      host.dispatch({
+        kind: "rpc-result",
+        reqId: newReq.reqId,
+        ok: true,
+        result: [makeCommitment({ id: "c_new", title: "New mine" })],
+      }),
+    );
+    // Resolve owed_to_me so the ready state is reached.
+    for (const m of host.posted.filter((m) => isRpc(m, "commitments.list", "owed_to_me"))) {
+      act(() =>
+        host.dispatch({
+          kind: "rpc-result",
+          reqId: m.reqId,
+          ok: true,
+          result: [],
+        }),
+      );
+    }
+
+    await waitFor(() => expect(screen.getByText("New mine")).toBeTruthy());
+    expect(screen.queryByText("Old mine")).toBeNull();
+    expect(screen.queryByText("Mid mine")).toBeNull();
   });
 });

@@ -56,6 +56,7 @@ export function CommitmentsSection() {
 
       {selectedId && (
         <CommitmentDetail
+          key={selectedId}
           commitmentId={selectedId}
           onMutated={onMutated}
           onClose={() => setSelectedId(null)}

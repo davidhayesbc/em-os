@@ -375,6 +375,20 @@ a:focus-visible {
   color: var(--vscode-descriptionForeground);
 }
 
+.commitments-syntax {
+  margin: 8px 0 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.commitments-syntax code {
+  padding: 1px 3px;
+  color: var(--vscode-textPreformat-foreground, var(--vscode-foreground));
+  background: var(--vscode-textPreformat-background, var(--vscode-editor-background));
+  border-radius: 2px;
+  font-size: 0.95em;
+}
+
 .commitments-candidates {
   margin-top: 8px;
 }

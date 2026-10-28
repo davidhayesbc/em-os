@@ -1,5 +1,5 @@
 import type { Commitment, Direction } from "@emos/api-contract";
-import { DIRECTION_LABEL, formatDue, isOverdue, STATUS_LABEL } from "./utils.js";
+import { DIRECTION_LABEL, formatDue, isCurrentlyOverdue, STATUS_LABEL } from "./utils.js";
 
 export interface CommitmentListProps {
   direction: Direction;
@@ -53,7 +53,7 @@ export function CommitmentList({
       {items !== undefined && items.length > 0 && (
         <ul class="commitments-items">
           {items.map((c) => {
-            const overdue = isOverdue(c.due);
+            const overdue = isCurrentlyOverdue(c.status, c.due);
             return (
               <li key={c.id} class="commitments-item">
                 <button

@@ -1,5 +1,5 @@
 import type { AuditEvent, Commitment, SourceItem } from "@emos/api-contract";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { onEvent, rpc } from "../bridge.js";
 
 type CommitmentsLoad =
@@ -9,8 +9,10 @@ type CommitmentsLoad =
 
 export function useCommitments(): [CommitmentsLoad, () => void] {
   const [load, setLoad] = useState<CommitmentsLoad>({ status: "loading" });
+  const generationRef = useRef(0);
 
   const refresh = useCallback(() => {
+    const generation = ++generationRef.current;
     setLoad({ status: "loading" });
     Promise.all([
       rpc("commitments.list", {
@@ -22,12 +24,19 @@ export function useCommitments(): [CommitmentsLoad, () => void] {
         status: ["proposed", "active", "snoozed", "done", "dropped"],
       }),
     ]).then(
-      ([mine, owedToMe]) => setLoad({ status: "ready", mine, owedToMe }),
-      (e: unknown) =>
-        setLoad({
-          status: "error",
-          message: e instanceof Error ? e.message : "Could not load commitments",
-        }),
+      ([mine, owedToMe]) => {
+        if (generation === generationRef.current) {
+          setLoad({ status: "ready", mine, owedToMe });
+        }
+      },
+      (e: unknown) => {
+        if (generation === generationRef.current) {
+          setLoad({
+            status: "error",
+            message: e instanceof Error ? e.message : "Could not load commitments",
+          });
+        }
+      },
     );
   }, []);
 
@@ -36,7 +45,10 @@ export function useCommitments(): [CommitmentsLoad, () => void] {
     const off = onEvent((e) => {
       if (e.type === "items.changed" && e.entity === "commitment") refresh();
     });
-    return off;
+    return () => {
+      off();
+      ++generationRef.current;
+    };
   }, [refresh]);
 
   return [load, refresh];
@@ -49,17 +61,26 @@ type DetailLoad =
 
 export function useCommitment(id: string | null): [DetailLoad, () => void] {
   const [load, setLoad] = useState<DetailLoad>({ status: "loading" });
+  const generationRef = useRef(0);
 
   const refresh = useCallback(() => {
     if (!id) return;
+    const generation = ++generationRef.current;
     setLoad({ status: "loading" });
     rpc("commitments.get", { id }).then(
-      ({ commitment, sources, audit }) => setLoad({ status: "ready", commitment, sources, audit }),
-      (e: unknown) =>
-        setLoad({
-          status: "error",
-          message: e instanceof Error ? e.message : "Could not load commitment",
-        }),
+      ({ commitment, sources, audit }) => {
+        if (generation === generationRef.current) {
+          setLoad({ status: "ready", commitment, sources, audit });
+        }
+      },
+      (e: unknown) => {
+        if (generation === generationRef.current) {
+          setLoad({
+            status: "error",
+            message: e instanceof Error ? e.message : "Could not load commitment",
+          });
+        }
+      },
     );
   }, [id]);
 
@@ -69,7 +90,10 @@ export function useCommitment(id: string | null): [DetailLoad, () => void] {
       if (e.type === "items.changed" && e.entity === "commitment" && e.ids.includes(id ?? ""))
         refresh();
     });
-    return off;
+    return () => {
+      off();
+      ++generationRef.current;
+    };
   }, [id, refresh]);
 
   return [load, refresh];

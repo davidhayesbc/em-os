@@ -1,5 +1,5 @@
 import type { CommitmentStatus } from "@emos/api-contract";
-import { useCallback, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { rpc } from "../bridge.js";
 import { useCommitment } from "./useCommitments.js";
 import {
@@ -17,10 +17,14 @@ export interface CommitmentDetailProps {
   onClose: () => void;
 }
 
+// UI-visible transition names. These must be a subset of the transitions the
+// core service allows for each status (see core/src/commitments/transitions.ts).
+// "editDue" maps to the commitments.update RPC and is treated as an "edit"
+// action by the service.
 const ALLOWED_TRANSITIONS: Record<CommitmentStatus, readonly string[]> = {
-  proposed: ["complete", "snooze", "drop"],
+  proposed: ["drop"],
   active: ["complete", "snooze", "drop", "editDue"],
-  snoozed: ["complete", "snooze", "drop", "editDue"],
+  snoozed: ["complete", "drop", "editDue"],
   done: ["reopen"],
   dropped: ["reopen"],
 };
@@ -33,22 +37,48 @@ export function CommitmentDetail({ commitmentId, onMutated, onClose }: Commitmen
   const [snoozeDate, setSnoozeDate] = useState("");
   const [dropReason, setDropReason] = useState<"user" | "stale">("user");
   const pendingRef = useRef<string | null>(null);
+  const currentIdRef = useRef(commitmentId);
+  const mountedRef = useRef(true);
+
+  // Reset all local action/draft state whenever the identity changes.
+  useEffect(() => {
+    currentIdRef.current = commitmentId;
+    mountedRef.current = true;
+    setPending(null);
+    pendingRef.current = null;
+    setActionError(null);
+    setDueDate("");
+    setSnoozeDate("");
+    setDropReason("user");
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [commitmentId]);
 
   const run = useCallback(
     async (label: string, makePromise: () => Promise<unknown>) => {
       if (pendingRef.current) return;
+      const idAtStart = currentIdRef.current;
       pendingRef.current = label;
       setPending(label);
       setActionError(null);
       try {
         await makePromise();
+        // Always tell the parent the list may have changed.
         onMutated();
-        refresh();
+        // Only refresh the detail if it still belongs to the same identity.
+        if (currentIdRef.current === idAtStart) {
+          refresh();
+        }
       } catch (e) {
-        setActionError(e instanceof Error ? e.message : "Request failed");
+        if (mountedRef.current && currentIdRef.current === idAtStart) {
+          setActionError(e instanceof Error ? e.message : "Request failed");
+        }
       } finally {
-        pendingRef.current = null;
-        setPending(null);
+        if (mountedRef.current && currentIdRef.current === idAtStart) {
+          pendingRef.current = null;
+          setPending(null);
+        }
       }
     },
     [onMutated, refresh],

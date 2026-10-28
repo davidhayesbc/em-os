@@ -49,6 +49,14 @@ export function QuickCapture({ onCreated }: QuickCaptureProps) {
     // No write happens here; the user must still press Submit.
   }, []);
 
+  const onTextInput = useCallback((value: string) => {
+    setText(value);
+    // The candidate list and any explicit selection belong to the previous text;
+    // invalidate them so the next submission is resolved against the current text.
+    setResult(null);
+    setSelectedPersonId(null);
+  }, []);
+
   return (
     <section class="commitments-quick-capture" aria-labelledby="quick-capture-title">
       <h2 id="quick-capture-title" class="commitments-heading">
@@ -64,16 +72,21 @@ export function QuickCapture({ onCreated }: QuickCaptureProps) {
           <input
             type="text"
             aria-label="New commitment"
-            placeholder="I owe Sam the review by Friday"
+            placeholder="Send report @Sam !fri"
             value={text}
             disabled={pending}
-            onInput={(e) => setText(e.currentTarget.value)}
+            onInput={(e) => onTextInput(e.currentTarget.value)}
           />
           <button type="submit" disabled={pending || !text.trim()} aria-busy={pending}>
             Capture
           </button>
         </div>
       </form>
+
+      <p class="commitments-syntax">
+        Use <code>@person</code> and <code>!date</code> (<code>!mon</code>, <code>!+3d</code>,{" "}
+        <code>!2026-11-04</code>). Start with <code>wait</code> for commitments owed to you.
+      </p>
 
       {result?.status === "invalid" && (
         <p role="alert" class="commitments-error">

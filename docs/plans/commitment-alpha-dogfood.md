@@ -13,10 +13,10 @@ Use the dashboard in a fresh dev data dir. Create the same synthetic people each
 
 Create initial commitments from the dashboard:
 
-- `I owe Sam the quarterly review by Friday` — due date set.
-- `Jordan owes me the hiring plan by Monday` — `owed_to_me`.
-- `I owe Alex the feedback` — leave ambiguous, select `Alex Rivera` explicitly.
-- `I owe the team the roadmap update` — no due date (test no-date support).
+- `Send quarterly review @Sam !fri` — `mine`, due date set.
+- `wait @Jordan the hiring plan !mon` — `owed_to_me`.
+- `Ask @Alex for feedback` — leave ambiguous, select `Alex Rivera` explicitly.
+- `Plan the roadmap update` — no due date (test no-date support).
 
 ## Five-workday checklist *(owner, after merge)*
 
