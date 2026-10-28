@@ -2,9 +2,15 @@
 
 ## Summary
 
-A root `package.json` `overrides` entry pins transitive `@azure/msal-node` to `^7.1.2`,
-resolving the development-only advisory GHSA-xcx6-jx8p-x3h5 / CVE-2026-109461 without
-waiting for `@vscode/vsce` or `@azure/identity` to publish a compatible patched chain.
+A root `package.json` `overrides` entry forces transitive `@azure/msal-node` to
+`^7.1.2`, resolving the development-only advisory GHSA-xcx6-jx8p-x3h5 /
+CVE-2026-109461 without waiting for `@vscode/vsce` or `@azure/identity` to
+publish a compatible patched chain.
+
+The caret constraint allows npm to resolve any stable `7.x.x` release that is
+`>= 7.1.2`, while `package-lock.json` currently pins the exact tested version
+`7.1.2`. The official patched range for the advisory starts at `7.1.0`; `7.1.2` is
+the selected, tested patched version.
 
 ## Affected chain (development only)
 
@@ -33,8 +39,10 @@ Both ratings are preserved in project records.
 ## Why an override is justified
 
 1. **No compatible upstream chain exists yet.**
-   - `@azure/identity@4.14.0` (latest stable) still requires `@azure/msal-node ^6.0.0`.
-   - `@vscode/vsce@4.1.0` (latest stable) still requires `@azure/identity ^4.13.2`.
+   - `@azure/identity@4.14.0` (latest stable known at override date) still
+     requires `@azure/msal-node ^6.0.0`.
+   - `@vscode/vsce@4.1.0` (latest stable known at override date) still requires
+     `@azure/identity ^4.13.2`.
    - `npm audit fix --dry-run --ignore-scripts` leaves the advisory unchanged.
 
 2. **The extension does not exercise the vulnerable code path.**
@@ -44,7 +52,9 @@ Both ratings are preserved in project records.
    - The advisory specifically affects `acquireTokenByCode` / authorization-code flow.
 
 3. **The override is narrowly scoped.**
-   - Only `@azure/msal-node` is overridden to `^7.1.2` (the patched range start).
+   - Only `@azure/msal-node` is overridden to `^7.1.2`.
+   - `7.1.2` is the selected, tested patched version; the advisory's first
+     patched release is `7.1.0`.
    - No application or production dependency constraints are changed.
 
 4. **The override is tested.**
@@ -86,3 +96,7 @@ npm audit --omit=dev         # production audit: zero vulnerabilities
   chain. At that point the override can be removed and a normal `npm update` used.
 - If the project ever starts using `vsce publish` or any Azure authorization-code flow,
   the override must be re-verified against that usage with explicit security review.
+- The `@azure/msal-node` override and its upstream chain are reviewed by the
+  dependency-review owner as part of every `package.json`/`package-lock.json`
+  change, and re-checked at least monthly during active development (or whenever
+  `npm audit` reports a new advisory).
