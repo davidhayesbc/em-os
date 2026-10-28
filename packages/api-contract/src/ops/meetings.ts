@@ -6,7 +6,9 @@ const MeetingPatch = Meeting.pick({
   classification: true,
   personId: true,
   actionItems: true,
-}).partial();
+})
+  .partial()
+  .strict();
 
 export const meetingsList = defineOp({
   name: "meetings.list",

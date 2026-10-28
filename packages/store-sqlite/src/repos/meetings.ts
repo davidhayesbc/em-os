@@ -106,95 +106,107 @@ export function createMeetingsRepo(db: Db, deps: Partial<Deps> = {}): MeetingsRe
   return {
     upsertExternal(input: ExternalMeeting) {
       const at = toDbInstant(d.now());
-      const occurredAt = input.occurredAt ?? input.start;
+      const start = toDbInstant(input.start);
+      const end = toDbInstant(input.end);
+      const occurredAt = input.occurredAt
+        ? toDbInstant(input.occurredAt)
+        : toDbInstant(input.start);
       const initial: Meeting = {
         ...input,
         id: d.id("mtg"),
+        start,
+        end,
         occurredAt,
         capturedAt: at,
         updatedAt: at,
         retentionState: input.retentionState ?? "active",
       };
-      try {
-        db.prepare(`INSERT INTO meetings
-          (id, connector_id, external_id, title, start_at, end_at, all_day, status, self_response,
-           classification, classification_source, person_id, action_items, url, occurred_at, captured_at, updated_at, retention_state)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-          initial.id,
-          initial.connectorId,
-          initial.externalId,
-          initial.title,
-          initial.start,
-          initial.end,
-          Number(initial.allDay),
-          initial.status,
-          initial.selfResponse,
-          initial.classification,
-          initial.classificationSource,
-          initial.personId,
-          JSON.stringify(initial.actionItems),
-          initial.url,
-          initial.occurredAt,
-          initial.capturedAt,
-          initial.updatedAt,
-          initial.retentionState,
-        );
-        insertAttendees(db, initial.id, initial.attendees);
-        return { meeting: initial, created: true };
-      } catch (error) {
-        if (!isUniqueConstraint(error)) throw error;
-        const existingRow = db
-          .prepare("SELECT * FROM meetings WHERE connector_id = ? AND external_id = ?")
-          .get<Row>(input.connectorId, input.externalId);
-        if (!existingRow) throw error;
-        const existing = mapMeeting(existingRow, loadAttendees(db, str(existingRow, "id")));
-        const preserveUser = existing.classificationSource === "user";
-        const updated: Meeting = {
-          ...input,
-          id: existing.id,
-          classification: preserveUser ? existing.classification : input.classification,
-          classificationSource: existing.classificationSource,
-          personId: preserveUser ? existing.personId : input.personId,
-          actionItems: input.actionItems,
-          attendees: input.attendees,
-          occurredAt: input.occurredAt ?? existing.occurredAt,
-          capturedAt: existing.capturedAt,
-          updatedAt: at,
-          retentionState: input.retentionState ?? existing.retentionState,
-        };
-        db.prepare(`UPDATE meetings SET
-          title = ?, start_at = ?, end_at = ?, all_day = ?, status = ?, self_response = ?,
-          classification = ?, classification_source = ?, person_id = ?, action_items = ?, url = ?,
-          occurred_at = ?, updated_at = ?, retention_state = ?
-          WHERE id = ?`).run(
-          updated.title,
-          updated.start,
-          updated.end,
-          Number(updated.allDay),
-          updated.status,
-          updated.selfResponse,
-          updated.classification,
-          updated.classificationSource,
-          updated.personId,
-          JSON.stringify(updated.actionItems),
-          updated.url,
-          updated.occurredAt,
-          updated.updatedAt,
-          updated.retentionState,
-          updated.id,
-        );
-        db.prepare("DELETE FROM meeting_attendees WHERE meeting_id = ?").run(updated.id);
-        insertAttendees(db, updated.id, updated.attendees);
-        return { meeting: updated, created: false };
-      }
+      return db.transaction(() => {
+        try {
+          db.prepare(`INSERT INTO meetings
+            (id, connector_id, external_id, title, start_at, end_at, all_day, status, self_response,
+             classification, classification_source, person_id, action_items, url, occurred_at, captured_at, updated_at, retention_state)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+            initial.id,
+            initial.connectorId,
+            initial.externalId,
+            initial.title,
+            initial.start,
+            initial.end,
+            Number(initial.allDay),
+            initial.status,
+            initial.selfResponse,
+            initial.classification,
+            initial.classificationSource,
+            initial.personId,
+            JSON.stringify(initial.actionItems),
+            initial.url,
+            initial.occurredAt,
+            initial.capturedAt,
+            initial.updatedAt,
+            initial.retentionState,
+          );
+          insertAttendees(db, initial.id, initial.attendees);
+          return { meeting: initial, created: true };
+        } catch (error) {
+          if (!isUniqueConstraint(error)) throw error;
+          const existingRow = db
+            .prepare("SELECT * FROM meetings WHERE connector_id = ? AND external_id = ?")
+            .get<Row>(input.connectorId, input.externalId);
+          if (!existingRow) throw error;
+          const existing = mapMeeting(existingRow, loadAttendees(db, str(existingRow, "id")));
+          const preserveUser = existing.classificationSource === "user";
+          const updated: Meeting = {
+            ...input,
+            id: existing.id,
+            start,
+            end,
+            classification: preserveUser ? existing.classification : input.classification,
+            classificationSource: existing.classificationSource,
+            personId: preserveUser ? existing.personId : input.personId,
+            actionItems: input.actionItems,
+            attendees: input.attendees,
+            occurredAt: input.occurredAt ? toDbInstant(input.occurredAt) : existing.occurredAt,
+            capturedAt: existing.capturedAt,
+            updatedAt: at,
+            retentionState: input.retentionState ?? existing.retentionState,
+          };
+          db.prepare(`UPDATE meetings SET
+            title = ?, start_at = ?, end_at = ?, all_day = ?, status = ?, self_response = ?,
+            classification = ?, classification_source = ?, person_id = ?, action_items = ?, url = ?,
+            occurred_at = ?, updated_at = ?, retention_state = ?
+            WHERE id = ?`).run(
+            updated.title,
+            updated.start,
+            updated.end,
+            Number(updated.allDay),
+            updated.status,
+            updated.selfResponse,
+            updated.classification,
+            updated.classificationSource,
+            updated.personId,
+            JSON.stringify(updated.actionItems),
+            updated.url,
+            updated.occurredAt,
+            updated.updatedAt,
+            updated.retentionState,
+            updated.id,
+          );
+          db.prepare("DELETE FROM meeting_attendees WHERE meeting_id = ?").run(updated.id);
+          insertAttendees(db, updated.id, updated.attendees);
+          return { meeting: updated, created: false };
+        }
+      });
     },
     get(id) {
       const row = db.prepare("SELECT * FROM meetings WHERE id = ?").get<Row>(id);
       return row ? mapMeeting(row, loadAttendees(db, id)) : null;
     },
     listRange(from, to, f = {}) {
+      const fromDb = toDbInstant(from);
+      const toDb = toDbInstant(to);
       const clauses = ["start_at >= ?", "start_at < ?"];
-      const values: unknown[] = [from, to];
+      const values: unknown[] = [fromDb, toDb];
       if (!f.includeCancelled) {
         clauses.push("status != 'cancelled'");
       }
@@ -253,8 +265,9 @@ export function createMeetingsRepo(db: Db, deps: Partial<Deps> = {}): MeetingsRe
         .map(mapSourceItem);
     },
     previousOf(meeting, f = {}) {
+      const startDb = toDbInstant(meeting.start);
       const clauses = ["start_at < ?"];
-      const values: unknown[] = [meeting.start];
+      const values: unknown[] = [startDb];
       clauses.push("status != 'cancelled'");
       if (f.classification !== undefined) {
         clauses.push("classification = ?");

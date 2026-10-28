@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type NewSourceItem, type SourceItem } from "@emos/api-contract";
+import type { NewSourceItem, SourceItem } from "@emos/api-contract";
 import type { SourceItemsRepo } from "@emos/core";
 import type { Db } from "../driver.js";
 import { toDbInstant } from "../time.js";
@@ -53,7 +53,7 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
       const value: SourceItem = {
         ...input,
         id: d.id("src"),
-        occurredAt: input.occurredAt ?? at,
+        occurredAt: input.occurredAt ? toDbInstant(input.occurredAt) : at,
         capturedAt: at,
         updatedAt: at,
         retentionState: input.retentionState ?? "active",
@@ -81,20 +81,24 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
         return { item: value, created: true };
       } catch (error) {
         if (!isUniqueConstraint(error)) throw error;
-        const existing = db
+        const existingRow = db
           .prepare("SELECT * FROM source_items WHERE connector_id = ? AND external_id = ?")
           .get<Row>(value.connectorId, value.externalId);
-        if (!existing) throw error; // should not happen
+        if (!existingRow) throw error; // should not happen
+        const existing = mapSourceItem(existingRow);
+        const isPurged = existing.retentionState === "purged";
+        // ADR 0004: purged tombstones keep date/kind/source; never restore content.
         const item: SourceItem = {
-          ...mapSourceItem(existing),
-          text: value.text,
-          contentHash: value.contentHash,
-          url: value.url,
-          authorIdentityId: value.authorIdentityId,
-          sensitivity: value.sensitivity,
-          sections: value.sections,
-          occurredAt: value.occurredAt,
-          retentionState: value.retentionState,
+          ...existing,
+          text: isPurged ? existing.text : value.text,
+          contentHash: isPurged ? existing.contentHash : value.contentHash,
+          url: isPurged ? existing.url : value.url,
+          authorIdentityId: isPurged ? existing.authorIdentityId : value.authorIdentityId,
+          sensitivity: isPurged ? existing.sensitivity : value.sensitivity,
+          sections: isPurged ? existing.sections : value.sections,
+          // Preserve optional provenance when replay omits it; use defaults only for creation.
+          occurredAt: input.occurredAt ? toDbInstant(input.occurredAt) : existing.occurredAt,
+          retentionState: input.retentionState ?? existing.retentionState,
           updatedAt: at,
         };
         db.prepare(`UPDATE source_items SET

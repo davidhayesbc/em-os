@@ -1,6 +1,7 @@
 import type { ExternalMeeting } from "@emos/api-contract";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../open.js";
+import { createStore } from "../store.js";
 import { createMeetingsRepo } from "./meetings.js";
 import { createPeopleRepo } from "./people.js";
 import { createSourceItemsRepo } from "./source-items.js";
@@ -249,5 +250,117 @@ describe("MeetingsRepo", () => {
     expect(() => repo().update("mtg_missing", { classification: "team" })).toThrowError(
       expect.objectContaining({ code: "not_found" }),
     );
+  });
+
+  it("normalizes seconds-only and fractional instants on upsert and list", () => {
+    const r = repo();
+    const m = r.upsertExternal(
+      externalMeeting({
+        externalId: "seconds",
+        start: "2026-10-25T09:00:00Z",
+        end: "2026-10-25T10:00:00.123456Z",
+      }),
+    ).meeting;
+    expect(m.start).toBe("2026-10-25T09:00:00.000Z");
+    expect(m.end).toBe("2026-10-25T10:00:00.123Z");
+
+    const list = r.listRange("2026-10-25T09:00:00Z", "2026-10-25T10:00:00Z");
+    expect(list.map((x) => x.id)).toEqual([m.id]);
+  });
+
+  it("listRange is inclusive-from and exclusive-to", () => {
+    const r = repo();
+    const a = r.upsertExternal(
+      externalMeeting({
+        externalId: "a",
+        start: "2026-10-25T09:00:00.000Z",
+        end: "2026-10-25T10:00:00.000Z",
+      }),
+    ).meeting;
+    const b = r.upsertExternal(
+      externalMeeting({
+        externalId: "b",
+        start: "2026-10-25T10:00:00.000Z",
+        end: "2026-10-25T11:00:00.000Z",
+      }),
+    ).meeting;
+
+    expect(
+      r.listRange("2026-10-25T09:00:00.000Z", "2026-10-25T10:00:00.000Z").map((m) => m.id),
+    ).toEqual([a.id]);
+    expect(
+      r.listRange("2026-10-25T09:00:00.000Z", "2026-10-25T11:00:00.000Z").map((m) => m.id),
+    ).toEqual([a.id, b.id]);
+  });
+
+  it("previousOf normalizes seconds-only instant", () => {
+    const r = repo();
+    const a = r.upsertExternal(
+      externalMeeting({
+        externalId: "a",
+        start: "2026-10-25T09:00:00.000Z",
+        end: "2026-10-25T10:00:00.000Z",
+      }),
+    ).meeting;
+    const b = r.upsertExternal(
+      externalMeeting({
+        externalId: "b",
+        start: "2026-10-25T10:00:00.000Z",
+        end: "2026-10-25T11:00:00.000Z",
+      }),
+    ).meeting;
+
+    const previous = r.previousOf({ ...b, start: "2026-10-25T10:00:00Z" });
+    expect(previous?.id).toBe(a.id);
+  });
+
+  it("atomic upsert rolls back meeting and attendees on attendee FK failure", () => {
+    const r = repo();
+    const bad = {
+      identityId: null,
+      personId: "per_missing",
+      displayName: "Alex Rivera",
+      email: null,
+    } as const;
+
+    expect(() =>
+      r.upsertExternal(externalMeeting({ externalId: "partial-create", attendees: [bad] })),
+    ).toThrowError(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
+    expect(
+      db.prepare("SELECT id FROM meetings WHERE external_id = ?").get("partial-create"),
+    ).toBeUndefined();
+
+    const before = r.upsertExternal(
+      externalMeeting({ externalId: "partial-update", attendees: [{ ...bad, personId: null }] }),
+    ).meeting;
+    expect(() =>
+      r.upsertExternal(
+        externalMeeting({ externalId: "partial-update", title: "Changed", attendees: [bad] }),
+      ),
+    ).toThrowError(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
+
+    const after = r.get(before.id);
+    expect(after?.title).toBe(before.title);
+    expect(after?.attendees).toEqual(before.attendees);
+  });
+
+  it("atomic upsert rolls back inside an outer Store transaction", () => {
+    const store = createStore(db);
+    const bad = {
+      identityId: null,
+      personId: "per_missing",
+      displayName: "Alex Rivera",
+      email: null,
+    } as const;
+
+    expect(() =>
+      store.transaction(() => {
+        store.meetings.upsertExternal(externalMeeting({ externalId: "outer", attendees: [bad] }));
+      }),
+    ).toThrowError(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
+
+    expect(
+      db.prepare("SELECT id FROM meetings WHERE external_id = ?").get("outer"),
+    ).toBeUndefined();
   });
 });

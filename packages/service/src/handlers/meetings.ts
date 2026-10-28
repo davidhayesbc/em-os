@@ -3,7 +3,7 @@ import { ApiError, type Meeting, type NewSourceItem, type SourceItem } from "@em
 import type { Handler, ServiceContext } from "../context.js";
 
 function exists(ctx: ServiceContext, table: string, id: string | null | undefined): boolean {
-  if (!id) return true;
+  if (id === null || id === undefined) return true;
   return Boolean(ctx.db.prepare(`SELECT 1 ok FROM ${table} WHERE id = ?`).get(id));
 }
 

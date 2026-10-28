@@ -2,7 +2,7 @@ import type { ExternalMeeting } from "@emos/api-contract";
 import { createClient, httpTransport } from "@emos/api-contract";
 import { createMeetingsRepo, createPeopleRepo, dataLayout, openDb } from "@emos/store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, startTestService, tmpDir } from "../test-helpers.js";
+import { authHeaders, cleanup, request, startTestService, tmpDir } from "../test-helpers.js";
 
 afterEach(cleanup);
 
@@ -215,5 +215,113 @@ describe("meetings API", () => {
     ]);
 
     await svc2.stop();
+  });
+
+  it("rejects forbidden and mixed patch fields over raw HTTP", async () => {
+    const dataDir = tmpDir();
+    const meetingId = seedMeeting(dataDir, {
+      ...standup,
+      externalId: "patch-strict",
+      title: "Original title",
+      classification: "team",
+    });
+    const svc = await startTestService({ dataDir });
+
+    const forbidden = await request(svc.port, {
+      path: "/rpc/meetings.update",
+      headers: authHeaders(svc.token),
+      body: JSON.stringify({
+        id: meetingId,
+        patch: { connectorId: "changed", classificationSource: "user" },
+      }),
+    });
+    expect(forbidden.status).toBe(400);
+    expect((forbidden.json as { ok: boolean; error?: { code: string } }).ok).toBe(false);
+
+    const mixed = await request(svc.port, {
+      path: "/rpc/meetings.update",
+      headers: authHeaders(svc.token),
+      body: JSON.stringify({
+        id: meetingId,
+        patch: { classification: "one_on_one", connectorId: "changed" },
+      }),
+    });
+    expect(mixed.status).toBe(400);
+    expect((mixed.json as { ok: boolean }).ok).toBe(false);
+
+    await svc.stop();
+
+    const svc2 = await startTestService({ dataDir });
+    const client = createClient({
+      transport: httpTransport(`http://127.0.0.1:${svc2.port}`),
+      token: svc2.token,
+    });
+    const got = await client.call("meetings.get", { id: meetingId });
+    expect(got.meeting.title).toBe("Original title");
+    expect(got.meeting.classification).toBe("team");
+    expect(got.meeting.classificationSource).toBe("auto");
+    await svc2.stop();
+  });
+
+  it("rejects empty and unknown personId without persistence side effects", async () => {
+    const dataDir = tmpDir();
+    const seedDb = openDb(dataLayout(dataDir).dbFile);
+    let alexId: string;
+    let meetingId: string;
+    try {
+      const people = createPeopleRepo(seedDb, {
+        now: () => new Date("2026-10-25T12:00:00.000Z"),
+        id: (prefix) => `${prefix}_alex`,
+      });
+      alexId = people.create({
+        displayName: "Alex Rivera",
+        relationship: "peer",
+        pronouns: null,
+        aliases: [],
+        role: "Engineer",
+        timeZone: null,
+        archived: false,
+        oneOnOneCadenceDays: null,
+      }).id;
+      meetingId = createMeetingsRepo(seedDb).upsertExternal({
+        ...oneOnOne(alexId),
+        externalId: "empty-person",
+      }).meeting.id;
+    } finally {
+      seedDb.close();
+    }
+
+    const svc = await startTestService({ dataDir });
+    const client = createClient({
+      transport: httpTransport(`http://127.0.0.1:${svc.port}`),
+      token: svc.token,
+    });
+
+    const empty = await request(svc.port, {
+      path: "/rpc/meetings.update",
+      headers: authHeaders(svc.token),
+      body: JSON.stringify({ id: meetingId, patch: { personId: "" } }),
+    });
+    expect(empty.status).toBe(404);
+    expect((empty.json as { ok: boolean; error?: { code: string } }).error?.code).toBe("not_found");
+
+    const unknown = await request(svc.port, {
+      path: "/rpc/meetings.update",
+      headers: authHeaders(svc.token),
+      body: JSON.stringify({ id: meetingId, patch: { personId: "per_missing" } }),
+    });
+    expect(unknown.status).toBe(404);
+
+    const got = await client.call("meetings.get", { id: meetingId });
+    expect(got.meeting.personId).toBe(alexId);
+
+    // Null clears the relationship.
+    const cleared = await client.call("meetings.update", {
+      id: meetingId,
+      patch: { personId: null },
+    });
+    expect(cleared.personId).toBeNull();
+    const got2 = await client.call("meetings.get", { id: meetingId });
+    expect(got2.meeting.personId).toBeNull();
   });
 });
