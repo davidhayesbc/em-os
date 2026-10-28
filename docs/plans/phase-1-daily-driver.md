@@ -413,7 +413,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [x] **Step 2: Run.** Expected: FAIL.
 - [x] **Step 3: Implement.**
 - [x] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-04): meetings and source items with pasted notes`.
+- [x] **Step 5: Commit** `feat(p1-04): meetings and source items with pasted notes`.
 
 **Acceptance:** Notes can be pasted onto any meeting and are stored dated and with the right sensitivity.
 
