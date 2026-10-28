@@ -174,6 +174,342 @@ a:focus-visible {
   color: var(--vscode-errorForeground);
 }
 
+/* Manual commitments (P1-44) */
+.commitments-alpha {
+  margin-bottom: 16px;
+}
+
+.commitments-alpha-title {
+  margin-bottom: 12px;
+  font-size: 1.25em;
+}
+
+.commitments-heading {
+  margin: 0 0 8px;
+  font-size: 1em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.commitments-lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 600px) {
+  .commitments-lists {
+    grid-template-columns: 1fr;
+  }
+}
+
+.commitments-list {
+  min-width: 0;
+  padding: 12px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+}
+
+.commitments-list-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 1em;
+}
+
+.commitments-count {
+  padding: 0 6px;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+  border-radius: 8px;
+  font-size: 0.85em;
+}
+
+.commitments-loading,
+.commitments-empty {
+  margin: 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.commitments-error {
+  margin: 0;
+  color: var(--vscode-errorForeground);
+}
+
+.commitments-error-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+  border-radius: 4px;
+}
+
+.commitments-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commitments-item + .commitments-item {
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+
+.commitments-item-button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px;
+  text-align: left;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+}
+
+.commitments-item-button:hover {
+  background: var(--vscode-list-hoverBackground, transparent);
+}
+
+.commitments-item-selected,
+.commitments-item-selected:hover {
+  background: var(--vscode-list-activeSelectionBackground, var(--vscode-button-background));
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+
+.commitments-item-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.commitments-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.commitments-item-selected .commitments-item-meta {
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+}
+
+.commitments-status {
+  padding: 0 4px;
+  border-radius: 2px;
+  font-size: 0.85em;
+  text-transform: uppercase;
+}
+
+.commitments-status-proposed {
+  color: var(--vscode-foreground);
+  background: var(--vscode-badge-background);
+}
+
+.commitments-status-active {
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-inlayHint-background, var(--vscode-badge-background));
+}
+
+.commitments-status-snoozed {
+  color: var(--vscode-foreground);
+  background: var(--vscode-notebook-cellStatusBarItemBackground, var(--vscode-badge-background));
+}
+
+.commitments-status-done {
+  color: var(--vscode-foreground);
+  background: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-badge-background));
+}
+
+.commitments-status-dropped {
+  color: var(--vscode-foreground);
+  background: var(
+    --vscode-gitDecoration-conflictingResourceForeground,
+    var(--vscode-badge-background)
+  );
+}
+
+.commitments-overdue {
+  padding: 0 4px;
+  color: var(--vscode-errorForeground);
+  border: 1px solid var(--vscode-errorForeground);
+  border-radius: 2px;
+  font-size: 0.85em;
+}
+
+.commitments-due {
+  font-size: 0.85em;
+}
+
+.commitments-quick-capture {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+}
+
+.commitments-field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.commitments-field-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  font: inherit;
+}
+
+.commitments-hint {
+  margin: 8px 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.commitments-candidates {
+  margin-top: 8px;
+}
+
+.commitments-candidate-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.commitments-candidate-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.commitments-candidate-none {
+  color: var(--vscode-descriptionForeground);
+}
+
+.commitment-detail {
+  padding: 12px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+}
+
+.commitment-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.commitment-detail-title {
+  margin: 0;
+  font-size: 1.1em;
+}
+
+.commitment-detail-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0 0 12px;
+}
+
+.commitment-detail-facts dt {
+  color: var(--vscode-descriptionForeground);
+}
+
+.commitment-detail-facts dd {
+  margin: 0;
+}
+
+.commitment-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.commitment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.commitment-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.commitment-action input,
+.commitment-action select {
+  padding: 4px 8px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  font: inherit;
+}
+
+.commitment-sources,
+.commitment-audit {
+  margin-top: 12px;
+}
+
+.commitment-sources h4,
+.commitment-audit h4 {
+  margin: 0 0 8px;
+  font-size: 1em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.commitment-source-list,
+.commitment-audit-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commitment-source-list li,
+.commitment-audit-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+
+.commitment-source-url {
+  color: var(--vscode-textLink-foreground);
+  overflow-wrap: anywhere;
+}
+
+.commitment-audit-action {
+  font-weight: 500;
+}
+
+.commitment-audit-actor,
+.commitment-audit-time {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.commitment-audit-diff {
+  flex-basis: 100%;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 800px) {
   .widget-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

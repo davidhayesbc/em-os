@@ -51,6 +51,7 @@ describe("App", () => {
     render(<App />);
     act(() => host.dispatch({ kind: "connection", state: "connected" }));
     expect(screen.getByRole("heading", { name: "Service status" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Manual commitments" })).toBeTruthy();
     await waitFor(() => expect(host.lastRpc("health.get")).toBeDefined());
     act(() => host.resolve("health.get", health()));
     expect(await screen.findByText("API v1")).toBeTruthy();
@@ -59,8 +60,10 @@ describe("App", () => {
   it("leaves the grid when the connection drops", () => {
     render(<App />);
     act(() => host.dispatch({ kind: "connection", state: "connected" }));
+    expect(screen.queryByRole("heading", { name: "Manual commitments" })).toBeTruthy();
     act(() => host.dispatch({ kind: "connection", state: "unavailable" }));
     expect(screen.queryByRole("heading", { name: "Service status" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Manual commitments" })).toBeNull();
     expect(screen.getByRole("alert")).toBeTruthy();
   });
 });

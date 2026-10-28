@@ -1812,11 +1812,11 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 **Interfaces:** Consume existing `commitments.list|get|create|update|complete|snooze|drop|reopen`, `commitments.quickCapture` and `people.resolve` operations. Do not change their schemas. Render two separate lists, `mine` and `owed_to_me`, with due/overdue, snooze, source and audit affordances. Quick capture must handle `needs_person` without guessing. Keep the UI accessible by keyboard and usable without a calendar or connector. Display stored source provenance and mutation audit only; do not invent conversation or reminder history.
 
 **Steps:**
-- [ ] Add tests for empty state, create, ambiguous person, edit, complete, snooze, drop, reopen and both directions.
-- [ ] Implement the smallest dashboard surface in the existing webview, mounting a manual commitments section before WidgetGrid once connected.
-- [ ] Verify source/audit display and absence of silent state changes; no new autonomous writes.
-- [ ] Run `npm run ci`; owner verifies the five-workday dogfood checklist after merge.
-- [ ] Document reusable components for P1-28 and the future dashboard in `docs/plans/commitment-alpha-dogfood.md`.
+- [x] Add tests for empty state, create, ambiguous person, edit, complete, snooze, drop, reopen and both directions.
+- [x] Implement the smallest dashboard surface in the existing webview, mounting a manual commitments section before WidgetGrid once connected.
+- [x] Verify source/audit display and absence of silent state changes; no new autonomous writes.
+- [x] Run `npm run ci`; owner verifies the five-workday dogfood checklist after merge.
+- [x] Document reusable components for P1-28 and the future dashboard in `docs/plans/commitment-alpha-dogfood.md`.
 
 **Acceptance:** The owner can manage both directions of commitments end-to-end before the calendar/dashboard is built. Manual dogfood observations are recorded without real work content in the public repo. *(owner, after merge)* Complete the five-workday checklist in `docs/plans/commitment-alpha-dogfood.md`.
 
