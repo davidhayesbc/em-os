@@ -384,7 +384,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 ### Task P1-04: Meetings + source items slice
 
-**Files:** `core/src/meetings/index.ts`, `core/src/ports/repos/{meetings,source-items}.ts`, `store-sqlite/src/repos/{meetings,source-items}.ts`, `api-contract/src/ops/meetings.ts`, `service/src/handlers/meetings.ts`.
+**Files:** `core/src/meetings/index.ts`, `core/src/ports/repos/{meetings,source-items}.ts`, `store-sqlite/src/repos/{meetings,source-items}.ts`, `api-contract/src/ops/meetings.ts`, `service/src/handlers/meetings.ts` and adjacent tests; plus append-only integration wiring: `core/src/ports/store.ts`, `core/src/index.ts`, `store-sqlite/src/{index.ts,store.ts}`, `api-contract/src/ops/index.ts`, `api-contract/src/index.ts`, `service/src/handlers/index.ts`.
 
 **Interfaces:**
 - Produces:
@@ -404,15 +404,15 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - `meetings.update {id, patch} → Meeting`
   - `meetings.attachNotes { meetingId, text, kind: "summary" | "transcript" } → SourceItem` — a `kind` of `note` or `transcript`, `origin: "manual"`, `occurredAt` = meeting start. Sensitivity is `people_sensitive` when the meeting is `one_on_one`, else `normal`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - Upserting the same external id twice → one row, with `created` false the second time.
   - A user-set classification survives a re-upsert.
   - `attachNotes` on a 1:1 → `people_sensitive`.
   - `listRange` excludes cancelled meetings by default.
   - `previousOf` finds the last standup.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(p1-04): meetings and source items with pasted notes`.
 
 **Acceptance:** Notes can be pasted onto any meeting and are stored dated and with the right sensitivity.

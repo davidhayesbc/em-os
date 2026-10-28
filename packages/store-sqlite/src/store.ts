@@ -3,8 +3,10 @@ import type { Db } from "./driver.js";
 import { createAccomplishmentsRepo } from "./repos/accomplishments.js";
 import { createCommitmentsRepo } from "./repos/commitments.js";
 import { createGoalsRepo } from "./repos/goals.js";
+import { createMeetingsRepo } from "./repos/meetings.js";
 import { createPeopleRepo } from "./repos/people.js";
 import { createSettingsRepo } from "./repos/settings.js";
+import { createSourceItemsRepo } from "./repos/source-items.js";
 
 /**
  * The `Store` port (@emos/core) over SQLite. APPEND-ONLY: each Phase 1 slice adds one line
@@ -13,10 +15,12 @@ import { createSettingsRepo } from "./repos/settings.js";
 export function createStore(db: Db): Store {
   return {
     transaction: <T>(fn: () => T): T => db.transaction(fn),
+    accomplishments: createAccomplishmentsRepo(db),
     commitments: createCommitmentsRepo(db),
     goals: createGoalsRepo(db),
-    accomplishments: createAccomplishmentsRepo(db),
-    settings: createSettingsRepo(db),
+    meetings: createMeetingsRepo(db),
     people: createPeopleRepo(db),
+    settings: createSettingsRepo(db),
+    sourceItems: createSourceItemsRepo(db),
   };
 }

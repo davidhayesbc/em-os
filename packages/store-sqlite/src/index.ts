@@ -12,7 +12,9 @@ export { assertNotInGitCheckout, type DataLayout, dataLayout, resolveDataDir } f
 export { createAccomplishmentsRepo } from "./repos/accomplishments.js";
 export { createCommitmentsRepo } from "./repos/commitments.js";
 export { createGoalsRepo } from "./repos/goals.js";
+export { createMeetingsRepo } from "./repos/meetings.js";
 export { createStore } from "./store.js";
 export { toDbInstant } from "./time.js";
 export { createSettingsRepo } from "./repos/settings.js";
 export { createPeopleRepo } from "./repos/people.js";
+export { createSourceItemsRepo } from "./repos/source-items.js";
