@@ -16,7 +16,15 @@
 // Vitest: `scripts/check-worktree-lint.test.ts` imports the assertion helpers.
 
 import { execSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,16 +94,17 @@ function loadRepoBiomeConfig() {
 function makeConfigVariant(variant) {
   const config = loadRepoBiomeConfig();
   let includes = config.files?.includes ?? ["**"];
-  includes = includes.filter(
-    (pattern) => pattern !== "!.worktrees" && pattern !== "!**/.worktrees",
-  );
 
   if (variant === "current") {
-    includes.push("!.worktrees");
+    // Preserve the actual repository files.includes verbatim so we exercise the
+    // real current config, not a repaired copy.
   } else if (variant === "reverted") {
-    includes.push("!**/.worktrees");
+    includes = includes.filter((pattern) => pattern !== "!.worktrees");
+    if (!includes.includes("!**/.worktrees")) {
+      includes.push("!**/.worktrees");
+    }
   } else if (variant === "removed") {
-    // intentionally leave worktree exclusion out
+    includes = includes.filter((pattern) => pattern !== "!.worktrees");
   } else {
     throw new Error(`unknown config variant: ${variant}`);
   }
@@ -113,13 +122,22 @@ function writeBiomeJson(dir, variant) {
   }
 }
 
+/**
+ * @returns The number of files Biome reported checking, or `null` when the
+ * output does not contain a "Checked N files" line.
+ */
 function countProcessedFiles(output) {
   const match = output.match(/Checked\s+(\d+)\s+file/);
-  return match ? Number.parseInt(match[1], 10) : 0;
+  return match ? Number.parseInt(match[1], 10) : null;
 }
 
 function assertAtLeast(output, minFiles, label) {
   const count = countProcessedFiles(output);
+  if (count === null) {
+    throw new Error(
+      `${label}: could not determine processed file count (no "Checked N files" line).\nOutput:\n${output}`,
+    );
+  }
   if (count < minFiles) {
     throw new Error(
       `${label}: expected at least ${minFiles} file(s) processed, got ${count}.\nOutput:\n${output}`,
@@ -130,6 +148,11 @@ function assertAtLeast(output, minFiles, label) {
 
 function assertExactly(output, expectedFiles, label) {
   const count = countProcessedFiles(output);
+  if (count === null) {
+    throw new Error(
+      `${label}: could not determine processed file count (no "Checked N files" line).\nOutput:\n${output}`,
+    );
+  }
   if (count !== expectedFiles) {
     throw new Error(
       `${label}: expected exactly ${expectedFiles} file(s) processed, got ${count}.\nOutput:\n${output}`,
@@ -214,13 +237,15 @@ export function assertNestedCheckoutRevertedConfigFails() {
 
     // The silent failure mode is exit 0 with 0 files checked. Any non-zero exit
     // is also a clear failure. Only a pass with >0 files means the guard is broken.
-    if (result.code === 0 && count > 0) {
+    if (result.code === 0 && count !== null && count > 0) {
       throw new Error(
         `reverted !**/.worktrees config unexpectedly passed inside a .worktrees ancestor (checked ${count} files).\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
       );
     }
 
     // Ensure the failure is for the intended reason: 0 files were processed.
+    // An absent "Checked N files" line indicates an unrelated CLI/config error
+    // and must not be accepted as the intended diagnosis.
     assertExactly(result.stdout, 0, "nested reverted config");
     return true;
   } finally {
@@ -253,6 +278,121 @@ export function assertRootCheckoutRemovedConfigFails() {
     if (!result.stderr.includes("badlyFormatted") && !result.stdout.includes("bad.js")) {
       throw new Error(
         `root removed config failed for an unexpected reason; expected bad.js diagnostics.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+    }
+    return true;
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+function installFixtureRepo(targetDir, biomeJsonContent) {
+  mkdirSync(join(targetDir, "scripts"), { recursive: true });
+  copyFileSync(
+    join(here, "check-worktree-lint.mjs"),
+    join(targetDir, "scripts/check-worktree-lint.mjs"),
+  );
+  symlinkSync(join(repoRoot, "node_modules"), join(targetDir, "node_modules"), "dir");
+  writeFileSync(join(targetDir, "biome.json"), biomeJsonContent);
+}
+
+/**
+ * Top-level guard: a fixture repo that copies the ACTUAL repository config
+ * (root-relative `!.worktrees` exclusion) must pass the full CLI regression suite.
+ */
+export function assertTopLevelActualCurrentConfig() {
+  const base = mkdtempSync(join(tmpdir(), "worktree-lint-top-current-"));
+  try {
+    const fixture = join(base, "repo");
+    mkdirSync(fixture, { recursive: true });
+    installFixtureRepo(fixture, makeConfigVariant("current"));
+
+    const result = spawnSync(process.execPath, [join(fixture, "scripts/check-worktree-lint.mjs")], {
+      cwd: fixture,
+      encoding: "utf8",
+      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+    });
+    if (result.status !== 0) {
+      throw new Error(
+        `top-level actual current config should pass, but exited ${result.status}.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+    }
+    return true;
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Top-level guard: a fixture repo whose biome.json is the actual repository config
+ * reverted to the old glob that excludes any ancestor `.worktrees` segment must
+ * fail on the nested-checkout scenario.
+ */
+export function assertTopLevelActualRevertedConfigFails() {
+  const base = mkdtempSync(join(tmpdir(), "worktree-lint-top-reverted-"));
+  try {
+    const fixture = join(base, "repo");
+    mkdirSync(fixture, { recursive: true });
+    installFixtureRepo(fixture, makeConfigVariant("reverted"));
+
+    const result = spawnSync(process.execPath, [join(fixture, "scripts/check-worktree-lint.mjs")], {
+      cwd: fixture,
+      encoding: "utf8",
+      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+    });
+    if (result.status === 0) {
+      throw new Error(
+        `top-level actual reverted config should fail, but exited 0.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+    }
+    // The intended failure is that the nested checkout silently checked 0 files.
+    if (
+      !result.stderr.includes("nested .worktrees checkout with current config") &&
+      !result.stdout.includes("nested .worktrees checkout with current config") &&
+      !result.stderr.includes("expected at least") &&
+      !result.stdout.includes("expected at least")
+    ) {
+      throw new Error(
+        `top-level actual reverted config failed for an unexpected reason; expected nested checkout diagnosis.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+    }
+    return true;
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Top-level guard: a fixture repo whose biome.json is the actual repository config
+ * with the worktree exclusion removed must fail because the descendant bad.js
+ * fixture is linted.
+ */
+export function assertTopLevelActualRemovedConfigFails() {
+  const base = mkdtempSync(join(tmpdir(), "worktree-lint-top-removed-"));
+  try {
+    const fixture = join(base, "repo");
+    mkdirSync(fixture, { recursive: true });
+    installFixtureRepo(fixture, makeConfigVariant("removed"));
+
+    const result = spawnSync(process.execPath, [join(fixture, "scripts/check-worktree-lint.mjs")], {
+      cwd: fixture,
+      encoding: "utf8",
+      env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" },
+    });
+    if (result.status === 0) {
+      throw new Error(
+        `top-level actual removed config should fail, but exited 0.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+    }
+    // The intended failure is that bad.js inside .worktrees is diagnosed.
+    if (
+      !result.stderr.includes("repo-root checkout with current config") &&
+      !result.stdout.includes("repo-root checkout with current config") &&
+      !result.stderr.includes("bad.js") &&
+      !result.stdout.includes("bad.js")
+    ) {
+      throw new Error(
+        `top-level actual removed config failed for an unexpected reason; expected bad.js diagnosis.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
       );
     }
     return true;

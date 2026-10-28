@@ -4,6 +4,9 @@ import {
   assertNestedCheckoutRevertedConfigFails,
   assertRootCheckoutCurrentConfig,
   assertRootCheckoutRemovedConfigFails,
+  assertTopLevelActualCurrentConfig,
+  assertTopLevelActualRemovedConfigFails,
+  assertTopLevelActualRevertedConfigFails,
   checkWorktreeLint,
 } from "./check-worktree-lint.mjs";
 
@@ -22,6 +25,18 @@ describe("worktree lint exclusion", () => {
 
   it("fails when the worktree exclusion is removed entirely", () => {
     expect(assertRootCheckoutRemovedConfigFails()).toBe(true);
+  });
+
+  it("top-level guard passes with a fixture copy of the actual current repository config", () => {
+    expect(assertTopLevelActualCurrentConfig()).toBe(true);
+  });
+
+  it("top-level guard fails when the actual repository config is reverted to !**/.worktrees", () => {
+    expect(assertTopLevelActualRevertedConfigFails()).toBe(true);
+  });
+
+  it("top-level guard fails when the actual repository config has the worktree exclusion removed", () => {
+    expect(assertTopLevelActualRemovedConfigFails()).toBe(true);
   });
 
   it("orchestrator reports ok when all scenarios behave correctly", () => {
