@@ -102,7 +102,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [x] **P1-47** P1-01-H people slice security hardening — deps: P1-01 — claim: done · 9d05c2c
 - [x] **P1-02** Commitments (incl. recurrence) + goals + accomplishments slice — deps: Phase 0 — claim: done · b968a63
 - [x] **P1-03** Quick-capture parser + `commitments.quickCapture` — deps: P1-01, P1-02, P1-05 — claim: done · 2cc4310
-- [ ] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: —
+- [x] **P1-04** Meetings + source items slice (incl. paste notes) — deps: Phase 0 — claim: done · 6de4f9b67120237cb3cfea8a308d6a840c6e8660
 - [x] **P1-05** Settings, profile and layout slice — deps: Phase 0 — claim: done · e7aa721
 
 **Core logic (pure)**
@@ -384,7 +384,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 ### Task P1-04: Meetings + source items slice
 
-**Files:** `core/src/meetings/index.ts`, `core/src/ports/repos/{meetings,source-items}.ts`, `store-sqlite/src/repos/{meetings,source-items}.ts`, `api-contract/src/ops/meetings.ts`, `service/src/handlers/meetings.ts`.
+**Files:** `core/src/meetings/index.ts`, `core/src/ports/repos/{meetings,source-items}.ts`, `store-sqlite/src/repos/{meetings,source-items}.ts`, `api-contract/src/ops/meetings.ts`, `service/src/handlers/meetings.ts` and adjacent tests; plus append-only integration wiring: `core/src/ports/store.ts`, `core/src/index.ts`, `store-sqlite/src/{index.ts,store.ts}`, `api-contract/src/ops/index.ts`, `api-contract/src/index.ts`, `service/src/handlers/index.ts`.
 
 **Interfaces:**
 - Produces:
@@ -404,16 +404,16 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - `meetings.update {id, patch} → Meeting`
   - `meetings.attachNotes { meetingId, text, kind: "summary" | "transcript" } → SourceItem` — a `kind` of `note` or `transcript`, `origin: "manual"`, `occurredAt` = meeting start. Sensitivity is `people_sensitive` when the meeting is `one_on_one`, else `normal`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - Upserting the same external id twice → one row, with `created` false the second time.
   - A user-set classification survives a re-upsert.
   - `attachNotes` on a 1:1 → `people_sensitive`.
   - `listRange` excludes cancelled meetings by default.
   - `previousOf` finds the last standup.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-04): meetings and source items with pasted notes`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-04): meetings and source items with pasted notes`.
 
 **Acceptance:** Notes can be pasted onto any meeting and are stored dated and with the right sensitivity.
 

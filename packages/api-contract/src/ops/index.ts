@@ -12,6 +12,7 @@ import {
 } from "./commitments.js";
 import { goalsCreate, goalsList, goalsUpdate } from "./goals.js";
 import { healthGet } from "./health.js";
+import { meetingsAttachNotes, meetingsGet, meetingsList, meetingsUpdate } from "./meetings.js";
 import {
   peopleAddIdentity,
   peopleCreate,
@@ -43,6 +44,10 @@ export const ops = {
   "goals.list": goalsList,
   "goals.create": goalsCreate,
   "goals.update": goalsUpdate,
+  "meetings.list": meetingsList,
+  "meetings.get": meetingsGet,
+  "meetings.update": meetingsUpdate,
+  "meetings.attachNotes": meetingsAttachNotes,
   "settings.get": settingsGet,
   "settings.update": settingsUpdate,
   "layout.get": layoutGet,
