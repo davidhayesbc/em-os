@@ -20,6 +20,20 @@ const repo = () =>
     id: (prefix) => `${prefix}_${++sequence}`,
   });
 
+/** Repository backed by a mutable injected clock, for no-sleep advancing-time tests. */
+function repoWithMutableClock(initialIso: string) {
+  let t = new Date(initialIso).getTime();
+  return {
+    repo: createSourceItemsRepo(db, {
+      now: () => new Date(t),
+      id: (prefix) => `${prefix}_${++sequence}`,
+    }),
+    advance: (ms: number) => {
+      t += ms;
+    },
+  };
+}
+
 function hash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
@@ -203,43 +217,97 @@ describe("SourceItemsRepo", () => {
     }
   });
 
-  it("advancing clock regression: historical, archived, excluded and purged rows keep provenance", () => {
-    const r = repo();
-    const _historical = r.upsert(
+  it("advancing clock regression: capturedAt and occurredAt retained, updatedAt advances, retention and purged tombstone unchanged", () => {
+    const { repo: r, advance } = repoWithMutableClock("2026-10-25T12:00:00.000Z");
+
+    // Active row: provenance is retained and updatedAt moves forward.
+    const activeFirst = r.upsert(
       newItem({
-        externalId: "hist",
+        externalId: "active-clock",
         occurredAt: "2025-06-01T00:00:00.000Z",
+      }),
+    ).item;
+    advance(60_000);
+    const activeReplay = r.upsert(
+      newItem({ externalId: "active-clock", text: "Replayed active" }),
+    ).item;
+    expect(activeReplay.id).toBe(activeFirst.id);
+    expect(activeReplay.occurredAt).toBe("2025-06-01T00:00:00.000Z");
+    expect(activeReplay.capturedAt).toBe(activeFirst.capturedAt);
+    expect(activeReplay.retentionState).toBe("active");
+    expect(activeReplay.text).toBe("Replayed active");
+    expect(activeReplay.updatedAt).not.toBe(activeFirst.updatedAt);
+    expect(new Date(activeReplay.updatedAt).getTime()).toBeGreaterThan(
+      new Date(activeFirst.updatedAt).getTime(),
+    );
+
+    // Archived row: retention state and provenance are preserved.
+    const archivedFirst = r.upsert(
+      newItem({
+        externalId: "archived-clock",
+        occurredAt: "2025-07-01T00:00:00.000Z",
         retentionState: "archived",
       }),
     ).item;
-    const replayed = r.upsert(newItem({ externalId: "hist", text: "Replayed" })).item;
-    expect(replayed.occurredAt).toBe("2025-06-01T00:00:00.000Z");
-    expect(replayed.retentionState).toBe("archived");
-    expect(replayed.text).toBe("Replayed");
+    advance(60_000);
+    const archivedReplay = r.upsert(
+      newItem({ externalId: "archived-clock", text: "Replayed archived" }),
+    ).item;
+    expect(archivedReplay.id).toBe(archivedFirst.id);
+    expect(archivedReplay.occurredAt).toBe("2025-07-01T00:00:00.000Z");
+    expect(archivedReplay.capturedAt).toBe(archivedFirst.capturedAt);
+    expect(archivedReplay.retentionState).toBe("archived");
+    expect(new Date(archivedReplay.updatedAt).getTime()).toBeGreaterThan(
+      new Date(archivedFirst.updatedAt).getTime(),
+    );
 
-    const _excluded = r.upsert(
+    // Excluded row: same contract.
+    const excludedFirst = r.upsert(
       newItem({
-        externalId: "excluded",
-        occurredAt: "2026-01-01T00:00:00.000Z",
+        externalId: "excluded-clock",
+        occurredAt: "2025-08-01T00:00:00.000Z",
         retentionState: "excluded",
       }),
     ).item;
-    const excludedReplay = r.upsert(newItem({ externalId: "excluded" })).item;
-    expect(excludedReplay.occurredAt).toBe("2026-01-01T00:00:00.000Z");
+    advance(60_000);
+    const excludedReplay = r.upsert(
+      newItem({ externalId: "excluded-clock", text: "Replayed excluded" }),
+    ).item;
+    expect(excludedReplay.id).toBe(excludedFirst.id);
+    expect(excludedReplay.occurredAt).toBe("2025-08-01T00:00:00.000Z");
+    expect(excludedReplay.capturedAt).toBe(excludedFirst.capturedAt);
     expect(excludedReplay.retentionState).toBe("excluded");
+    expect(new Date(excludedReplay.updatedAt).getTime()).toBeGreaterThan(
+      new Date(excludedFirst.updatedAt).getTime(),
+    );
 
-    const { id, occurredAt } = makePurgedTombstone(
+    // Purged tombstone stays terminal and empty, but its updatedAt still advances.
+    const { id, occurredAt, capturedAt } = makePurgedTombstone(
       r,
       newItem({ externalId: "purged-clock" }),
       "2025-12-01T00:00:00.000Z",
     );
+    advance(60_000);
     const purgedReplay = r.upsert(
-      newItem({ externalId: "purged-clock", text: "New content" }),
+      newItem({
+        externalId: "purged-clock",
+        text: "Resurrect attempt",
+        sensitivity: "private",
+      }),
     ).item;
+    expect(purgedReplay.id).toBe(id);
     expect(purgedReplay.occurredAt).toBe(occurredAt);
+    expect(purgedReplay.capturedAt).toBe(capturedAt);
     expect(purgedReplay.retentionState).toBe("purged");
     expect(purgedReplay.text).toBe("");
-    expect(purgedReplay.updatedAt).toBe(now);
+    expect(purgedReplay.contentHash).toBe("");
+    expect(purgedReplay.url).toBeNull();
+    expect(purgedReplay.authorIdentityId).toBeNull();
+    expect(purgedReplay.sections).toBeNull();
+    expect(purgedReplay.sensitivity).toBe("normal");
+    expect(new Date(purgedReplay.updatedAt).getTime()).toBeGreaterThan(
+      new Date(capturedAt).getTime(),
+    );
     expect(r.get(id)).toEqual(purgedReplay);
   });
 

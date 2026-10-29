@@ -1,4 +1,3 @@
-// biome-ignore assist/source/organizeImports: this public export registry is append-only.
 export * from "./commitments/index.js";
 export * from "./goals/index.js";
 export * from "./meetings/index.js";
