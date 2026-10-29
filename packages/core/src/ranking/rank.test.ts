@@ -426,11 +426,257 @@ describe("rank", () => {
     });
     expect(r?.why).toBe("due today");
   });
+
+  it("ranks only active retention commitments; archived, excluded and purged are hidden", () => {
+    const items = (["active", "archived", "excluded", "purged"] as const).map((retentionState) =>
+      commitment({ id: retentionState, retentionState, pinned: true, priority: 0 }),
+    );
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["active"]);
+  });
+
+  it("does not consume meetings or goals that are not retention active", () => {
+    const g = goal({ id: "g1", status: "active", retentionState: "archived" });
+    const mtg = meeting({
+      id: "m1",
+      start: "2026-10-29T20:00:00.000Z",
+      retentionState: "excluded",
+    });
+    const a = commitment({ id: "a", goalId: "g1", meetingId: "m1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [g],
+      config,
+    });
+    expect(r?.score).toBe(0);
+  });
+
+  it("keeps priority p3 as a zero-point component", () => {
+    const a = commitment({ id: "a", priority: 3 });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("p3");
+    expect(r?.dominant).toBe("priority");
+    expect(r?.components).toContainEqual({ kind: "priority", points: 0, detail: "p3" });
+  });
+
+  it("orders equal-score ties by chronological capturedAt, not lexical", () => {
+    const earlier = commitment({
+      id: "earlier",
+      priority: 2,
+      capturedAt: "2026-10-20T12:00:00Z",
+    });
+    const later = commitment({
+      id: "later",
+      priority: 2,
+      capturedAt: "2026-10-20T12:00:00.001Z",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [later, earlier],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["earlier", "later"]);
+  });
+
+  it("tie-breaks identical instants represented with different precision by commitment id", () => {
+    const a = commitment({
+      id: "a",
+      priority: 2,
+      capturedAt: "2026-10-20T12:00:00Z",
+    });
+    const b = commitment({
+      id: "b",
+      priority: 2,
+      capturedAt: "2026-10-20T12:00:00.000Z",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [b, a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["a", "b"]);
+  });
+
+  it("breaks genuine due-date ties by capturedAt and then id", () => {
+    const a = commitment({
+      id: "a",
+      due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE },
+      capturedAt: "2026-10-20T12:00:01.000Z",
+    });
+    const b = commitment({
+      id: "b",
+      due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE },
+      capturedAt: "2026-10-20T12:00:02.000Z",
+    });
+    const c = commitment({
+      id: "c",
+      due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE },
+      capturedAt: "2026-10-20T12:00:01.000Z",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c, b, a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["a", "c", "b"]);
+  });
+
+  it("breaks null-due ties by capturedAt and then id", () => {
+    const a = commitment({
+      id: "a",
+      priority: 2,
+      capturedAt: "2026-10-20T12:00:01.000Z",
+    });
+    const b = commitment({
+      id: "b",
+      priority: 2,
+      capturedAt: "2026-10-20T12:00:02.000Z",
+    });
+    const c = commitment({
+      id: "c",
+      priority: 2,
+      capturedAt: "2026-10-20T12:00:01.000Z",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c, b, a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["a", "c", "b"]);
+  });
+
+  it("excludes meetings before the current time from time-critical scoring", () => {
+    const mtg = meeting({ id: "m1", start: "2026-10-29T18:00:00.000Z" }); // before NOON_TODAY
+    const a = commitment({ id: "a", meetingId: "m1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r?.score).toBe(0);
+  });
+
+  it("includes meetings exactly at the current time in time-critical scoring", () => {
+    const now = new Date("2026-10-29T20:00:00.000Z");
+    const mtg = meeting({ id: "m1", start: "2026-10-29T20:00:00.000Z" });
+    const a = commitment({ id: "a", meetingId: "m1" });
+    const [r] = rank({
+      now,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r?.dominant).toBe("time_critical");
+    expect(r?.why).toBe("meeting 1pm");
+  });
+
+  it("excludes meetings after the time-critical window from scoring", () => {
+    const now = new Date("2026-10-29T19:00:00.000Z");
+    const mtg = meeting({ id: "m1", start: "2026-10-30T20:00:00.000Z" }); // 25 hours later
+    const a = commitment({ id: "a", meetingId: "m1" });
+    const [r] = rank({
+      now,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r?.score).toBe(0);
+  });
+
+  it("identifies 'due today' correctly on the fall-back DST transition day", () => {
+    const dstDay = new Date("2026-11-01T19:00:00.000Z"); // 12:00 PDT, Nov 1
+    const a = commitment({
+      id: "a",
+      due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE },
+    });
+    const [r] = rank({
+      now: dstDay,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("due today");
+  });
+
+  it("includes a snoozed item only when snoozedUntil is exactly now", () => {
+    const exactlyNow = "2026-10-29T19:00:00.000Z";
+    const a = commitment({
+      id: "a",
+      status: "snoozed",
+      snoozedUntil: exactlyNow,
+      priority: 0,
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["a"]);
+  });
+
+  it("does not mutate the input commitments or arrays", () => {
+    const a = commitment({ id: "a", priority: 0 });
+    const input = {
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    };
+    const before = JSON.stringify(input);
+    rank(input);
+    expect(JSON.stringify(input)).toBe(before);
+  });
 });
 
 describe("selectTop", () => {
   function toMap(items: Commitment[]) {
     return new Map(items.map((c) => [c.id, c]));
+  }
+  function toGoalMap(goals: Goal[]) {
+    return new Map(goals.map((g) => [g.id, g]));
   }
 
   it("takes topN items", () => {
@@ -449,12 +695,12 @@ describe("selectTop", () => {
       goals: [],
       config,
     });
-    const top = selectTop(ranked, toMap(items), config);
+    const top = selectTop(ranked, toMap(items), toGoalMap([]), config);
     expect(top).toHaveLength(5);
     expect(top.map((r) => r?.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "c4"]);
   });
 
-  it("replaces the last slot with the best goal-linked item when no goal is in the top 5", () => {
+  it("replaces the lowest-ranked non-goal with an active goal-linked item when no goal is in the top 5", () => {
     const g = goal({ id: "g1", title: "Goal A" });
     const nonGoals = Array.from({ length: 5 }, (_, i) =>
       commitment({ id: `c${i}`, pinned: true, capturedAt: `2026-10-20T12:00:0${i}.000Z` }),
@@ -474,8 +720,156 @@ describe("selectTop", () => {
       goals: [g],
       config,
     });
-    const top = selectTop(ranked, toMap(items), config);
+    const top = selectTop(ranked, toMap(items), toGoalMap([g]), config);
     expect(top.map((r) => r?.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "cg"]);
+  });
+
+  it("does not treat a goalId without an active goal record as a qualifying goal", () => {
+    const nonGoals = Array.from({ length: 5 }, (_, i) =>
+      commitment({ id: `c${i}`, pinned: true, capturedAt: `2026-10-20T12:00:0${i}.000Z` }),
+    );
+    const goalItem = commitment({
+      id: "cg",
+      goalId: "g1",
+      priority: 1,
+      capturedAt: "2026-10-20T12:00:10.000Z",
+    });
+    const items = [...nonGoals, goalItem];
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [], // no active goal record provided
+      config,
+    });
+    const top = selectTop(ranked, toMap(items), toGoalMap([]), config);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "c4"]);
+  });
+
+  it("preserves an existing tail goal while adding an outside active goal", () => {
+    const g = goal({ id: "g1", title: "Goal A" });
+    const items = [
+      commitment({ id: "a", pinned: true, capturedAt: "2026-10-20T12:00:00.000Z" }),
+      commitment({ id: "b", pinned: true, capturedAt: "2026-10-20T12:00:01.000Z" }),
+      commitment({ id: "c", pinned: true, capturedAt: "2026-10-20T12:00:02.000Z" }),
+      commitment({ id: "d", pinned: true, capturedAt: "2026-10-20T12:00:03.000Z" }),
+      commitment({ id: "g1", goalId: "g1", capturedAt: "2026-10-20T12:00:04.000Z" }),
+      commitment({ id: "g2", goalId: "g1", capturedAt: "2026-10-20T12:00:05.000Z" }),
+    ];
+    const cfg = { ...config, topN: 5, goalSlots: 2 };
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [g],
+      config: cfg,
+    });
+    const top = selectTop(ranked, toMap(items), toGoalMap([g]), cfg);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["a", "b", "c", "g1", "g2"]);
+  });
+
+  it("does not replace non-goals when the goal quota is already satisfied", () => {
+    const g = goal({ id: "g1", title: "Goal A" });
+    const items = [
+      commitment({ id: "a", pinned: true, capturedAt: "2026-10-20T12:00:00.000Z" }),
+      commitment({ id: "g1", goalId: "g1", capturedAt: "2026-10-20T12:00:01.000Z" }),
+      commitment({ id: "b", pinned: true, capturedAt: "2026-10-20T12:00:02.000Z" }),
+      commitment({ id: "c", pinned: true, capturedAt: "2026-10-20T12:00:03.000Z" }),
+      commitment({ id: "d", pinned: true, capturedAt: "2026-10-20T12:00:04.000Z" }),
+      commitment({ id: "g2", goalId: "g1", capturedAt: "2026-10-20T12:00:05.000Z" }),
+    ];
+    const cfg = { ...config, topN: 5, goalSlots: 1 };
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [g],
+      config: cfg,
+    });
+    const top = selectTop(ranked, toMap(items), toGoalMap([g]), cfg);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["a", "b", "c", "d", "g1"]);
+  });
+
+  it("does not promote goals when goalSlots is 0", () => {
+    const g = goal({ id: "g1" });
+    const nonGoals = Array.from({ length: 5 }, (_, i) =>
+      commitment({ id: `c${i}`, pinned: true, capturedAt: `2026-10-20T12:00:0${i}.000Z` }),
+    );
+    const goalItem = commitment({ id: "cg", goalId: "g1", capturedAt: "2026-10-20T12:00:10.000Z" });
+    const items = [...nonGoals, goalItem];
+    const cfg = { ...config, topN: 5, goalSlots: 0 };
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [g],
+      config: cfg,
+    });
+    const top = selectTop(ranked, toMap(items), toGoalMap([g]), cfg);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "c4"]);
+  });
+
+  it("replaces as many non-goals as there are outside goals when fewer than needed", () => {
+    const g = goal({ id: "g1" });
+    const nonGoals = Array.from({ length: 5 }, (_, i) =>
+      commitment({ id: `c${i}`, pinned: true, capturedAt: `2026-10-20T12:00:0${i}.000Z` }),
+    );
+    const goalItem = commitment({ id: "cg", goalId: "g1", capturedAt: "2026-10-20T12:00:10.000Z" });
+    const items = [...nonGoals, goalItem];
+    const cfg = { ...config, topN: 5, goalSlots: 3 };
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [g],
+      config: cfg,
+    });
+    const top = selectTop(ranked, toMap(items), toGoalMap([g]), cfg);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "cg"]);
+  });
+
+  it("does not exceed topN when the goal quota is larger than the window", () => {
+    const g = goal({ id: "g1" });
+    const nonGoals = Array.from({ length: 3 }, (_, i) =>
+      commitment({ id: `c${i}`, pinned: true, capturedAt: `2026-10-20T12:00:0${i}.000Z` }),
+    );
+    const goalItems = [
+      commitment({ id: "g1", goalId: "g1", capturedAt: "2026-10-20T12:00:10.000Z" }),
+      commitment({ id: "g2", goalId: "g1", capturedAt: "2026-10-20T12:00:11.000Z" }),
+    ];
+    const items = [...nonGoals, ...goalItems];
+    const cfg = { ...config, topN: 3, goalSlots: 5 };
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [g],
+      config: cfg,
+    });
+    const top = selectTop(ranked, toMap(items), toGoalMap([g]), cfg);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["c0", "g1", "g2"]);
+  });
+
+  it("returns an empty array when topN is 0", () => {
+    const g = goal({ id: "g1" });
+    const items = [commitment({ id: "a", pinned: true }), commitment({ id: "cg", goalId: "g1" })];
+    const cfg = { ...config, topN: 0, goalSlots: 1 };
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [g],
+      config: cfg,
+    });
+    const top = selectTop(ranked, toMap(items), toGoalMap([g]), cfg);
+    expect(top).toEqual([]);
   });
 
   it("excludes later/someday undated items from the top 5", () => {
@@ -493,7 +887,7 @@ describe("selectTop", () => {
     });
     expect(ranked.map((r) => r?.commitmentId)).toContain("a");
     expect(ranked.map((r) => r?.commitmentId)).toContain("b");
-    const top = selectTop(ranked, toMap(items), config);
+    const top = selectTop(ranked, toMap(items), toGoalMap([]), config);
     expect(top.map((r) => r?.commitmentId)).toEqual(["c"]);
   });
 
@@ -512,7 +906,7 @@ describe("selectTop", () => {
       goals: [],
       config,
     });
-    const top = selectTop(ranked, toMap(items), config);
+    const top = selectTop(ranked, toMap(items), toGoalMap([]), config);
     expect(top.map((r) => r?.commitmentId)).toEqual(["a"]);
   });
 });

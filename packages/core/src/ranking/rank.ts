@@ -17,6 +17,7 @@ export function rank(input: {
 
   const candidates = input.commitments.filter((c) => {
     if (c.direction !== "mine") return false;
+    if (c.retentionState !== "active") return false;
     if (c.status === "active") return true;
     if (c.status === "snoozed" && c.snoozedUntil != null) {
       return new Date(c.snoozedUntil).getTime() <= input.now.getTime();
@@ -50,9 +51,11 @@ export function rank(input: {
       return aDue > bDue ? 1 : -1;
     }
 
-    const aCap = aC?.capturedAt ?? "";
-    const bCap = bC?.capturedAt ?? "";
-    if (aCap !== bCap) return aCap > bCap ? 1 : -1;
+    // Chronological capture instant tie-break; lexical comparison would mis-order
+    // seconds-only and fractional ISO-8601 representations of the same instant.
+    const aCapMs = aC?.capturedAt ? new Date(aC.capturedAt).getTime() : Number.POSITIVE_INFINITY;
+    const bCapMs = bC?.capturedAt ? new Date(bC.capturedAt).getTime() : Number.POSITIVE_INFINITY;
+    if (aCapMs !== bCapMs) return aCapMs - bCapMs;
 
     return a.commitmentId > b.commitmentId ? 1 : -1;
   });

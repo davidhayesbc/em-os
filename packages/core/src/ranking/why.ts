@@ -183,10 +183,10 @@ export function scoreCommitment(
     components.push({ kind: "pin", points: weights.pin, detail: "pinned" });
   }
 
-  // priority p0..p3.
+  // priority p0..p3 (p3 is intentionally zero points but still an honest component).
   if (c.priority != null) {
     const points = weights.priority[c.priority];
-    if (points != null && points > 0) {
+    if (points != null) {
       components.push({ kind: "priority", points, detail: `p${c.priority}` });
     }
   }
@@ -223,7 +223,9 @@ export function buildContext(
     today: toLocalDate(now, timeZone),
     tomorrow: addLocalDays(toLocalDate(now, timeZone), 1),
     config,
-    meetingById: new Map(meetings.map((m) => [m.id, m])),
-    goalById: new Map(goals.map((g) => [g.id, g])),
+    meetingById: new Map(
+      meetings.filter((m) => m.retentionState === "active").map((m) => [m.id, m]),
+    ),
+    goalById: new Map(goals.filter((g) => g.retentionState === "active").map((g) => [g.id, g])),
   };
 }
