@@ -1,8 +1,8 @@
 import type { Commitment, Goal, Meeting, RankConfig } from "@emos/api-contract";
-import { buildContext, scoreCommitment, type ComponentKind, type RankedItem } from "./why.js";
+import { buildContext, type ComponentKind, type RankedItem, scoreCommitment } from "./why.js";
 
-export type { ComponentKind, RankedItem };
 export { selectTop } from "./select.js";
+export type { ComponentKind, RankedItem };
 
 export function rank(input: {
   now: Date;

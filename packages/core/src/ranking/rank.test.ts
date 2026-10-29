@@ -86,62 +86,124 @@ function goal(overrides: Partial<Goal> = {}): Goal {
 
 describe("rank", () => {
   it("returns an empty array for no commitments", () => {
-    expect(rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [], meetings: [], goals: [], config })).toEqual([]);
+    expect(
+      rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [],
+        meetings: [],
+        goals: [],
+        config,
+      }),
+    ).toEqual([]);
   });
 
   it("prep for a 1pm meeting today outranks an item due in 3 days", () => {
     const mtg = meeting({ id: "m1" });
     const a = commitment({ id: "a", meetingId: "m1" });
     const b = commitment({ id: "b", due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE } });
-    const result = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a, b], meetings: [mtg], goals: [], config });
-    expect(result.map((r) => r!.commitmentId)).toEqual(["a", "b"]);
-    expect(result[0]!.why).toBe("meeting 1pm");
-    expect(result[0]!.dominant).toBe("time_critical");
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a, b],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r?.commitmentId)).toEqual(["a", "b"]);
+    expect(result[0]?.why).toBe("meeting 1pm");
+    expect(result[0]?.dominant).toBe("time_critical");
   });
 
   it("formats meeting times with non-zero minutes", () => {
-    const mtg = meeting({ id: "m1", start: "2026-10-29T16:30:00.000Z", end: "2026-10-29T17:00:00.000Z" }); // 9:30am PDT
+    const mtg = meeting({
+      id: "m1",
+      start: "2026-10-29T16:30:00.000Z",
+      end: "2026-10-29T17:00:00.000Z",
+    }); // 9:30am PDT
     const a = commitment({ id: "a", meetingId: "m1" });
-    const [r] = rank({ now: MORNING_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [mtg], goals: [], config });
-    expect(r!.why).toBe("meeting 9:30am");
+    const [r] = rank({
+      now: MORNING_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("meeting 9:30am");
   });
 
   it("due today outranks due in 3 days", () => {
     const a = commitment({ id: "a", due: { date: "2026-10-29", time: null, timeZone: TIME_ZONE } });
     const b = commitment({ id: "b", due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE } });
-    const result = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a, b], meetings: [], goals: [], config });
-    expect(result.map((r) => r!.commitmentId)).toEqual(["a", "b"]);
-    expect(result[0]!.why).toBe("due today");
-    expect(result[0]!.dominant).toBe("time_critical");
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a, b],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r?.commitmentId)).toEqual(["a", "b"]);
+    expect(result[0]?.why).toBe("due today");
+    expect(result[0]?.dominant).toBe("time_critical");
   });
 
   it("overdue 2d outranks due today", () => {
     const a = commitment({ id: "a", due: { date: "2026-10-27", time: null, timeZone: TIME_ZONE } });
     const b = commitment({ id: "b", due: { date: "2026-10-29", time: null, timeZone: TIME_ZONE } });
-    const result = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a, b], meetings: [], goals: [], config });
-    expect(result.map((r) => r!.commitmentId)).toEqual(["a", "b"]);
-    expect(result[0]!.why).toBe("overdue 2d");
-    expect(result[0]!.dominant).toBe("time_critical");
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a, b],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r?.commitmentId)).toEqual(["a", "b"]);
+    expect(result[0]?.why).toBe("overdue 2d");
+    expect(result[0]?.dominant).toBe("time_critical");
   });
 
   it("due tomorrow is time-critical", () => {
     const a = commitment({ id: "a", due: { date: "2026-10-30", time: null, timeZone: TIME_ZONE } });
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [], config });
-    expect(r!.why).toBe("due tomorrow");
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("due tomorrow");
   });
 
   it("future hard-dated due uses 'due Mon' within 6 days", () => {
     const a = commitment({ id: "a", due: { date: "2026-11-02", time: null, timeZone: TIME_ZONE } }); // Mon
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [], config });
-    expect(r!.why).toBe("due Mon");
-    expect(r!.dominant).toBe("hard_dated");
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("due Mon");
+    expect(r?.dominant).toBe("hard_dated");
   });
 
   it("future hard-dated due uses 'due Nov 15' beyond 6 days", () => {
     const a = commitment({ id: "a", due: { date: "2026-11-15", time: null, timeZone: TIME_ZONE } });
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [], config });
-    expect(r!.why).toBe("due Nov 15");
-    expect(r!.dominant).toBe("hard_dated");
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("due Nov 15");
+    expect(r?.dominant).toBe("hard_dated");
   });
 
   it("waiting on you 4d outranks an undated p2", () => {
@@ -152,60 +214,6 @@ describe("rank", () => {
       capturedAt: "2026-10-25T19:00:00.000Z",
     });
     const b = commitment({ id: "b", priority: 2 });
-    const result = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a, b], meetings: [], goals: [], config });
-    expect(result.map((r) => r!.commitmentId)).toEqual(["a", "b"]);
-    expect(result[0]!.why).toBe("waiting on you 4d");
-    expect(result[0]!.dominant).toBe("waiting_on_me");
-  });
-
-  it("active goal-linked item exposes the goal chip", () => {
-    const g = goal({ id: "g1", title: "Improve onboarding flow" });
-    const a = commitment({ id: "a", goalId: "g1" });
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [g], config });
-    expect(r!.why).toBe("advances Improve onboarding f…");
-    expect(r!.dominant).toBe("goal");
-  });
-
-  it("truncates long goal titles", () => {
-    const g = goal({ id: "g1", title: "This is a very long quarterly goal title" });
-    const a = commitment({ id: "a", goalId: "g1" });
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [g], config });
-    expect(r!.why).toBe("advances This is a very long …");
-  });
-
-  it("inactive goals do not score", () => {
-    const g = goal({ id: "g1", status: "dropped" });
-    const a = commitment({ id: "a", goalId: "g1" });
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [g], config });
-    expect(r!.score).toBe(0);
-  });
-
-  it("pin dominates priority and urgency", () => {
-    const a = commitment({ id: "a", pinned: true, priority: 0, urgency: "now" });
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [], config });
-    expect(r!.why).toBe("pinned");
-    expect(r!.dominant).toBe("pin");
-  });
-
-  it("priority p0 chip", () => {
-    const a = commitment({ id: "a", priority: 0 });
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [], config });
-    expect(r!.why).toBe("p0");
-    expect(r!.dominant).toBe("priority");
-  });
-
-  it("urgency now chip", () => {
-    const a = commitment({ id: "a", urgency: "now" });
-    const [r] = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [], config });
-    expect(r!.why).toBe("now");
-    expect(r!.dominant).toBe("urgency");
-  });
-
-  it("snoozed until tomorrow is excluded; snoozed until yesterday is included", () => {
-    const tomorrowMidnight = "2026-10-30T07:00:00.000Z";
-    const yesterdayMidnight = "2026-10-28T07:00:00.000Z";
-    const a = commitment({ id: "a", status: "snoozed", snoozedUntil: tomorrowMidnight, priority: 0 });
-    const b = commitment({ id: "b", status: "snoozed", snoozedUntil: yesterdayMidnight, priority: 0 });
     const result = rank({
       now: NOON_TODAY,
       timeZone: TIME_ZONE,
@@ -214,12 +222,132 @@ describe("rank", () => {
       goals: [],
       config,
     });
-    expect(result.map((r) => r!.commitmentId)).toEqual(["b"]);
+    expect(result.map((r) => r?.commitmentId)).toEqual(["a", "b"]);
+    expect(result[0]?.why).toBe("waiting on you 4d");
+    expect(result[0]?.dominant).toBe("waiting_on_me");
+  });
+
+  it("active goal-linked item exposes the goal chip", () => {
+    const g = goal({ id: "g1", title: "Improve onboarding flow" });
+    const a = commitment({ id: "a", goalId: "g1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [g],
+      config,
+    });
+    expect(r?.why).toBe("advances Improve onboarding f…");
+    expect(r?.dominant).toBe("goal");
+  });
+
+  it("truncates long goal titles", () => {
+    const g = goal({ id: "g1", title: "This is a very long quarterly goal title" });
+    const a = commitment({ id: "a", goalId: "g1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [g],
+      config,
+    });
+    expect(r?.why).toBe("advances This is a very long …");
+  });
+
+  it("inactive goals do not score", () => {
+    const g = goal({ id: "g1", status: "dropped" });
+    const a = commitment({ id: "a", goalId: "g1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [g],
+      config,
+    });
+    expect(r?.score).toBe(0);
+  });
+
+  it("pin dominates priority and urgency", () => {
+    const a = commitment({ id: "a", pinned: true, priority: 0, urgency: "now" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("pinned");
+    expect(r?.dominant).toBe("pin");
+  });
+
+  it("priority p0 chip", () => {
+    const a = commitment({ id: "a", priority: 0 });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("p0");
+    expect(r?.dominant).toBe("priority");
+  });
+
+  it("urgency now chip", () => {
+    const a = commitment({ id: "a", urgency: "now" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("now");
+    expect(r?.dominant).toBe("urgency");
+  });
+
+  it("snoozed until tomorrow is excluded; snoozed until yesterday is included", () => {
+    const tomorrowMidnight = "2026-10-30T07:00:00.000Z";
+    const yesterdayMidnight = "2026-10-28T07:00:00.000Z";
+    const a = commitment({
+      id: "a",
+      status: "snoozed",
+      snoozedUntil: tomorrowMidnight,
+      priority: 0,
+    });
+    const b = commitment({
+      id: "b",
+      status: "snoozed",
+      snoozedUntil: yesterdayMidnight,
+      priority: 0,
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a, b],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r?.commitmentId)).toEqual(["b"]);
   });
 
   it("owed_to_me is never ranked", () => {
     const a = commitment({ id: "a", direction: "owed_to_me", priority: 0 });
-    const result = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [], config });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
     expect(result).toHaveLength(0);
   });
 
@@ -251,9 +379,14 @@ describe("rank", () => {
       );
     }
     const run = (order: Commitment[]) =>
-      rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: order, meetings: [], goals: [], config }).map(
-        (r) => r!.commitmentId,
-      );
+      rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: order,
+        meetings: [],
+        goals: [],
+        config,
+      }).map((r) => r?.commitmentId);
 
     const forwards = run([...items]);
     const shuffled = run([...items].reverse());
@@ -269,15 +402,29 @@ describe("rank", () => {
       due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE },
       capturedAt: "2026-10-20T12:00:02.000Z",
     });
-    const result = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: [a, b], meetings: [], goals: [], config });
-    expect(result.map((r) => r!.commitmentId)).toEqual(["b", "a"]);
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a, b],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r?.commitmentId)).toEqual(["b", "a"]);
   });
 
   it("respects the display time zone for due today across a UTC midnight", () => {
     const lateNight = new Date("2026-10-30T06:30:00.000Z"); // 23:30 PDT Oct 29
     const a = commitment({ id: "a", due: { date: "2026-10-29", time: null, timeZone: TIME_ZONE } });
-    const [r] = rank({ now: lateNight, timeZone: TIME_ZONE, commitments: [a], meetings: [], goals: [], config });
-    expect(r!.why).toBe("due today");
+    const [r] = rank({
+      now: lateNight,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(r?.why).toBe("due today");
   });
 });
 
@@ -287,11 +434,24 @@ describe("selectTop", () => {
   }
 
   it("takes topN items", () => {
-    const items = Array.from({ length: 7 }, (_, i) => commitment({ id: `c${i}`, priority: i < 2 ? 0 : 1, capturedAt: `2026-10-20T12:00:0${i}.000Z` }));
-    const ranked = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: items, meetings: [], goals: [], config });
+    const items = Array.from({ length: 7 }, (_, i) =>
+      commitment({
+        id: `c${i}`,
+        priority: i < 2 ? 0 : 1,
+        capturedAt: `2026-10-20T12:00:0${i}.000Z`,
+      }),
+    );
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [],
+      config,
+    });
     const top = selectTop(ranked, toMap(items), config);
     expect(top).toHaveLength(5);
-    expect(top.map((r) => r!.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "c4"]);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "c4"]);
   });
 
   it("replaces the last slot with the best goal-linked item when no goal is in the top 5", () => {
@@ -299,11 +459,23 @@ describe("selectTop", () => {
     const nonGoals = Array.from({ length: 5 }, (_, i) =>
       commitment({ id: `c${i}`, pinned: true, capturedAt: `2026-10-20T12:00:0${i}.000Z` }),
     );
-    const goalItem = commitment({ id: "cg", goalId: "g1", priority: 1, capturedAt: "2026-10-20T12:00:10.000Z" });
+    const goalItem = commitment({
+      id: "cg",
+      goalId: "g1",
+      priority: 1,
+      capturedAt: "2026-10-20T12:00:10.000Z",
+    });
     const items = [...nonGoals, goalItem];
-    const ranked = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: items, meetings: [], goals: [g], config });
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [g],
+      config,
+    });
     const top = selectTop(ranked, toMap(items), config);
-    expect(top.map((r) => r!.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "cg"]);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["c0", "c1", "c2", "c3", "cg"]);
   });
 
   it("excludes later/someday undated items from the top 5", () => {
@@ -311,11 +483,18 @@ describe("selectTop", () => {
     const b = commitment({ id: "b", urgency: "someday" });
     const c = commitment({ id: "c", priority: 2 });
     const items = [a, b, c];
-    const ranked = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: items, meetings: [], goals: [], config });
-    expect(ranked.map((r) => r!.commitmentId)).toContain("a");
-    expect(ranked.map((r) => r!.commitmentId)).toContain("b");
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(ranked.map((r) => r?.commitmentId)).toContain("a");
+    expect(ranked.map((r) => r?.commitmentId)).toContain("b");
     const top = selectTop(ranked, toMap(items), config);
-    expect(top.map((r) => r!.commitmentId)).toEqual(["c"]);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["c"]);
   });
 
   it("keeps later/someday items that have a due date", () => {
@@ -325,8 +504,15 @@ describe("selectTop", () => {
       due: { date: "2026-10-29", time: null, timeZone: TIME_ZONE },
     });
     const items = [a];
-    const ranked = rank({ now: NOON_TODAY, timeZone: TIME_ZONE, commitments: items, meetings: [], goals: [], config });
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [],
+      config,
+    });
     const top = selectTop(ranked, toMap(items), config);
-    expect(top.map((r) => r!.commitmentId)).toEqual(["a"]);
+    expect(top.map((r) => r?.commitmentId)).toEqual(["a"]);
   });
 });

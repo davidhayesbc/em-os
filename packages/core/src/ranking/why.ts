@@ -73,7 +73,9 @@ function dueChip(dueDate: string, today: string, timeZone: string): string {
     const daysUntil = -daysPast;
     const instant = startOfLocalDay(dueDate, timeZone);
     if (daysUntil <= 6) {
-      const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(instant);
+      const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(
+        instant,
+      );
       return `due ${weekday}`;
     }
     const monthDay = new Intl.DateTimeFormat("en-US", {
@@ -94,7 +96,11 @@ function goalChip(goal: Goal): string {
 export function scoreCommitment(
   c: Commitment,
   ctx: ScoreContext,
-): { components: RankedItem["components"]; dominant: RankedItem["components"][number]; why: string } {
+): {
+  components: RankedItem["components"];
+  dominant: RankedItem["components"][number];
+  why: string;
+} {
   const components: RankedItem["components"] = [];
   const weights = ctx.config.weights;
 
