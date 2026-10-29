@@ -107,7 +107,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Core logic (pure)**
 
-- [ ] **P1-06** Ranking engine `rank` + `selectTop` — deps: P1-05 — claim: coder · t_a2a1023e-ranking-engine
+- [x] **P1-06** Ranking engine `rank` + `selectTop` — deps: P1-05 — claim: done · PLACEHOLDER
 - [ ] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: —
 - [ ] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: —
 - [ ] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: —
@@ -489,7 +489,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 
 - **`selectTop`:** takes `topN` items. If none of them is goal-linked and one exists further down, the last slot is replaced by the best goal-linked item (`goalSlots` times).
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - Prep for a 1pm meeting today outranks an item due in 3 days.
   - Due today outranks due in 3 days.
   - Overdue 2d outranks due today.
@@ -500,10 +500,10 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - `owed_to_me` is never ranked.
   - The tie-break is deterministic (the same input in shuffled order gives an identical output).
   - Each why string matches exactly, including `meeting 9:30am`.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-06): deterministic explainable ranking`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-06): deterministic explainable ranking`.
 
 **Acceptance:** It's a pure function, every ordering rule from spec §7.5 has a test, and every item has an exact why chip.
 
