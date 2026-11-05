@@ -14,5 +14,6 @@ export * from "./ports/repos/settings.js";
 export * from "./ports/repos/source-items.js";
 export * from "./ports/secrets.js";
 export * from "./ports/store.js";
+export * from "./ranking/index.js";
 export * from "./settings/defaults.js";
 export * from "./time/zoned.js";
