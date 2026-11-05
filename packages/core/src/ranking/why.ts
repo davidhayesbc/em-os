@@ -215,9 +215,17 @@ export function scoreCommitment(
 
   // priority p0..p3 (p3 is intentionally zero points but still an honest component).
   if (c.priority != null) {
-    const points = weights.priority[c.priority];
-    if (typeof points === "number" && Number.isFinite(points)) {
-      components.push({ kind: "priority", points, detail: `p${c.priority}` });
+    const idx = c.priority;
+    if (
+      typeof idx === "number" &&
+      Number.isInteger(idx) &&
+      idx >= 0 &&
+      idx < weights.priority.length
+    ) {
+      const points = weights.priority[idx];
+      if (typeof points === "number" && Number.isFinite(points)) {
+        components.push({ kind: "priority", points, detail: `p${idx}` });
+      }
     }
   }
 

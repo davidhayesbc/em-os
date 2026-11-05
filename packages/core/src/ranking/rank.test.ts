@@ -1249,17 +1249,49 @@ describe("rank why-chip hardening", () => {
 
 describe("rank priority weight guard", () => {
   it("does not allow a non-numeric priority to produce a non-finite or non-number score", () => {
-    const bad = commitment({ id: "bad", priority: "__proto__" as unknown as number });
-    const [r] = rank({
-      now: NOON_TODAY,
-      timeZone: TIME_ZONE,
-      commitments: [bad],
-      meetings: [],
-      goals: [],
-      config,
-    });
-    expect(typeof r?.score).toBe("number");
-    expect(Number.isFinite(r?.score)).toBe(true);
-    expect(r?.components.some((c) => c.kind === "priority")).toBe(false);
+    for (const priority of ["__proto__", "0", "1", "2", "3"]) {
+      const bad = commitment({
+        id: `bad-${priority}`,
+        priority: priority as unknown as number,
+      });
+      const [r] = rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [bad],
+        meetings: [],
+        goals: [],
+        config,
+      });
+      expect(typeof r?.score).toBe("number");
+      expect(Number.isFinite(r?.score)).toBe(true);
+      expect(r?.components.some((c) => c.kind === "priority")).toBe(false);
+    }
+  });
+
+  it("emits honest priority components for valid p0..p3 indices", () => {
+    const expected = [
+      { priority: 0, points: 120, detail: "p0" },
+      { priority: 1, points: 80, detail: "p1" },
+      { priority: 2, points: 40, detail: "p2" },
+      { priority: 3, points: 0, detail: "p3" },
+    ];
+    for (const { priority, points, detail } of expected) {
+      const c = commitment({ id: detail, priority });
+      const [r] = rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [c],
+        meetings: [],
+        goals: [],
+        config,
+      });
+      expect(r?.components.find((c) => c.kind === "priority")).toEqual({
+        kind: "priority",
+        points,
+        detail,
+      });
+      expect(typeof r?.score).toBe("number");
+      expect(Number.isFinite(r?.score)).toBe(true);
+    }
   });
 });
