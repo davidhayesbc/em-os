@@ -1224,6 +1224,13 @@ describe("rank why-chip hardening", () => {
     expect(hasControlChar(chipFor("\u001b[31mred\u001b[0m"))).toBe(false);
   });
 
+  it("strips C1 control characters from goal titles", () => {
+    expect(chipFor("a\u0085b")).toBe("advances ab");
+    expect(hasControlChar(chipFor("a\u0085b"))).toBe(false);
+    expect(chipFor("end\u009f")).toBe("advances end");
+    expect(hasControlChar(chipFor("end\u009f"))).toBe(false);
+  });
+
   it("truncates astral titles by code points without lone surrogates", () => {
     const title = `${"a".repeat(19)}\u{1F680}\u{1F680}`;
     const why = chipFor(title);

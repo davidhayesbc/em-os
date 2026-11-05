@@ -5,10 +5,12 @@ import {
   AuditEvent,
   Commitment,
   CommitmentDue,
+  DEFAULT_PROFILE,
   isValidTimeZone,
   LocalDate,
   LocalTime,
   Person,
+  RankConfig,
   TimeZone,
 } from "./index.js";
 
@@ -181,5 +183,25 @@ describe("AuditEvent.diff uses null, never undefined", () => {
     ).toBe(false);
     expect(AuditEvent.safeParse(event({ dropReason: { to: "user" } })).success).toBe(false);
     expect(AuditEvent.safeParse(event({ dropReason: { from: null } })).success).toBe(false);
+  });
+});
+
+describe("RankConfig validates topN and goalSlots as nonnegative integers", () => {
+  const base = { ...DEFAULT_PROFILE.rank };
+
+  it.each([-1, 2.5])("rejects topN=%j", (topN) => {
+    expect(RankConfig.safeParse({ ...base, topN }).success).toBe(false);
+  });
+
+  it("accepts topN=0", () => {
+    expect(RankConfig.safeParse({ ...base, topN: 0 }).success).toBe(true);
+  });
+
+  it.each([-1, 2.5])("rejects goalSlots=%j", (goalSlots) => {
+    expect(RankConfig.safeParse({ ...base, goalSlots }).success).toBe(false);
+  });
+
+  it("accepts goalSlots=0", () => {
+    expect(RankConfig.safeParse({ ...base, goalSlots: 0 }).success).toBe(true);
   });
 });

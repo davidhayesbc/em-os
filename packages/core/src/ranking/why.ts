@@ -11,6 +11,13 @@ export type ComponentKind =
   | "urgency"
   | "neutral";
 
+/**
+ * Security note: `why` may embed `Goal.title`, which can carry `private` sensitivity per
+ * ADR 0012. Ranking is local-only and does not redact; any caller that forwards a
+ * `RankedItem` over MCP (ADR 0013) or to `plan.narrate` must run egress sensitivity
+ * filtering before the chip leaves the trust boundary.
+ */
+
 export interface RankedItem {
   commitmentId: string;
   score: number;
@@ -18,13 +25,6 @@ export interface RankedItem {
   why: string;
   components: { kind: ComponentKind; points: number; detail: string }[];
 }
-
-/**
- * Security note: `why` may embed `Goal.title`, which can carry `private` sensitivity per
- * ADR 0012. Ranking is local-only and does not redact; any caller that forwards a
- * `RankedItem` over MCP (ADR 0013) or to `plan.narrate` must run egress sensitivity
- * filtering before the chip leaves the trust boundary.
- */
 
 export interface ScoreContext {
   now: Date;
