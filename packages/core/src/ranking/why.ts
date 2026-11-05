@@ -109,15 +109,17 @@ export function scoreCommitment(
   // time-critical: linked meeting within the window, or due today/tomorrow/overdue.
   let timeCriticalPoints = 0;
   let timeCriticalDetail = "";
+  let timeCriticalApplies = false;
 
   if (c.meetingId) {
     const meeting = ctx.meetingById.get(c.meetingId);
-    if (meeting) {
+    if (meeting && meeting.status === "confirmed") {
       const start = new Date(meeting.start).getTime();
       const windowEnd = ctx.now.getTime() + ctx.config.timeCriticalHours * 3600000;
       if (start >= ctx.now.getTime() && start <= windowEnd) {
         timeCriticalPoints = weights.timeCritical;
         timeCriticalDetail = formatMeetingTime(meeting.start, ctx.timeZone);
+        timeCriticalApplies = true;
       }
     }
   }
@@ -127,19 +129,21 @@ export function scoreCommitment(
     if (dueDate === ctx.today || dueDate === ctx.tomorrow) {
       timeCriticalPoints = Math.max(timeCriticalPoints, weights.timeCritical);
       if (!timeCriticalDetail) timeCriticalDetail = dueChip(dueDate, ctx.today, ctx.timeZone);
+      timeCriticalApplies = true;
     } else {
       const daysOverdue = localDayDiff(dueDate, ctx.today, ctx.timeZone);
       if (daysOverdue > 0) {
         const points = weights.timeCritical + weights.overduePerDay * daysOverdue;
-        if (points > timeCriticalPoints) {
-          timeCriticalPoints = points;
+        if (points > timeCriticalPoints || !timeCriticalDetail) {
+          timeCriticalPoints = Math.max(timeCriticalPoints, points);
           timeCriticalDetail = `overdue ${daysOverdue}d`;
         }
+        timeCriticalApplies = true;
       }
     }
   }
 
-  if (timeCriticalPoints > 0) {
+  if (timeCriticalApplies) {
     components.push({
       kind: "time_critical",
       points: timeCriticalPoints,
@@ -231,7 +235,9 @@ export function buildContext(
     tomorrow: addLocalDays(toLocalDate(now, timeZone), 1),
     config,
     meetingById: new Map(
-      meetings.filter((m) => m.retentionState === "active").map((m) => [m.id, m]),
+      meetings
+        .filter((m) => m.retentionState === "active" && m.status === "confirmed")
+        .map((m) => [m.id, m]),
     ),
     goalById: new Map(goals.filter((g) => g.retentionState === "active").map((g) => [g.id, g])),
   };

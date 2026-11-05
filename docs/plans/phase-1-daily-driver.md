@@ -472,7 +472,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - **time_critical:** the linked meeting (`meetingId`) starts within `timeCriticalHours`, *or* the due date is ≤ tomorrow (local). Overdue adds `overduePerDay × days`.
   - **hard_dated:** due later than tomorrow, scaled `hardDated / daysUntilDue`.
   - **waiting_on_me:** `counterpartId` is set and there's no due date; `waitingPerDay × ageDays`, where age is measured from `occurredAt`.
-  - **goal:** `goalId` resolves to a retention-active goal with active status. Only retention-active meetings contribute meeting signals.
+  - **goal:** `goalId` resolves to a retention-active goal with active status. Only retention-active **confirmed** meetings contribute meeting signals.
   - **pin**, **priority** (weights by p0..p3, including the genuine zero-point p3 component) and **urgency** (`now` only).
   - **neutral:** ranking-only fallback when no real component applies; 0 points, detail and why exactly `no additional signal`. Never substitutes for an applicable signal, including a zero-point one, and never fabricates a pin.
 - **Exclusions:** urgency `later` / `someday` items with no due date are excluded from `selectTop`, but still ranked.

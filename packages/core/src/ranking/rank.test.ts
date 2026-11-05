@@ -780,6 +780,146 @@ describe("rank", () => {
   });
 });
 
+describe("rank zero-weight time-critical signals", () => {
+  const zeroConfig = {
+    ...config,
+    weights: { ...config.weights, timeCritical: 0, overduePerDay: 0 },
+  };
+
+  it("due today stays time_critical with 0 weight, not neutral", () => {
+    const a = commitment({ id: "a", due: { date: "2026-10-29", time: null, timeZone: TIME_ZONE } });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config: zeroConfig,
+    });
+    expect(r).toEqual({
+      commitmentId: "a",
+      score: 0,
+      dominant: "time_critical",
+      why: "due today",
+      components: [{ kind: "time_critical", points: 0, detail: "due today" }],
+    });
+  });
+
+  it("due tomorrow stays time_critical with 0 weight, not neutral", () => {
+    const a = commitment({ id: "a", due: { date: "2026-10-30", time: null, timeZone: TIME_ZONE } });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config: zeroConfig,
+    });
+    expect(r).toEqual({
+      commitmentId: "a",
+      score: 0,
+      dominant: "time_critical",
+      why: "due tomorrow",
+      components: [{ kind: "time_critical", points: 0, detail: "due tomorrow" }],
+    });
+  });
+
+  it("overdue stays time_critical with 0 weight, not neutral", () => {
+    const a = commitment({ id: "a", due: { date: "2026-10-27", time: null, timeZone: TIME_ZONE } });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [],
+      config: zeroConfig,
+    });
+    expect(r).toEqual({
+      commitmentId: "a",
+      score: 0,
+      dominant: "time_critical",
+      why: "overdue 2d",
+      components: [{ kind: "time_critical", points: 0, detail: "overdue 2d" }],
+    });
+  });
+
+  it("in-window meeting stays time_critical with 0 weight, not neutral", () => {
+    const mtg = meeting({ id: "m1" });
+    const a = commitment({ id: "a", meetingId: "m1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config: { ...config, weights: { ...config.weights, timeCritical: 0 } },
+    });
+    expect(r).toEqual({
+      commitmentId: "a",
+      score: 0,
+      dominant: "time_critical",
+      why: "meeting 1pm",
+      components: [{ kind: "time_critical", points: 0, detail: "meeting 1pm" }],
+    });
+  });
+});
+
+describe("rank meeting status filtering", () => {
+  it("cancelled retention-active meetings do not add a time-critical signal", () => {
+    const mtg = meeting({ id: "m1", status: "cancelled" });
+    const a = commitment({ id: "a", meetingId: "m1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r).toEqual({
+      commitmentId: "a",
+      score: 0,
+      dominant: "neutral",
+      why: "no additional signal",
+      components: [{ kind: "neutral", points: 0, detail: "no additional signal" }],
+    });
+  });
+
+  it("confirmed retention-active meetings still score time-critical", () => {
+    const mtg = meeting({ id: "m1", status: "confirmed" });
+    const a = commitment({ id: "a", meetingId: "m1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r?.dominant).toBe("time_critical");
+    expect(r?.why).toBe("meeting 1pm");
+  });
+
+  it("archived retention meetings are ignored regardless of status", () => {
+    const mtg = meeting({ id: "m1", status: "confirmed", retentionState: "archived" });
+    const a = commitment({ id: "a", meetingId: "m1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r?.score).toBe(0);
+    expect(r?.components).toContainEqual({
+      kind: "neutral",
+      points: 0,
+      detail: "no additional signal",
+    });
+  });
+});
+
 describe("selectTop", () => {
   function toMap(items: Commitment[]) {
     return new Map(items.map((c) => [c.id, c]));
