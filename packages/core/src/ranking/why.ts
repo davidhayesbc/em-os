@@ -11,6 +11,13 @@ export type ComponentKind =
   | "urgency"
   | "neutral";
 
+/**
+ * Security note: `why` may embed `Goal.title`, which can carry `private` sensitivity per
+ * ADR 0012. Ranking is local-only and does not redact; any caller that forwards a
+ * `RankedItem` over MCP (ADR 0013) or to `plan.narrate` must run egress sensitivity
+ * filtering before the chip leaves the trust boundary.
+ */
+
 export interface RankedItem {
   commitmentId: string;
   score: number;
@@ -90,9 +97,26 @@ function dueChip(dueDate: string, today: string, timeZone: string): string {
   return `overdue ${daysPast}d`;
 }
 
+/** C0/C1 control characters that should never reach a display surface or log line. */
+function isControlChar(codePoint: number): boolean {
+  return (codePoint >= 0x00 && codePoint <= 0x1f) || (codePoint >= 0x7f && codePoint <= 0x9f);
+}
+
+/** Sanitise a user-derived title for the "advances …" chip. */
+function sanitiseChipText(title: string): string {
+  let out = "";
+  for (const ch of title) {
+    if (!isControlChar(ch.codePointAt(0) ?? 0)) out += ch;
+  }
+  return out;
+}
+
 function goalChip(goal: Goal): string {
-  const title = goal.title.length > 20 ? `${goal.title.slice(0, 20)}…` : goal.title;
-  return `advances ${title}`;
+  const clean = sanitiseChipText(goal.title);
+  const graphemes = [...clean];
+  const visible = graphemes.slice(0, 20).join("");
+  const suffix = graphemes.length > 20 ? "…" : "";
+  return `advances ${visible}${suffix}`;
 }
 
 export function scoreCommitment(
@@ -191,9 +215,17 @@ export function scoreCommitment(
 
   // priority p0..p3 (p3 is intentionally zero points but still an honest component).
   if (c.priority != null) {
-    const points = weights.priority[c.priority];
-    if (points != null) {
-      components.push({ kind: "priority", points, detail: `p${c.priority}` });
+    const idx = c.priority;
+    if (
+      typeof idx === "number" &&
+      Number.isInteger(idx) &&
+      idx >= 0 &&
+      idx < weights.priority.length
+    ) {
+      const points = weights.priority[idx];
+      if (typeof points === "number" && Number.isFinite(points)) {
+        components.push({ kind: "priority", points, detail: `p${idx}` });
+      }
     }
   }
 

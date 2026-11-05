@@ -1186,3 +1186,112 @@ describe("selectTop", () => {
     expect(top.map((r) => r?.commitmentId)).toEqual(["a"]);
   });
 });
+
+describe("rank why-chip hardening", () => {
+  function chipFor(title: string) {
+    const g = goal({ id: "g1", title });
+    const a = commitment({ id: "a", goalId: "g1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [g],
+      config,
+    });
+    return r?.why ?? "";
+  }
+
+  function hasControlChar(s: string): boolean {
+    for (const cp of s) {
+      const code = cp.codePointAt(0) ?? 0;
+      if ((code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f)) return true;
+    }
+    return false;
+  }
+
+  it("strips newlines from goal titles", () => {
+    expect(chipFor("Ship\nINJECTED")).toBe("advances ShipINJECTED");
+    expect(hasControlChar(chipFor("Ship\nINJECTED"))).toBe(false);
+  });
+
+  it("strips NUL bytes from goal titles", () => {
+    expect(chipFor("\u0000null-byte")).toBe("advances null-byte");
+  });
+
+  it("strips ANSI escape sequences from goal titles", () => {
+    expect(chipFor("\u001b[31mred\u001b[0m")).toBe("advances [31mred[0m");
+    expect(hasControlChar(chipFor("\u001b[31mred\u001b[0m"))).toBe(false);
+  });
+
+  it("strips C1 control characters from goal titles", () => {
+    expect(chipFor("a\u0085b")).toBe("advances ab");
+    expect(hasControlChar(chipFor("a\u0085b"))).toBe(false);
+    expect(chipFor("end\u009f")).toBe("advances end");
+    expect(hasControlChar(chipFor("end\u009f"))).toBe(false);
+  });
+
+  it("truncates astral titles by code points without lone surrogates", () => {
+    const title = `${"a".repeat(19)}\u{1F680}\u{1F680}`;
+    const why = chipFor(title);
+    expect(why).toBe(`advances ${"a".repeat(19)}\u{1F680}…`);
+    expect(hasControlChar(why)).toBe(false);
+    // A high surrogate must be followed by a low surrogate.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(why)).toBe(false);
+  });
+
+  it("preserves normal long goal chip text exactly", () => {
+    expect(chipFor("This is a very long quarterly goal title")).toBe(
+      "advances This is a very long …",
+    );
+  });
+});
+
+describe("rank priority weight guard", () => {
+  it("does not allow a non-numeric priority to produce a non-finite or non-number score", () => {
+    for (const priority of ["__proto__", "0", "1", "2", "3"]) {
+      const bad = commitment({
+        id: `bad-${priority}`,
+        priority: priority as unknown as number,
+      });
+      const [r] = rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [bad],
+        meetings: [],
+        goals: [],
+        config,
+      });
+      expect(typeof r?.score).toBe("number");
+      expect(Number.isFinite(r?.score)).toBe(true);
+      expect(r?.components.some((c) => c.kind === "priority")).toBe(false);
+    }
+  });
+
+  it("emits honest priority components for valid p0..p3 indices", () => {
+    const expected = [
+      { priority: 0, points: 120, detail: "p0" },
+      { priority: 1, points: 80, detail: "p1" },
+      { priority: 2, points: 40, detail: "p2" },
+      { priority: 3, points: 0, detail: "p3" },
+    ];
+    for (const { priority, points, detail } of expected) {
+      const c = commitment({ id: detail, priority });
+      const [r] = rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [c],
+        meetings: [],
+        goals: [],
+        config,
+      });
+      expect(r?.components.find((c) => c.kind === "priority")).toEqual({
+        kind: "priority",
+        points,
+        detail,
+      });
+      expect(typeof r?.score).toBe("number");
+      expect(Number.isFinite(r?.score)).toBe(true);
+    }
+  });
+});
