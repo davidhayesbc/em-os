@@ -8,8 +8,8 @@ const DisplayTimeZone = z
   .refine((zone) => zone === "UTC" || supportedTimeZones.has(zone), "Unknown IANA time zone");
 
 export const RankConfig = z.object({
-  topN: z.number(),
-  goalSlots: z.number(),
+  topN: z.number().int().nonnegative(),
+  goalSlots: z.number().int().nonnegative(),
   timeCriticalHours: z.number(),
   weights: z.object({
     timeCritical: z.number(),

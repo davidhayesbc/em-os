@@ -1186,3 +1186,73 @@ describe("selectTop", () => {
     expect(top.map((r) => r?.commitmentId)).toEqual(["a"]);
   });
 });
+
+describe("rank why-chip hardening", () => {
+  function chipFor(title: string) {
+    const g = goal({ id: "g1", title });
+    const a = commitment({ id: "a", goalId: "g1" });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [],
+      goals: [g],
+      config,
+    });
+    return r?.why ?? "";
+  }
+
+  function hasControlChar(s: string): boolean {
+    for (const cp of s) {
+      const code = cp.codePointAt(0) ?? 0;
+      if ((code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f)) return true;
+    }
+    return false;
+  }
+
+  it("strips newlines from goal titles", () => {
+    expect(chipFor("Ship\nINJECTED")).toBe("advances ShipINJECTED");
+    expect(hasControlChar(chipFor("Ship\nINJECTED"))).toBe(false);
+  });
+
+  it("strips NUL bytes from goal titles", () => {
+    expect(chipFor("\u0000null-byte")).toBe("advances null-byte");
+  });
+
+  it("strips ANSI escape sequences from goal titles", () => {
+    expect(chipFor("\u001b[31mred\u001b[0m")).toBe("advances [31mred[0m");
+    expect(hasControlChar(chipFor("\u001b[31mred\u001b[0m"))).toBe(false);
+  });
+
+  it("truncates astral titles by code points without lone surrogates", () => {
+    const title = `${"a".repeat(19)}\u{1F680}\u{1F680}`;
+    const why = chipFor(title);
+    expect(why).toBe(`advances ${"a".repeat(19)}\u{1F680}…`);
+    expect(hasControlChar(why)).toBe(false);
+    // A high surrogate must be followed by a low surrogate.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(why)).toBe(false);
+  });
+
+  it("preserves normal long goal chip text exactly", () => {
+    expect(chipFor("This is a very long quarterly goal title")).toBe(
+      "advances This is a very long …",
+    );
+  });
+});
+
+describe("rank priority weight guard", () => {
+  it("does not allow a non-numeric priority to produce a non-finite or non-number score", () => {
+    const bad = commitment({ id: "bad", priority: "__proto__" as unknown as number });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [bad],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(typeof r?.score).toBe("number");
+    expect(Number.isFinite(r?.score)).toBe(true);
+    expect(r?.components.some((c) => c.kind === "priority")).toBe(false);
+  });
+});
