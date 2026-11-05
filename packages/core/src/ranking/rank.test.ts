@@ -85,6 +85,115 @@ function goal(overrides: Partial<Goal> = {}): Goal {
 }
 
 describe("rank", () => {
+  it("explains no-signal commitments with an exact zero-point neutral fallback", () => {
+    expect(
+      rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [commitment({ id: "neutral" })],
+        meetings: [],
+        goals: [],
+        config,
+      }),
+    ).toEqual([
+      {
+        commitmentId: "neutral",
+        score: 0,
+        dominant: "neutral",
+        why: "no additional signal",
+        components: [{ kind: "neutral", points: 0, detail: "no additional signal" }],
+      },
+    ]);
+  });
+
+  it("keeps neutral, p3 and mixed signals exact under frozen shuffled inputs", () => {
+    function structuredCloneJSON<T>(value: T): T {
+      return JSON.parse(JSON.stringify(value));
+    }
+    const input = {
+      now: new Date(NOON_TODAY),
+      timeZone: TIME_ZONE,
+      commitments: [
+        commitment({ id: "neutral" }),
+        commitment({ id: "p3", priority: 3 }),
+        commitment({ id: "mixed", pinned: true, priority: 3 }),
+      ],
+      meetings: [],
+      goals: [],
+      config: structuredCloneJSON(config),
+    };
+    function snapshot(value: unknown) {
+      return JSON.parse(
+        JSON.stringify(value, (_key, val) => (val instanceof Date ? val.toISOString() : val)),
+      );
+    }
+    const before = snapshot(input);
+    function freeze(value: object) {
+      for (const child of Object.values(value)) {
+        if (child !== null && typeof child === "object") freeze(child);
+      }
+      Object.freeze(value);
+    }
+    freeze(input);
+    const expected = [
+      {
+        commitmentId: "mixed",
+        score: 300,
+        dominant: "pin",
+        why: "pinned",
+        components: [
+          { kind: "pin", points: 300, detail: "pinned" },
+          { kind: "priority", points: 0, detail: "p3" },
+        ],
+      },
+      {
+        commitmentId: "neutral",
+        score: 0,
+        dominant: "neutral",
+        why: "no additional signal",
+        components: [{ kind: "neutral", points: 0, detail: "no additional signal" }],
+      },
+      {
+        commitmentId: "p3",
+        score: 0,
+        dominant: "priority",
+        why: "p3",
+        components: [{ kind: "priority", points: 0, detail: "p3" }],
+      },
+    ];
+    const ranked = rank(input);
+    expect(ranked).toEqual(expected);
+    expect(rank({ ...input, commitments: [...input.commitments].reverse() })).toEqual(expected);
+    expect(rank(input)).toEqual(expected);
+    freeze(ranked);
+    expect(
+      selectTop(ranked, new Map(input.commitments.map((c) => [c.id, c])), new Map(), {
+        topN: 3,
+        goalSlots: 2,
+      }),
+    ).toEqual(expected);
+    expect(ranked).toEqual(expected);
+    expect(snapshot(input)).toEqual(before);
+  });
+
+  it("preserves a genuine zero-point waiting signal instead of adding neutral", () => {
+    const [result] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [commitment({ counterpartId: "other", occurredAt: NOON_TODAY.toISOString() })],
+      meetings: [],
+      goals: [],
+      config,
+    });
+    expect(result).toEqual({
+      commitmentId: "c_default",
+      score: 0,
+      dominant: "waiting_on_me",
+      why: "waiting on you 0d",
+      components: [{ kind: "waiting_on_me", points: 0, detail: "waiting on you 0d" }],
+    });
+  });
+
   it("returns an empty array for no commitments", () => {
     expect(
       rank({
@@ -678,6 +787,33 @@ describe("selectTop", () => {
   function toGoalMap(goals: Goal[]) {
     return new Map(goals.map((g) => [g.id, g]));
   }
+
+  it.each(["archived", "inactive", "missing", "unscored"])(
+    "does not reserve a slot for a %s goal target without an active goal component",
+    (target) => {
+      const active = goal({ id: "active" });
+      const archived = goal({ id: "archived", retentionState: "archived" });
+      const inactive = goal({ id: "inactive", status: "dropped" });
+      const items = [
+        commitment({ id: "pin", pinned: true }),
+        commitment({ id: target, goalId: target === "unscored" ? "active" : target }),
+      ];
+      const ranked = rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: items,
+        meetings: [],
+        goals: [archived, inactive], // active target was not present during scoring
+        config,
+      });
+      expect(
+        selectTop(ranked, toMap(items), toGoalMap([active, archived, inactive]), {
+          topN: 1,
+          goalSlots: 1,
+        }).map((r) => r.commitmentId),
+      ).toEqual(["pin"]);
+    },
+  );
 
   it("takes topN items", () => {
     const items = Array.from({ length: 7 }, (_, i) =>

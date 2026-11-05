@@ -462,20 +462,21 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - Consumes: `RankConfig` (P1-05), entities (P0-08), time utils (P0-09).
 - Produces:
   ```ts
-  type ComponentKind = "time_critical" | "hard_dated" | "waiting_on_me" | "goal" | "pin" | "priority" | "urgency";
+  type ComponentKind = "time_critical" | "hard_dated" | "waiting_on_me" | "goal" | "pin" | "priority" | "urgency" | "neutral";
   export interface RankedItem { commitmentId: string; score: number; dominant: ComponentKind; why: string; components: { kind: ComponentKind; points: number; detail: string }[] }
   export function rank(input: { now: Date; timeZone: string; commitments: Commitment[]; meetings: Meeting[]; goals: Goal[]; config: RankConfig }): RankedItem[];
-  export function selectTop(ranked: RankedItem[], commitments: Map<string, Commitment>, config: RankConfig): RankedItem[];
+  export function selectTop(ranked: RankedItem[], commitments: Map<string, Commitment>, goals: Map<string, Goal>, config: { topN: number; goalSlots: number }): RankedItem[];
   ```
-- **Candidates** are `direction: "mine"` commitments that are `status: "active"`, or `snoozed` with `snoozedUntil ≤ now`.
+- **Candidates** are retention-active `direction: "mine"` commitments that are `status: "active"`, or `snoozed` with `snoozedUntil ≤ now`.
 - **Components:**
   - **time_critical:** the linked meeting (`meetingId`) starts within `timeCriticalHours`, *or* the due date is ≤ tomorrow (local). Overdue adds `overduePerDay × days`.
   - **hard_dated:** due later than tomorrow, scaled `hardDated / daysUntilDue`.
   - **waiting_on_me:** `counterpartId` is set and there's no due date; `waitingPerDay × ageDays`, where age is measured from `occurredAt`.
-  - **goal:** `goalId` is set and the goal is active.
-  - **pin**, **priority** (weights by p0..p3) and **urgency** (`now` only).
+  - **goal:** `goalId` resolves to a retention-active goal with active status. Only retention-active meetings contribute meeting signals.
+  - **pin**, **priority** (weights by p0..p3, including the genuine zero-point p3 component) and **urgency** (`now` only).
+  - **neutral:** ranking-only fallback when no real component applies; 0 points, detail and why exactly `no additional signal`. Never substitutes for an applicable signal, including a zero-point one, and never fabricates a pin.
 - **Exclusions:** urgency `later` / `someday` items with no due date are excluded from `selectTop`, but still ranked.
-- **Order:** by score descending; ties by due date (null last), then `capturedAt`.
+- **Order:** by score descending; ties by due date (null last), then chronological `capturedAt` instant, then commitment ID.
 - **Why chips** come from the dominant component (exact copy):
 
   | Condition | Chip |
@@ -485,9 +486,12 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   | Hard-dated | `due Mon` (≤ 6 days) or `due Oct 30` |
   | Waiting on me | `waiting on you 4d` |
   | Goal | `advances <goal title truncated to 20 chars + "…">` |
-  | Pin / priority / urgency | `pinned` / `p0` / `now` |
+  | Pin / priority / urgency | `pinned` / `p0`..`p3` / `now` |
+  | No applicable signal | `no additional signal` |
 
-- **`selectTop`:** takes `topN` items. If none of them is goal-linked and one exists further down, the last slot is replaced by the best goal-linked item (`goalSlots` times).
+- **`selectTop`:** takes up to `topN` eligible items. `goalSlots` is a minimum reservation quota capped by `topN` and the number of available qualifying goal items, not a maximum. Preserve already-selected qualifying goals and fill a quota deficit with the best outside qualifying goals, replacing the lowest-ranked non-goals. Qualification requires a scored active goal component derived from a retention-active, active-status goal record; a goalId alone or a missing/inactive target does not qualify. Return selected items in ranking order.
+
+- **Operator-approved deferral:** low-confidence penalties, stale-source penalties, and conditional assigned-ticket eligibility from spec §7.5 / ADR 0008 remain **unimplemented and outside P1-06 acceptance**. They are deferred to **Ranking signal contracts**, owned by **Product Owner**, tracked by `t_a463c539`. P1-06 does not invent inputs, weights, thresholds, or eligibility rules for these signals; PRODUCT_SPEC.md and ADRs remain unchanged.
 
 - [x] **Step 1: Write the failing tests.**
   - Prep for a 1pm meeting today outranks an item due in 3 days.
@@ -505,7 +509,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - [x] **Step 4: Run.** Expected: PASS.
 - [x] **Step 5: Commit** `feat(p1-06): deterministic explainable ranking`.
 
-**Acceptance:** It's a pure function, every ordering rule from spec §7.5 has a test, and every item has an exact why chip.
+**Acceptance:** It's a pure function; every non-deferred ordering rule described in P1-06 has a test, and every ranked item has an exact, truthful why chip. The explicitly deferred confidence, staleness, and assigned-ticket rules are not implemented or accepted by this task.
 
 ---
 

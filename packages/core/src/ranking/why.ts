@@ -8,7 +8,8 @@ export type ComponentKind =
   | "goal"
   | "pin"
   | "priority"
-  | "urgency";
+  | "urgency"
+  | "neutral";
 
 export interface RankedItem {
   commitmentId: string;
@@ -36,6 +37,7 @@ const KIND_ORDER: Record<ComponentKind, number> = {
   pin: 4,
   priority: 5,
   urgency: 6,
+  neutral: 7,
 };
 
 function localDayDiff(a: string, b: string, timeZone: string): number {
@@ -196,16 +198,21 @@ export function scoreCommitment(
     components.push({ kind: "urgency", points: weights.urgencyNow, detail: "now" });
   }
 
-  const dominant = components.reduce(
-    (best, current) => {
-      if (current.points > best.points) return current;
-      if (current.points === best.points && KIND_ORDER[current.kind] < KIND_ORDER[best.kind]) {
-        return current;
-      }
-      return best;
-    },
-    components[0] ?? { kind: "pin" as ComponentKind, points: 0, detail: "" },
-  );
+  // Neutral is only a fallback: applicable zero-point signals remain genuine.
+  const fallback: RankedItem["components"][number] = {
+    kind: "neutral",
+    points: 0,
+    detail: "no additional signal",
+  };
+  if (components.length === 0) components.push(fallback);
+
+  const dominant = components.reduce((best, current) => {
+    if (current.points > best.points) return current;
+    if (current.points === best.points && KIND_ORDER[current.kind] < KIND_ORDER[best.kind]) {
+      return current;
+    }
+    return best;
+  }, components[0] ?? fallback);
 
   return { components, dominant, why: dominant.detail };
 }

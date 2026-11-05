@@ -13,10 +13,15 @@ export function selectTop(
     return (c.urgency === "later" || c.urgency === "someday") && c.due == null;
   };
 
-  // Qualifying goal = a commitment whose goalId resolves to an active goal record.
+  // Reservation requires a genuine scored goal signal and an active target record.
   const isGoalLinked = (r: RankedItem) => {
     const c = commitments.get(r.commitmentId);
-    return c?.goalId != null && goals.get(c.goalId)?.status === "active";
+    const goal = c?.goalId != null ? goals.get(c.goalId) : undefined;
+    return (
+      goal?.status === "active" &&
+      goal.retentionState === "active" &&
+      r.components.some((component) => component.kind === "goal")
+    );
   };
 
   const eligible = ranked.filter((r) => !isExcluded(r));
