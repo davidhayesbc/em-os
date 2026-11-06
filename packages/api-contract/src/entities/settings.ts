@@ -11,6 +11,7 @@ export const RankConfig = z.object({
   topN: z.number().int().nonnegative(),
   goalSlots: z.number().int().nonnegative(),
   timeCriticalHours: z.number(),
+  staleDays: z.number().int().nonnegative(),
   weights: z.object({
     timeCritical: z.number(),
     overduePerDay: z.number(),
@@ -20,6 +21,7 @@ export const RankConfig = z.object({
     pin: z.number(),
     priority: z.tuple([z.number(), z.number(), z.number(), z.number()]),
     urgencyNow: z.number(),
+    staleSource: z.number(),
   }),
 });
 export type RankConfig = z.infer<typeof RankConfig>;
@@ -75,6 +77,7 @@ export const DEFAULT_PROFILE: Profile = Profile.parse({
     topN: 5,
     goalSlots: 1,
     timeCriticalHours: 24,
+    staleDays: 14,
     weights: {
       timeCritical: 1000,
       overduePerDay: 50,
@@ -84,6 +87,7 @@ export const DEFAULT_PROFILE: Profile = Profile.parse({
       pin: 300,
       priority: [120, 80, 40, 0],
       urgencyNow: 100,
+      staleSource: 60,
     },
   },
   minFocusMinutes: 15,

@@ -1295,3 +1295,216 @@ describe("rank priority weight guard", () => {
     }
   });
 });
+
+describe("rank stale-source penalty", () => {
+  const MS_PER_DAY = 86400000;
+
+  function updatedAtOffset(now: Date, msAgo: number): string {
+    return new Date(now.getTime() - msAgo).toISOString();
+  }
+
+  it("penalises 15d+ε and not 14d23h59m59s", () => {
+    const justUnder = updatedAtOffset(NOON_TODAY, 14 * MS_PER_DAY + 86399000);
+    const justOver = updatedAtOffset(NOON_TODAY, 15 * MS_PER_DAY + 1);
+
+    const a = commitment({ id: "a", updatedAt: justUnder });
+    const b = commitment({ id: "b", updatedAt: justOver });
+
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a, b],
+      meetings: [],
+      goals: [],
+      config,
+    });
+
+    const ra = result.find((r) => r.commitmentId === "a");
+    const rb = result.find((r) => r.commitmentId === "b");
+
+    expect(ra?.score).toBe(0);
+    expect(ra?.components).toEqual([
+      { kind: "neutral", points: 0, detail: "no additional signal" },
+    ]);
+
+    expect(rb?.score).toBe(-60);
+    expect(rb?.components).toEqual([{ kind: "stale_source", points: -60, detail: "stale source" }]);
+    expect(rb?.why).toBe("stale source");
+    expect(rb?.dominant).toBe("stale_source");
+  });
+
+  it("ignores missing/invalid/future updatedAt", () => {
+    const missing = commitment({ id: "missing", updatedAt: null as unknown as string });
+    const invalid = commitment({ id: "invalid", updatedAt: "not-a-date" });
+    const future = commitment({
+      id: "future",
+      updatedAt: new Date(NOON_TODAY.getTime() + MS_PER_DAY).toISOString(),
+    });
+
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [missing, invalid, future],
+      meetings: [],
+      goals: [],
+      config,
+    });
+
+    for (const r of result) {
+      expect(r.score).toBe(0);
+      expect(r.components).toEqual([
+        { kind: "neutral", points: 0, detail: "no additional signal" },
+      ]);
+      expect(r.why).toBe("no additional signal");
+    }
+  });
+
+  it("equal candidates differ by exactly the flat stale penalty", () => {
+    const fresh = commitment({
+      id: "fresh",
+      priority: 2,
+      updatedAt: new Date(NOON_TODAY.getTime() - 5 * MS_PER_DAY).toISOString(),
+    });
+    const stale = commitment({
+      id: "stale",
+      priority: 2,
+      updatedAt: new Date(NOON_TODAY.getTime() - 20 * MS_PER_DAY).toISOString(),
+    });
+
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [stale, fresh],
+      meetings: [],
+      goals: [],
+      config,
+    });
+
+    const rf = result.find((r) => r.commitmentId === "fresh");
+    const rs = result.find((r) => r.commitmentId === "stale");
+
+    expect(rf?.score).toBe(40);
+    expect(rs?.score).toBe(-20);
+    expect(result.map((r) => r.commitmentId)).toEqual(["fresh", "stale"]);
+  });
+
+  it("stays deterministic under reversed input order", () => {
+    const items = [
+      commitment({
+        id: "a",
+        priority: 1,
+        updatedAt: new Date(NOON_TODAY.getTime() - 20 * MS_PER_DAY).toISOString(),
+      }),
+      commitment({
+        id: "b",
+        priority: 1,
+        updatedAt: new Date(NOON_TODAY.getTime() - 3 * MS_PER_DAY).toISOString(),
+      }),
+      commitment({
+        id: "c",
+        priority: 1,
+        updatedAt: new Date(NOON_TODAY.getTime() - 100 * MS_PER_DAY).toISOString(),
+      }),
+    ];
+
+    const forwards = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [],
+      config,
+    });
+    const reversed = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [...items].reverse(),
+      meetings: [],
+      goals: [],
+      config,
+    });
+
+    expect(forwards.map((r) => r.commitmentId)).toEqual(["b", "a", "c"]);
+    expect(reversed.map((r) => r.commitmentId)).toEqual(["b", "a", "c"]);
+    expect(JSON.parse(JSON.stringify(forwards))).toEqual(JSON.parse(JSON.stringify(reversed)));
+  });
+
+  it("emits a truthful zero-point stale component with zero weight", () => {
+    const stale = commitment({
+      id: "stale",
+      updatedAt: new Date(NOON_TODAY.getTime() - 20 * MS_PER_DAY).toISOString(),
+    });
+
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [stale],
+      meetings: [],
+      goals: [],
+      config: { ...config, weights: { ...config.weights, staleSource: 0 } },
+    });
+
+    expect(r).toEqual({
+      commitmentId: "stale",
+      score: 0,
+      dominant: "stale_source",
+      why: "stale source",
+      components: [{ kind: "stale_source", points: 0, detail: "stale source" }],
+    });
+  });
+
+  it("does not demote a goal-linked stale item below goal-slot consideration", () => {
+    const g = goal({ id: "g1", title: "Ship it" });
+    const stale = commitment({
+      id: "stale-goal",
+      goalId: "g1",
+      updatedAt: new Date(NOON_TODAY.getTime() - 20 * MS_PER_DAY).toISOString(),
+    });
+
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [stale],
+      meetings: [],
+      goals: [g],
+      config,
+    });
+
+    expect(r?.score).toBe(90);
+    expect(r?.dominant).toBe("goal");
+    expect(r?.components).toContainEqual({ kind: "goal", points: 150, detail: "advances Ship it" });
+    expect(r?.components).toContainEqual({
+      kind: "stale_source",
+      points: -60,
+      detail: "stale source",
+    });
+  });
+
+  it("leaves tie-break rules unchanged", () => {
+    const a = commitment({
+      id: "a",
+      priority: 2,
+      due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE },
+      updatedAt: new Date(NOON_TODAY.getTime() - 20 * MS_PER_DAY).toISOString(),
+      capturedAt: "2026-10-20T12:00:01.000Z",
+    });
+    const b = commitment({
+      id: "b",
+      priority: 2,
+      due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE },
+      updatedAt: new Date(NOON_TODAY.getTime() - 20 * MS_PER_DAY).toISOString(),
+      capturedAt: "2026-10-20T12:00:02.000Z",
+    });
+
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [b, a],
+      meetings: [],
+      goals: [],
+      config,
+    });
+
+    expect(result.map((r) => r.commitmentId)).toEqual(["a", "b"]);
+  });
+});

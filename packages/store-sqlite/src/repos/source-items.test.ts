@@ -229,7 +229,11 @@ describe("SourceItemsRepo", () => {
     ).item;
     advance(60_000);
     const activeReplay = r.upsert(
-      newItem({ externalId: "active-clock", text: "Replayed active" }),
+      newItem({
+        externalId: "active-clock",
+        text: "Replayed active",
+        contentHash: hash("Replayed active"),
+      }),
     ).item;
     expect(activeReplay.id).toBe(activeFirst.id);
     expect(activeReplay.occurredAt).toBe("2025-06-01T00:00:00.000Z");
@@ -251,7 +255,11 @@ describe("SourceItemsRepo", () => {
     ).item;
     advance(60_000);
     const archivedReplay = r.upsert(
-      newItem({ externalId: "archived-clock", text: "Replayed archived" }),
+      newItem({
+        externalId: "archived-clock",
+        text: "Replayed archived",
+        contentHash: hash("Replayed archived"),
+      }),
     ).item;
     expect(archivedReplay.id).toBe(archivedFirst.id);
     expect(archivedReplay.occurredAt).toBe("2025-07-01T00:00:00.000Z");
@@ -271,7 +279,11 @@ describe("SourceItemsRepo", () => {
     ).item;
     advance(60_000);
     const excludedReplay = r.upsert(
-      newItem({ externalId: "excluded-clock", text: "Replayed excluded" }),
+      newItem({
+        externalId: "excluded-clock",
+        text: "Replayed excluded",
+        contentHash: hash("Replayed excluded"),
+      }),
     ).item;
     expect(excludedReplay.id).toBe(excludedFirst.id);
     expect(excludedReplay.occurredAt).toBe("2025-08-01T00:00:00.000Z");
@@ -338,5 +350,31 @@ describe("SourceItemsRepo", () => {
 
   it("returns null for an unknown id", () => {
     expect(repo().get("src_missing")).toBeNull();
+  });
+
+  it("preserves updatedAt on no-op replay with the same contentHash", () => {
+    const r = repo();
+    const first = r.upsert(newItem({ externalId: "noop", text: "Same" })).item;
+    const second = r.upsert(newItem({ externalId: "noop", text: "Same" })).item;
+
+    expect(second.id).toBe(first.id);
+    expect(second.text).toBe("Same");
+    expect(second.contentHash).toBe(first.contentHash);
+    expect(second.updatedAt).toBe(first.updatedAt);
+  });
+
+  it("advances updatedAt when a replay changes the contentHash", () => {
+    const { repo: r, advance } = repoWithMutableClock("2026-10-25T12:00:00.000Z");
+    const first = r.upsert(newItem({ externalId: "changed", text: "First" })).item;
+    advance(60_000);
+    const second = r.upsert(
+      newItem({ externalId: "changed", text: "Second", contentHash: hash("Second") }),
+    ).item;
+
+    expect(second.id).toBe(first.id);
+    expect(second.text).toBe("Second");
+    expect(new Date(second.updatedAt).getTime()).toBeGreaterThan(
+      new Date(first.updatedAt).getTime(),
+    );
   });
 });
