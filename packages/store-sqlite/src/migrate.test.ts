@@ -364,6 +364,8 @@ describe("current schema", () => {
       "series_id",
       ...dated,
       "confidence",
+      "ticket_id",
+      "pin_provenance",
     ]);
     expect(columns(db, "meetings")).toEqual([
       "id",
@@ -403,6 +405,7 @@ describe("current schema", () => {
       "sensitivity",
       "sections",
       ...dated,
+      "ticket_data",
     ]);
     expect(columns(db, "risks")).toEqual(["id", "title", "status", "owner_id", "links", ...dated]);
     expect(columns(db, "decisions")).toEqual([

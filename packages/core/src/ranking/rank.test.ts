@@ -27,6 +27,8 @@ function commitment(overrides: Partial<Commitment> = {}): Commitment {
     title: "Default commitment",
     notes: "",
     pinned: false,
+    pinProvenance: null,
+    ticketId: null,
     effortMinutes: null,
     snoozedUntil: null,
     completedAt: null,

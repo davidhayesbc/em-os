@@ -38,6 +38,7 @@ function mapSourceItem(row: Row): SourceItem {
     contentHash: str(row, "content_hash"),
     sensitivity: str(row, "sensitivity") as SourceItem["sensitivity"],
     sections: parse<SourceItem["sections"]>(nullable(row, "sections")),
+    ticket: parse<SourceItem["ticket"]>(nullable(row, "ticket_data")),
     occurredAt: str(row, "occurred_at"),
     capturedAt: str(row, "captured_at"),
     updatedAt: str(row, "updated_at"),
@@ -61,7 +62,7 @@ function higherSensitivity(
 /** Tombstone payload: a purged source item must never carry source content. */
 function clearedPayload(): Pick<
   SourceItem,
-  "text" | "contentHash" | "url" | "authorIdentityId" | "sections"
+  "text" | "contentHash" | "url" | "authorIdentityId" | "sections" | "ticket"
 > {
   return {
     text: "",
@@ -69,6 +70,7 @@ function clearedPayload(): Pick<
     url: null,
     authorIdentityId: null,
     sections: null,
+    ticket: null,
   };
 }
 
@@ -93,8 +95,8 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
       };
       try {
         db.prepare(`INSERT INTO source_items
-          (id, connector_id, external_id, kind, origin, url, author_identity_id, text, content_hash, sensitivity, sections, occurred_at, captured_at, updated_at, retention_state)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+          (id, connector_id, external_id, kind, origin, url, author_identity_id, text, content_hash, sensitivity, sections, ticket_data, occurred_at, captured_at, updated_at, retention_state)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
           value.id,
           value.connectorId,
           value.externalId,
@@ -106,6 +108,7 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
           value.contentHash,
           value.sensitivity,
           value.sections === null ? null : JSON.stringify(value.sections),
+          value.ticket === null ? null : JSON.stringify(value.ticket),
           value.occurredAt,
           value.capturedAt,
           value.updatedAt,
@@ -145,7 +148,7 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
             updatedAt: at,
           };
           db.prepare(`UPDATE source_items SET
-            text = ?, content_hash = ?, url = ?, author_identity_id = ?, sections = ?,
+            text = ?, content_hash = ?, url = ?, author_identity_id = ?, sections = ?, ticket_data = ?,
             retention_state = ?, updated_at = ?
             WHERE id = ?`).run(
             item.text,
@@ -153,6 +156,7 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
             item.url,
             item.authorIdentityId,
             item.sections === null ? null : JSON.stringify(item.sections),
+            item.ticket === null ? null : JSON.stringify(item.ticket),
             item.retentionState,
             item.updatedAt,
             item.id,
@@ -160,9 +164,9 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
           return { item, created: false };
         }
 
+        const contentChanged = existing.contentHash !== value.contentHash;
         // Ordinary replay: never lower an existing source's sensitivity, but allow upgrades.
         // updatedAt advances only when source-backed content actually changes.
-        const contentChanged = existing.contentHash !== value.contentHash;
         const item: SourceItem = {
           ...existing,
           text: value.text,
@@ -171,13 +175,14 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
           authorIdentityId: value.authorIdentityId,
           sensitivity: higherSensitivity(existing.sensitivity, value.sensitivity),
           sections: value.sections,
+          ticket: value.ticket,
           // Preserve optional provenance when replay omits it; use defaults only for creation.
           occurredAt: input.occurredAt ? toDbInstant(input.occurredAt) : existing.occurredAt,
           retentionState: input.retentionState ?? existing.retentionState,
           updatedAt: contentChanged ? at : existing.updatedAt,
         };
         db.prepare(`UPDATE source_items SET
-          text = ?, content_hash = ?, url = ?, author_identity_id = ?, sensitivity = ?, sections = ?,
+          text = ?, content_hash = ?, url = ?, author_identity_id = ?, sensitivity = ?, sections = ?, ticket_data = ?,
           occurred_at = ?, retention_state = ?, updated_at = ?
           WHERE id = ?`).run(
           item.text,
@@ -186,6 +191,7 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
           item.authorIdentityId,
           item.sensitivity,
           item.sections === null ? null : JSON.stringify(item.sections),
+          item.ticket === null ? null : JSON.stringify(item.ticket),
           item.occurredAt,
           item.retentionState,
           item.updatedAt,

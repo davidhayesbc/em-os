@@ -429,8 +429,14 @@ CREATE TABLE import_keys (
 ) STRICT;
 CREATE INDEX import_keys_entity_idx ON import_keys (entity, entity_id);
 `,
-  t_43e3c03a_commitment_confidence: `-- t_43e3c03a_commitment_confidence: add optional bounded confidence to commitments.
+  "t_43e3c03a_commitment_confidence": `-- t_43e3c03a_commitment_confidence: add optional bounded confidence to commitments.
 ALTER TABLE commitments
 ADD COLUMN confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1));
+`,
+  "t_e9515b7b_ticket_data": `-- t_e9515b7b: structured ticket data schema + ingestion (ranking eligibility inputs).
+-- Adds optional structured ticket metadata to source_items and links/tracking to commitments.
+ALTER TABLE source_items ADD COLUMN ticket_data TEXT CHECK (ticket_data IS NULL OR (json_valid(ticket_data) AND json_type(ticket_data) = 'object'));
+ALTER TABLE commitments ADD COLUMN ticket_id TEXT;
+ALTER TABLE commitments ADD COLUMN pin_provenance TEXT CHECK (pin_provenance IN ('user', 'system'));
 `,
 } as const;

@@ -49,6 +49,7 @@ const newItem = (overrides: Partial<NewSourceItem> = {}): NewSourceItem => ({
   contentHash: hash("Synthetic note text"),
   sensitivity: "normal",
   sections: null,
+  ticket: null,
   ...overrides,
 });
 
@@ -378,6 +379,93 @@ describe("SourceItemsRepo", () => {
 
     expect(second.id).toBe(first.id);
     expect(second.text).toBe("Second");
+    expect(new Date(second.updatedAt).getTime()).toBeGreaterThan(
+      new Date(first.updatedAt).getTime(),
+    );
+  });
+
+  it("round-trips structured ticket data", () => {
+    const r = repo();
+    const ticket = {
+      assigneeIdentityId: "idt_alex",
+      due: { date: "2026-10-28", time: null, timeZone: "America/Vancouver" },
+      blockers: [
+        { sourceTicketId: "T-42", status: "open" as const },
+        { sourceTicketId: "T-43", status: "closed" as const },
+      ],
+      pinProvenance: "user" as const,
+    };
+    const item = r.upsert(newItem({ kind: "ticket", externalId: "ticket-1", ticket })).item;
+
+    expect(r.get(item.id)?.ticket).toEqual(ticket);
+    expect(r.byIds([item.id])[0]?.ticket).toEqual(ticket);
+  });
+
+  it("ticket sources degrade missing/empty blockers to not blocked", () => {
+    const r = repo();
+    const withNullBlockers = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "no-blockers",
+        ticket: { assigneeIdentityId: null, due: null, blockers: null, pinProvenance: null },
+      }),
+    ).item;
+    const withEmptyBlockers = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "empty-blockers",
+        ticket: { assigneeIdentityId: null, due: null, blockers: [], pinProvenance: null },
+      }),
+    ).item;
+
+    expect(withNullBlockers.ticket?.blockers).toBeNull();
+    expect(withEmptyBlockers.ticket?.blockers).toEqual([]);
+  });
+
+  it("preserves ticket data on no-op replay", () => {
+    const { repo: r, advance } = repoWithMutableClock("2026-10-25T12:00:00.000Z");
+    const ticket = {
+      assigneeIdentityId: "idt_sam",
+      due: { date: "2026-10-27", time: "17:00", timeZone: "UTC" },
+      blockers: [{ sourceTicketId: "T-7", status: "open" as const }],
+      pinProvenance: "system" as const,
+    };
+    const first = r.upsert(
+      newItem({ kind: "ticket", externalId: "noop-ticket", ticket, contentHash: hash("body") }),
+    ).item;
+    advance(60_000);
+    const second = r.upsert(
+      newItem({ kind: "ticket", externalId: "noop-ticket", ticket, contentHash: hash("body") }),
+    ).item;
+
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toEqual(ticket);
+    expect(second.updatedAt).toBe(first.updatedAt);
+  });
+
+  it("updates ticket data when source content changes", () => {
+    const { repo: r, advance } = repoWithMutableClock("2026-10-25T12:00:00.000Z");
+    const first = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "changing-ticket",
+        ticket: { assigneeIdentityId: null, due: null, blockers: null, pinProvenance: null },
+        contentHash: hash("v1"),
+      }),
+    ).item;
+    advance(60_000);
+    const ticket = {
+      assigneeIdentityId: "idt_priya",
+      due: { date: "2026-10-26", time: null, timeZone: "America/Toronto" },
+      blockers: [{ sourceTicketId: "T-99", status: "open" as const }],
+      pinProvenance: "user" as const,
+    };
+    const second = r.upsert(
+      newItem({ kind: "ticket", externalId: "changing-ticket", ticket, contentHash: hash("v2") }),
+    ).item;
+
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toEqual(ticket);
     expect(new Date(second.updatedAt).getTime()).toBeGreaterThan(
       new Date(first.updatedAt).getTime(),
     );

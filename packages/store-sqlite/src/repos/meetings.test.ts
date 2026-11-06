@@ -237,6 +237,7 @@ describe("MeetingsRepo", () => {
       contentHash: "hash",
       sensitivity: "normal",
       sections: null,
+      ticket: null,
       occurredAt: m.start,
     }).item;
 

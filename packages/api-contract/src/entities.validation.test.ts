@@ -11,6 +11,7 @@ import {
   LocalTime,
   Person,
   RankConfig,
+  TicketData,
   TimeZone,
 } from "./index.js";
 
@@ -39,6 +40,8 @@ const baseCommitment = {
   title: "Send the review",
   notes: "",
   pinned: false,
+  pinProvenance: null,
+  ticketId: null,
   effortMinutes: null,
   snoozedUntil: null,
   completedAt: null,
@@ -184,6 +187,44 @@ describe("AuditEvent.diff uses null, never undefined", () => {
     ).toBe(false);
     expect(AuditEvent.safeParse(event({ dropReason: { to: "user" } })).success).toBe(false);
     expect(AuditEvent.safeParse(event({ dropReason: { from: null } })).success).toBe(false);
+  });
+});
+
+describe("TicketData validates structured ticket fields", () => {
+  const base = {
+    assigneeIdentityId: null,
+    due: null,
+    blockers: null,
+    pinProvenance: null,
+  };
+
+  it("accepts a valid due date and blocker list", () => {
+    const t = {
+      assigneeIdentityId: "idt_1",
+      due: { date: "2026-10-28", time: null, timeZone: "America/Vancouver" },
+      blockers: [
+        { sourceTicketId: "T-1", status: "open" as const },
+        { sourceTicketId: "T-2", status: "closed" as const },
+      ],
+      pinProvenance: "user" as const,
+    };
+    expect(TicketData.safeParse(t).success).toBe(true);
+  });
+
+  it("rejects an invalid blocker status", () => {
+    expect(
+      TicketData.safeParse({ ...base, blockers: [{ sourceTicketId: "T-1", status: "blocked" }] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects an invalid due time zone", () => {
+    expect(
+      TicketData.safeParse({
+        ...base,
+        due: { date: "2026-10-28", time: null, timeZone: "Mars/Base" },
+      }).success,
+    ).toBe(false);
   });
 });
 

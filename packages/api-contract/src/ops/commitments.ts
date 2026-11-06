@@ -8,7 +8,7 @@ import {
   Direction,
   DropReason,
   LocalDate,
-  SourceItem,
+  SourceItemView,
 } from "../entities/index.js";
 import { defineOp } from "../op.js";
 
@@ -19,6 +19,8 @@ export const NewCommitmentSchema = Commitment.omit({
   occurredAt: true,
   retentionState: true,
   confidence: true, // internal to the capture pipeline; the public API never accepts it
+  pinProvenance: true,
+  ticketId: true,
 }).extend({
   occurredAt: Commitment.shape.occurredAt.optional(),
   retentionState: Commitment.shape.retentionState.optional(),
@@ -43,7 +45,7 @@ export const commitmentsGet = defineOp({
   input: Id,
   output: z.object({
     commitment: CommitmentView,
-    sources: z.array(SourceItem),
+    sources: z.array(SourceItemView),
     audit: z.array(AuditEvent),
   }),
 });

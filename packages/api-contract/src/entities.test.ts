@@ -65,6 +65,8 @@ const baseCommitment = {
   title: "Send the review",
   notes: "",
   pinned: false,
+  pinProvenance: null,
+  ticketId: null,
   effortMinutes: null,
   snoozedUntil: null,
   completedAt: null,
@@ -262,6 +264,7 @@ describe("SourceItem", () => {
       contentHash: "abc",
       sensitivity: "normal",
       sections: [{ heading: "2026-09", sensitivity: "normal", startLine: 0 }],
+      ticket: null,
     });
     expect(s.sections?.[0]?.startLine).toBe(0);
   });

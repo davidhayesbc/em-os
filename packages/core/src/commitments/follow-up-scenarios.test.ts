@@ -24,6 +24,8 @@ function commitment(overrides: Partial<Commitment> = {}): Commitment {
     title: "Send Sam the synthetic launch summary",
     notes: "",
     pinned: false,
+    pinProvenance: null,
+    ticketId: null,
     effortMinutes: null,
     snoozedUntil: null,
     completedAt: null,
