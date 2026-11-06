@@ -188,7 +188,7 @@ describe("CommitmentsRepo", () => {
     },
   );
 
-  it("preserves confidence through a no-op replay save", () => {
+  it("preserves capture-time confidence and ignores edits that try to change it", () => {
     const r = repo();
     const c = r.create(input({ createdBy: "import", confidence: 0.6 }));
     const replayed = r.save(

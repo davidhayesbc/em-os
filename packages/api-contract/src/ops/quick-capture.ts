@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
-  Commitment,
   CommitmentDue,
+  CommitmentView,
   Direction,
   Person,
   Recurrence,
@@ -25,7 +25,7 @@ export const commitmentsQuickCapture = defineOp({
   name: "commitments.quickCapture",
   input: z.object({ text: z.string(), counterpartId: z.string().optional() }),
   output: z.discriminatedUnion("status", [
-    z.object({ status: z.literal("created"), commitment: Commitment }),
+    z.object({ status: z.literal("created"), commitment: CommitmentView }),
     z.object({
       status: z.literal("needs_person"),
       parsed: ParsedCapture,

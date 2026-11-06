@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { AuditEvent, Commitment, NewCommitment, SourceItem } from "@emos/api-contract";
+import {
+  type AuditEvent,
+  type Commitment,
+  type NewCommitment,
+  normalizeConfidence,
+  type SourceItem,
+} from "@emos/api-contract";
 import type { CommitmentsRepo } from "@emos/core";
 import type { Db } from "../driver.js";
 import { toDbInstant } from "../time.js";
@@ -13,19 +19,6 @@ const defaults: Deps = { now: () => new Date(), id: (prefix) => `${prefix}_${ran
 const json = (value: unknown) => (value === null ? null : JSON.stringify(value));
 const parse = <T>(value: string | null): T | null =>
   value === null ? null : (JSON.parse(value) as T);
-
-function normalizeConfidence(value: unknown): number | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value === "number")
-    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed === "") return null;
-    const n = Number(trimmed);
-    return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
-  }
-  return null;
-}
 
 function isCaptureSource(createdBy: Commitment["createdBy"]): boolean {
   return createdBy === "extractor" || createdBy === "import" || createdBy === "mcp";
