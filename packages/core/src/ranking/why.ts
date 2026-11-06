@@ -9,6 +9,7 @@ export type ComponentKind =
   | "pin"
   | "priority"
   | "urgency"
+  | "stale_source"
   | "neutral";
 
 /**
@@ -44,8 +45,18 @@ const KIND_ORDER: Record<ComponentKind, number> = {
   pin: 4,
   priority: 5,
   urgency: 6,
-  neutral: 7,
+  stale_source: 7,
+  neutral: 8,
 };
+
+function staleAgeDays(updatedAt: unknown, nowMs: number): number | null {
+  if (updatedAt == null) return null;
+  const parsed = new Date(String(updatedAt)).getTime();
+  if (!Number.isFinite(parsed)) return null;
+  const ageMs = nowMs - parsed;
+  if (ageMs < 0) return 0;
+  return Math.floor(ageMs / 86400000);
+}
 
 function localDayDiff(a: string, b: string, timeZone: string): number {
   return Math.round(
@@ -232,6 +243,17 @@ export function scoreCommitment(
   // urgency now.
   if (c.urgency === "now") {
     components.push({ kind: "urgency", points: weights.urgencyNow, detail: "now" });
+  }
+
+  // stale-source penalty: content unchanged for more than staleDays.
+  const ageDays = staleAgeDays(c.updatedAt, ctx.now.getTime());
+  if (ageDays !== null && ageDays > ctx.config.staleDays) {
+    const points = weights.staleSource === 0 ? 0 : -weights.staleSource;
+    components.push({
+      kind: "stale_source",
+      points,
+      detail: "stale source",
+    });
   }
 
   // Neutral is only a fallback: applicable zero-point signals remain genuine.
