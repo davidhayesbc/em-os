@@ -32,6 +32,7 @@ function commitment(overrides: Partial<Commitment> = {}): Commitment {
     completedAt: null,
     recurrence: null,
     seriesId: null,
+    confidence: null,
     occurredAt: "2026-10-20T12:00:00.000Z",
     capturedAt: "2026-10-20T12:00:00.000Z",
     updatedAt: "2026-10-20T12:00:00.000Z",

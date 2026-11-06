@@ -14,6 +14,23 @@ const json = (value: unknown) => (value === null ? null : JSON.stringify(value))
 const parse = <T>(value: string | null): T | null =>
   value === null ? null : (JSON.parse(value) as T);
 
+function normalizeConfidence(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "number")
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
+  }
+  return null;
+}
+
+function isCaptureSource(createdBy: Commitment["createdBy"]): boolean {
+  return createdBy === "extractor" || createdBy === "import" || createdBy === "mcp";
+}
+
 type Row = Record<string, unknown>;
 const str = (r: Row, key: string) => r[key] as string;
 const nullable = (r: Row, key: string) => (r[key] === null ? null : (r[key] as string));
@@ -41,6 +58,7 @@ function commitment(r: Row): Commitment {
     completedAt: nullable(r, "completed_at"),
     recurrence: parse<Commitment["recurrence"]>(nullable(r, "recurrence")),
     seriesId: nullable(r, "series_id"),
+    confidence: r.confidence === null ? null : Number(r.confidence),
     occurredAt: str(r, "occurred_at"),
     capturedAt: str(r, "captured_at"),
     updatedAt: str(r, "updated_at"),
@@ -89,6 +107,7 @@ const fields: Array<[keyof Commitment, string]> = [
   ["completedAt", "completed_at"],
   ["recurrence", "recurrence"],
   ["seriesId", "series_id"],
+  ["confidence", "confidence"],
   ["occurredAt", "occurred_at"],
   ["capturedAt", "captured_at"],
   ["updatedAt", "updated_at"],
@@ -111,6 +130,7 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
         capturedAt: at,
         updatedAt: at,
         retentionState: c.retentionState ?? "active",
+        confidence: isCaptureSource(c.createdBy) ? normalizeConfidence(c.confidence) : null,
       };
       db.transaction(() => {
         const columns = fields.map(([, column]) => column);
@@ -145,35 +165,37 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
     save(c, audit): Commitment {
       const previous = this.get(c.id);
       if (!previous) throw new Error(`Unknown commitment ${c.id}`);
+      // Confidence is set only at capture time and never changes via save.
+      const toSave: Commitment = { ...c, confidence: previous.confidence };
       const wasTerminal = previous.status === "done" || previous.status === "dropped";
-      const leavesTerminal = c.status !== "done" && c.status !== "dropped";
+      const leavesTerminal = toSave.status !== "done" && toSave.status !== "dropped";
       const isUserReopen =
-        c.status === "active" && audit.actor === "user" && audit.action === "reopen";
+        toSave.status === "active" && audit.actor === "user" && audit.action === "reopen";
       if (wasTerminal && leavesTerminal && !isUserReopen) {
         throw new Error("Only a user can reopen a terminal commitment");
       }
       const diff: AuditEvent["diff"] = {};
       for (const [key] of fields)
-        if (JSON.stringify(previous[key]) !== JSON.stringify(c[key])) {
-          diff[key] = { from: previous[key] ?? null, to: c[key] ?? null };
+        if (JSON.stringify(previous[key]) !== JSON.stringify(toSave[key])) {
+          diff[key] = { from: previous[key] ?? null, to: toSave[key] ?? null };
         }
       db.transaction(() => {
         db.prepare(
           `UPDATE commitments SET ${fields.map(([, column]) => `${column} = ?`).join(", ")} WHERE id = ?`,
-        ).run(...fields.map(([key]) => bound(key, c[key])), c.id);
+        ).run(...fields.map(([key]) => bound(key, toSave[key])), toSave.id);
         db.prepare(
           "INSERT INTO audit_events (id, entity, entity_id, action, actor, at, note, diff) VALUES (?, 'commitment', ?, ?, ?, ?, ?, ?)",
         ).run(
           d.id("mcl"),
-          c.id,
+          toSave.id,
           audit.action,
           audit.actor,
-          c.updatedAt,
+          toSave.updatedAt,
           audit.note ?? null,
           JSON.stringify(diff),
         );
       });
-      return c;
+      return toSave;
     },
     get(id) {
       const row = db.prepare("SELECT * FROM commitments WHERE id = ?").get<Row>(id);

@@ -363,6 +363,7 @@ describe("schema 0001", () => {
       "recurrence",
       "series_id",
       ...dated,
+      "confidence",
     ]);
     expect(columns(db, "meetings")).toEqual([
       "id",

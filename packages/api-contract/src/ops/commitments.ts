@@ -17,6 +17,7 @@ export const NewCommitmentSchema = Commitment.omit({
   updatedAt: true,
   occurredAt: true,
   retentionState: true,
+  confidence: true, // internal to the capture pipeline; the public API never accepts it
 }).extend({
   occurredAt: Commitment.shape.occurredAt.optional(),
   retentionState: Commitment.shape.retentionState.optional(),

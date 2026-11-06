@@ -16,6 +16,24 @@ export type Urgency = z.infer<typeof Urgency>;
 export const CreatedBy = z.enum(["user", "extractor", "import", "mcp"]);
 export type CreatedBy = z.infer<typeof CreatedBy>;
 
+/** A confidence score in [0, 1]. Invalid or missing values normalize to `null`. */
+export const Confidence = z
+  .preprocess(
+    (value) => {
+      if (value === undefined || value === null) return null;
+      const n =
+        typeof value === "number"
+          ? value
+          : typeof value === "string"
+            ? Number(value.trim())
+            : Number.NaN;
+      return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
+    },
+    z.union([z.number().min(0).max(1), z.literal(null)]),
+  )
+  .default(null);
+export type Confidence = z.infer<typeof Confidence>;
+
 export const CommitmentDue = z.object({
   date: LocalDate,
   time: LocalTime.nullable(), // local wall-clock `HH:MM`, null = all day
@@ -54,6 +72,7 @@ export const Commitment = Dated.extend({
   completedAt: IsoDateTime.nullable(),
   recurrence: Recurrence.nullable(),
   seriesId: z.string().nullable(), // shared by all occurrences of a recurring item
+  confidence: Confidence,
 });
 export type Commitment = z.infer<typeof Commitment>;
 export type NewCommitment = NewEntity<Commitment>;

@@ -81,7 +81,7 @@ export const commitmentsQuickCapture: Handler<"commitments.quickCapture"> = (
   if (!input.success) throw new ApiError("invalid_input", "Invalid commitment");
 
   return ctx.store.transaction(() => {
-    const commitment = ctx.store.commitments.create(input.data);
+    const commitment = ctx.store.commitments.create({ ...input.data, confidence: null });
     ctx.events.publish({ type: "items.changed", entity: "commitment", ids: [commitment.id] });
     return { status: "created" as const, commitment };
   });

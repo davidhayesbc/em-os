@@ -58,6 +58,7 @@ function input(over: Partial<NewCommitment> = {}): NewCommitment {
     completedAt: null,
     recurrence: null,
     seriesId: null,
+    confidence: null,
     ...over,
   };
 }

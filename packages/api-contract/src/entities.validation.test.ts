@@ -44,6 +44,7 @@ const baseCommitment = {
   completedAt: null,
   recurrence: null,
   seriesId: null,
+  confidence: null,
 };
 
 const basePerson = {
@@ -203,5 +204,28 @@ describe("RankConfig validates topN and goalSlots as nonnegative integers", () =
 
   it("accepts goalSlots=0", () => {
     expect(RankConfig.safeParse({ ...base, goalSlots: 0 }).success).toBe(true);
+  });
+});
+
+describe("Commitment.confidence normalizes to a valid [0,1] number or null", () => {
+  it.each([0, 0.5, 1, "0.7"])("accepts %j as a bounded number", (confidence) => {
+    const parsed = Commitment.safeParse({ ...baseCommitment, confidence });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.confidence).toBe(Number(confidence));
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -0.1, 1.1, "not a number", {}, []])(
+    "normalizes invalid %j to null",
+    (confidence) => {
+      const parsed = Commitment.safeParse({ ...baseCommitment, confidence });
+      expect(parsed.success).toBe(true);
+      expect(parsed.data?.confidence).toBeNull();
+    },
+  );
+
+  it("defaults to null when absent", () => {
+    const { confidence: _ignored, ...withoutConfidence } = baseCommitment;
+    const parsed = Commitment.parse(withoutConfidence);
+    expect(parsed.confidence).toBeNull();
   });
 });

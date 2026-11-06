@@ -69,13 +69,14 @@ export const commitmentsCreate: Handler<"commitments.create"> = (ctx, input) =>
     }
     const value: NewCommitment =
       requested.createdBy === "user"
-        ? requested
+        ? { ...requested, confidence: null }
         : {
             ...requested,
             status: "proposed",
             completedAt: null,
             dropReason: null,
             snoozedUntil: null,
+            confidence: null,
           };
     validateLifecycle(value);
     const created = ctx.store.commitments.create(value, sourceIds);

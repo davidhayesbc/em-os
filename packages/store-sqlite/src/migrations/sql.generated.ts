@@ -429,4 +429,8 @@ CREATE TABLE import_keys (
 ) STRICT;
 CREATE INDEX import_keys_entity_idx ON import_keys (entity, entity_id);
 `,
+  t_43e3c03a_commitment_confidence: `-- t_43e3c03a_commitment_confidence: add optional bounded confidence to commitments.
+ALTER TABLE commitments
+ADD COLUMN confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1));
+`,
 } as const;
