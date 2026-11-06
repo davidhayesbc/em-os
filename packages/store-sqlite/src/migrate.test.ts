@@ -439,6 +439,31 @@ describe("current schema", () => {
     ]);
   });
 
+  it("upgrades a populated pre-change DB, leaving NULL ticket columns on existing rows", () => {
+    const initial = migrations[0];
+    if (!initial) throw new Error("missing initial migration");
+    const db = track(openDb(tmp(), { migrations: [initial] }));
+    person(db, "per_1");
+    sourceItem(db, "src_1", "chat", "m-1");
+    commitment(db, "cmt_1", "per_1");
+
+    expect(columns(db, "commitments")).not.toContain("ticket_id");
+    expect(columns(db, "source_items")).not.toContain("ticket_data");
+
+    const { applied } = migrate(db);
+    expect(applied).toEqual(["t_e9515b7b_ticket_data"]);
+
+    const commitmentRow = db
+      .prepare("SELECT ticket_id, pin_provenance FROM commitments WHERE id = ?")
+      .get("cmt_1");
+    if (!commitmentRow) throw new Error("missing upgraded commitment row");
+    expect(commitmentRow).toEqual({ ticket_id: null, pin_provenance: null });
+
+    const sourceRow = db.prepare("SELECT ticket_data FROM source_items WHERE id = ?").get("src_1");
+    if (!sourceRow) throw new Error("missing upgraded source row");
+    expect(sourceRow).toEqual({ ticket_data: null });
+  });
+
   it("identity handles are unique case-insensitively", () => {
     const db = track(openDb(tmp()));
     person(db, "per_1");

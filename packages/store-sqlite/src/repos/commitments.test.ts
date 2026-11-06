@@ -223,12 +223,14 @@ describe("CommitmentsRepo", () => {
       input({
         createdBy: "import",
         status: "proposed",
+        pinned: true,
         pinProvenance: "system" as const,
         ticketId: "src_ticket_1",
       }),
     );
     expect(fromImport.pinProvenance).toBe("system");
     expect(fromImport.ticketId).toBe("src_ticket_1");
+    expect(fromImport.pinned).toBe(true);
 
     const invalid = r.create(
       input({
@@ -240,6 +242,7 @@ describe("CommitmentsRepo", () => {
     );
     expect(invalid.pinProvenance).toBeNull();
     expect(invalid.ticketId).toBe("src_ticket_2");
+    expect(invalid.pinned).toBe(false);
   });
 
   it("user pin action sets user provenance; unpin clears it", () => {
@@ -259,12 +262,41 @@ describe("CommitmentsRepo", () => {
     expect(r.get(c.id)?.pinProvenance).toBeNull();
   });
 
+  it("non-pin save clears pin provenance when pinned is set to false", () => {
+    const r = repo();
+    const fromImport = r.create(
+      input({
+        createdBy: "import",
+        status: "proposed",
+        pinned: true,
+        pinProvenance: "system" as const,
+        ticketId: "src_ticket_1",
+      }),
+    );
+    const unpinned = r.save(
+      { ...fromImport, pinned: false, updatedAt: now },
+      { action: "edit", actor: "user" },
+    );
+    expect(unpinned.pinned).toBe(false);
+    expect(unpinned.pinProvenance).toBeNull();
+    expect(unpinned.ticketId).toBe("src_ticket_1");
+    expect(r.get(fromImport.id)?.pinProvenance).toBeNull();
+
+    const repinned = r.save(
+      { ...unpinned, pinned: true, updatedAt: now },
+      { action: "edit", actor: "user" },
+    );
+    expect(repinned.pinned).toBe(true);
+    expect(repinned.pinProvenance).toBeNull();
+  });
+
   it("non-user saves cannot change pin provenance or ticket linkage", () => {
     const r = repo();
     const fromImport = r.create(
       input({
         createdBy: "import",
         status: "proposed",
+        pinned: true,
         pinProvenance: "system" as const,
         ticketId: "src_ticket_1",
       }),

@@ -123,6 +123,29 @@ describe("SourceItemsRepo", () => {
     expect(second.updatedAt).toBe(now);
   });
 
+  it("preserves ticket data on replay when the caller omits it", () => {
+    const r = repo();
+    const ticket = {
+      assigneeIdentityId: "idt_1",
+      due: null,
+      blockers: [{ sourceTicketId: "T-1", status: "open" as const }],
+      pinProvenance: "user" as const,
+    };
+    const first = r.upsert(
+      newItem({
+        externalId: "ticket-retained",
+        ticket,
+      }),
+    ).item;
+    const second = r.upsert(
+      newItem({ externalId: "ticket-retained", text: "Updated", contentHash: hash("Updated") }),
+    ).item;
+
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toEqual(ticket);
+    expect(second.text).toBe("Updated");
+  });
+
   it("normalizes seconds-only and fractional instants", () => {
     const r = repo();
     const seconds = r.upsert(

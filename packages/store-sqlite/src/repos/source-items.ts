@@ -167,6 +167,8 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
         const contentChanged = existing.contentHash !== value.contentHash;
         // Ordinary replay: never lower an existing source's sensitivity, but allow upgrades.
         // updatedAt advances only when source-backed content actually changes.
+        // Preserve optional ticket metadata when replay omits it; a caller that does not
+        // populate ticket data must not wipe ingested ticket data.
         const item: SourceItem = {
           ...existing,
           text: value.text,
@@ -175,7 +177,7 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
           authorIdentityId: value.authorIdentityId,
           sensitivity: higherSensitivity(existing.sensitivity, value.sensitivity),
           sections: value.sections,
-          ticket: value.ticket,
+          ticket: value.ticket ?? existing.ticket,
           // Preserve optional provenance when replay omits it; use defaults only for creation.
           occurredAt: input.occurredAt ? toDbInstant(input.occurredAt) : existing.occurredAt,
           retentionState: input.retentionState ?? existing.retentionState,

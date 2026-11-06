@@ -1,4 +1,4 @@
-import type { AuditEvent, CommitmentView, SourceItem } from "@emos/api-contract";
+import type { AuditEvent, CommitmentView, SourceItemView } from "@emos/api-contract";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { onEvent, rpc } from "../bridge.js";
 
@@ -57,7 +57,7 @@ export function useCommitments(): [CommitmentsLoad, () => void] {
 type DetailLoad =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; commitment: CommitmentView; sources: SourceItem[]; audit: AuditEvent[] };
+  | { status: "ready"; commitment: CommitmentView; sources: SourceItemView[]; audit: AuditEvent[] };
 
 export function useCommitment(id: string | null): [DetailLoad, () => void] {
   const [load, setLoad] = useState<DetailLoad>({ status: "loading" });

@@ -16,7 +16,10 @@ export const SourceKind = z.enum([
 export type SourceKind = z.infer<typeof SourceKind>;
 
 export const TicketBlocker = z.object({
+  /** Scoped to the connector that provided this source item; cross-connector matching is
+   *  defined by the ranking layer. */
   sourceTicketId: z.string(),
+  /** Status of the related (blocking) ticket, not of this commitment/source item. */
   status: z.enum(["open", "closed"]),
 });
 export type TicketBlocker = z.infer<typeof TicketBlocker>;
@@ -61,3 +64,7 @@ export const SourceItem = Dated.extend({
 });
 export type SourceItem = z.infer<typeof SourceItem>;
 export type NewSourceItem = NewEntity<SourceItem>;
+
+/** Public wire view of a source item: structured ticket metadata stays server-side. */
+export const SourceItemView = SourceItem.omit({ ticket: true });
+export type SourceItemView = z.infer<typeof SourceItemView>;

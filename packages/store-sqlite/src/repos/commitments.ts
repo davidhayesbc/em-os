@@ -127,6 +127,7 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
     create(c: NewCommitment, sourceIds: string[] = []): Commitment {
       const at = toDbInstant(d.now());
       const capture = isCaptureSource(c.createdBy);
+      const normalizedPin = capture ? normalizePinProvenance(c.pinProvenance) : null;
       const value: Commitment = {
         ...c,
         id: d.id("cmt"),
@@ -135,8 +136,9 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
         updatedAt: at,
         retentionState: c.retentionState ?? "active",
         confidence: isCaptureSource(c.createdBy) ? normalizeConfidence(c.confidence) : null,
-        pinProvenance: capture ? normalizePinProvenance(c.pinProvenance) : null,
+        pinProvenance: normalizedPin,
         ticketId: capture ? (c.ticketId ?? null) : null,
+        pinned: normalizedPin ? true : c.pinned,
       };
       db.transaction(() => {
         const columns = fields.map(([, column]) => column);
@@ -183,7 +185,7 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
       const toSave: Commitment = {
         ...c,
         confidence: previous.confidence,
-        pinProvenance: nextPinProvenance,
+        pinProvenance: c.pinned ? nextPinProvenance : null,
         ticketId: previous.ticketId,
       };
       const wasTerminal = previous.status === "done" || previous.status === "dropped";
