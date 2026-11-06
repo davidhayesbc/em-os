@@ -1,5 +1,8 @@
 import type { NewCommitment, ServerEvent } from "@emos/api-contract";
-import { commitmentsList as commitmentsListOp } from "@emos/api-contract";
+import {
+  commitmentsGet as commitmentsGetOp,
+  commitmentsList as commitmentsListOp,
+} from "@emos/api-contract";
 import { fixedClock } from "@emos/core";
 import { createCommitmentsRepo, openDb } from "@emos/store-sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -239,6 +242,14 @@ describe("commitment handlers", () => {
     const item = parsed.find((commitment) => commitment.id === c.id);
     expect(item).toBeDefined();
     expect(item).not.toHaveProperty("confidence");
+    expect(repo().get(c.id)).toMatchObject({ confidence: 0.42 });
+  });
+
+  it("get output hides persisted confidence including audit diff", () => {
+    const c = repo().create(input({ createdBy: "import", confidence: 0.42 }));
+    const parsed = commitmentsGetOp.output.parse(commitmentsGet(ctx, { id: c.id }));
+    const serialized = JSON.stringify(parsed);
+    expect(serialized).not.toContain('"confidence"');
     expect(repo().get(c.id)).toMatchObject({ confidence: 0.42 });
   });
 

@@ -1,4 +1,4 @@
-import { ApiError, type Commitment, type NewCommitment } from "@emos/api-contract";
+import { ApiError, type AuditEvent, type Commitment, type NewCommitment } from "@emos/api-contract";
 import { nextOccurrence, transition } from "@emos/core";
 import type { Handler, ServiceContext } from "../context.js";
 
@@ -11,6 +11,13 @@ function get(ctx: ServiceContext, id: string): Commitment {
 function publish(ctx: ServiceContext, ids: string[]): void {
   ctx.events.publish({ type: "items.changed", entity: "commitment", ids });
 }
+function stripConfidenceFromAuditDiff(audit: AuditEvent[]): AuditEvent[] {
+  return audit.map((event) => {
+    const { confidence: _, ...rest } = event.diff;
+    return { ...event, diff: rest };
+  });
+}
+
 function exists(ctx: ServiceContext, table: string, id: string | null | undefined): boolean {
   if (!id) return true;
   return Boolean(ctx.db.prepare(`SELECT 1 ok FROM ${table} WHERE id = ?`).get(id));
@@ -55,7 +62,7 @@ export const commitmentsGet: Handler<"commitments.get"> = (ctx, { id }) => {
   return {
     commitment,
     sources: ctx.store.commitments.sources(id),
-    audit: ctx.store.commitments.audit(id),
+    audit: stripConfidenceFromAuditDiff(ctx.store.commitments.audit(id)),
   };
 };
 export const commitmentsCreate: Handler<"commitments.create"> = (ctx, input) =>
