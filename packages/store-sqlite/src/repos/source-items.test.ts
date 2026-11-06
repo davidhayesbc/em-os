@@ -353,9 +353,14 @@ describe("SourceItemsRepo", () => {
   });
 
   it("preserves updatedAt on no-op replay with the same contentHash", () => {
-    const r = repo();
-    const first = r.upsert(newItem({ externalId: "noop", text: "Same" })).item;
-    const second = r.upsert(newItem({ externalId: "noop", text: "Same" })).item;
+    const { repo: r, advance } = repoWithMutableClock("2026-10-25T12:00:00.000Z");
+    const first = r.upsert(
+      newItem({ externalId: "noop", text: "Same", contentHash: hash("Same") }),
+    ).item;
+    advance(60_000);
+    const second = r.upsert(
+      newItem({ externalId: "noop", text: "Same", contentHash: hash("Same") }),
+    ).item;
 
     expect(second.id).toBe(first.id);
     expect(second.text).toBe("Same");

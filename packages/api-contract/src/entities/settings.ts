@@ -11,7 +11,7 @@ export const RankConfig = z.object({
   topN: z.number().int().nonnegative(),
   goalSlots: z.number().int().nonnegative(),
   timeCriticalHours: z.number(),
-  staleDays: z.number().int().nonnegative(),
+  staleDays: z.number().int().nonnegative().default(14),
   weights: z.object({
     timeCritical: z.number(),
     overduePerDay: z.number(),
@@ -21,7 +21,7 @@ export const RankConfig = z.object({
     pin: z.number(),
     priority: z.tuple([z.number(), z.number(), z.number(), z.number()]),
     urgencyNow: z.number(),
-    staleSource: z.number(),
+    staleSource: z.number().default(60),
   }),
 });
 export type RankConfig = z.infer<typeof RankConfig>;
