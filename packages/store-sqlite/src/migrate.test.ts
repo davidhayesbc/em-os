@@ -451,13 +451,13 @@ describe("current schema", () => {
     expect(columns(db, "source_items")).not.toContain("ticket_data");
 
     const { applied } = migrate(db);
-    expect(applied).toEqual(["t_e9515b7b_ticket_data"]);
+    expect(applied).toEqual(["t_43e3c03a_commitment_confidence", "t_e9515b7b_ticket_data"]);
 
     const commitmentRow = db
-      .prepare("SELECT ticket_id, pin_provenance FROM commitments WHERE id = ?")
+      .prepare("SELECT ticket_id, pin_provenance, confidence FROM commitments WHERE id = ?")
       .get("cmt_1");
     if (!commitmentRow) throw new Error("missing upgraded commitment row");
-    expect(commitmentRow).toEqual({ ticket_id: null, pin_provenance: null });
+    expect(commitmentRow).toEqual({ ticket_id: null, pin_provenance: null, confidence: null });
 
     const sourceRow = db.prepare("SELECT ticket_data FROM source_items WHERE id = ?").get("src_1");
     if (!sourceRow) throw new Error("missing upgraded source row");
@@ -659,11 +659,19 @@ describe("t_43e3c03a_commitment_confidence", () => {
     ).run(T0, T0, T0);
     expect(columns(db, "commitments")).not.toContain("confidence");
     expect(count(db, "commitments")).toBe(1);
-    expect(migrate(db).applied).toEqual(["t_43e3c03a_commitment_confidence"]);
+    expect(migrate(db).applied).toEqual([
+      "t_43e3c03a_commitment_confidence",
+      "t_e9515b7b_ticket_data",
+    ]);
     expect(columns(db, "commitments")).toContain("confidence");
-    expect(db.prepare("SELECT id, confidence FROM commitments WHERE id = 'cmt_1'").get()).toEqual({
+    expect(db
+      .prepare("SELECT id, confidence, ticket_id, pin_provenance FROM commitments WHERE id = 'cmt_1'")
+      .get(),
+    ).toEqual({
       id: "cmt_1",
       confidence: null,
+      ticket_id: null,
+      pin_provenance: null,
     });
   });
 });
