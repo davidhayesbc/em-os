@@ -91,6 +91,8 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
         occurredAt: input.occurredAt ? toDbInstant(input.occurredAt) : at,
         capturedAt: at,
         updatedAt: at,
+        // A caller may omit ticket data on creation (e.g. non-ticket source kinds); default to null.
+        ticket: input.ticket ?? null,
         retentionState: input.retentionState ?? "active",
       };
       try {
@@ -168,7 +170,8 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
         // Ordinary replay: never lower an existing source's sensitivity, but allow upgrades.
         // updatedAt advances only when source-backed content actually changes.
         // Preserve optional ticket metadata when replay omits it; a caller that does not
-        // populate ticket data must not wipe ingested ticket data.
+        // populate ticket data must not wipe ingested ticket data. Explicit `null` clears
+        // the stored ticket data so a connector can signal "blockers resolved / no signal".
         const item: SourceItem = {
           ...existing,
           text: value.text,
@@ -177,7 +180,7 @@ export function createSourceItemsRepo(db: Db, deps: Partial<Deps> = {}): SourceI
           authorIdentityId: value.authorIdentityId,
           sensitivity: higherSensitivity(existing.sensitivity, value.sensitivity),
           sections: value.sections,
-          ticket: value.ticket ?? existing.ticket,
+          ticket: "ticket" in input && input.ticket !== undefined ? input.ticket : existing.ticket,
           // Preserve optional provenance when replay omits it; use defaults only for creation.
           occurredAt: input.occurredAt ? toDbInstant(input.occurredAt) : existing.occurredAt,
           retentionState: input.retentionState ?? existing.retentionState,

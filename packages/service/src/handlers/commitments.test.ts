@@ -301,6 +301,7 @@ describe("commitment handlers", () => {
       due: { date: "2026-10-25", time: null, timeZone: "UTC" },
       blockers: [{ sourceTicketId: "T-7", status: "open" as const }],
       pinProvenance: "user" as const,
+      status: "open" as const,
     };
     sourceWithTicket("src_ticket", ticket);
     const c = repo().create(

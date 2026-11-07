@@ -196,6 +196,7 @@ describe("TicketData validates structured ticket fields", () => {
     due: null,
     blockers: null,
     pinProvenance: null,
+    status: null,
   };
 
   it("accepts a valid due date and blocker list", () => {
@@ -207,8 +208,20 @@ describe("TicketData validates structured ticket fields", () => {
         { sourceTicketId: "T-2", status: "closed" as const },
       ],
       pinProvenance: "user" as const,
+      status: "open" as const,
     };
     expect(TicketData.safeParse(t).success).toBe(true);
+  });
+
+  it("treats omitted ticket status as null (not blocked)", () => {
+    const parsed = TicketData.safeParse({
+      assigneeIdentityId: null,
+      due: null,
+      blockers: null,
+      pinProvenance: null,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.status).toBeNull();
   });
 
   it("rejects an invalid blocker status", () => {
@@ -216,6 +229,10 @@ describe("TicketData validates structured ticket fields", () => {
       TicketData.safeParse({ ...base, blockers: [{ sourceTicketId: "T-1", status: "blocked" }] })
         .success,
     ).toBe(false);
+  });
+
+  it("rejects an invalid ticket status", () => {
+    expect(TicketData.safeParse({ ...base, status: "in_progress" }).success).toBe(false);
   });
 
   it("rejects an invalid due time zone", () => {

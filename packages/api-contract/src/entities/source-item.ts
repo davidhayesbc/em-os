@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CommitmentDue } from "./commitment.js";
-import { Dated, type NewEntity, Sensitivity } from "./common.js";
+import { Dated, Sensitivity } from "./common.js";
 
 export const SourceKind = z.enum([
   "message",
@@ -34,6 +34,9 @@ export const TicketData = z.object({
   due: CommitmentDue.nullable(),
   blockers: z.array(TicketBlocker).nullable(),
   pinProvenance: TicketPinProvenance.nullable(),
+  /** The ticket's own tracker status. `null` or omitted means the connector did not
+   *  provide a status, which degrades to "not blocked" / no signal for gate evaluation. */
+  status: z.enum(["open", "closed"]).nullable().default(null),
 });
 export type TicketData = z.infer<typeof TicketData>;
 
@@ -63,7 +66,11 @@ export const SourceItem = Dated.extend({
   ticket: TicketData.nullable(),
 });
 export type SourceItem = z.infer<typeof SourceItem>;
-export type NewSourceItem = NewEntity<SourceItem>;
+export type NewSourceItem = Omit<
+  SourceItem,
+  "id" | "capturedAt" | "updatedAt" | "occurredAt" | "retentionState" | "ticket"
+> &
+  Partial<Pick<SourceItem, "occurredAt" | "retentionState" | "ticket">>;
 
 /** Public wire view of a source item: structured ticket metadata stays server-side. */
 export const SourceItemView = SourceItem.omit({ ticket: true });
