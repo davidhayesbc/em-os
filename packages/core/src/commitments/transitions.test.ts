@@ -24,6 +24,7 @@ const base = (status: Commitment["status"] = "active"): Commitment => ({
   completedAt: null,
   recurrence: null,
   seriesId: null,
+  confidence: null,
   occurredAt: "2026-10-20T16:00:00.000Z",
   capturedAt: "2026-10-20T16:00:00.000Z",
   updatedAt: "2026-10-20T16:00:00.000Z",

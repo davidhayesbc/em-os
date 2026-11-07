@@ -70,6 +70,7 @@ const baseCommitment = {
   completedAt: null,
   recurrence: null,
   seriesId: null,
+  confidence: null,
 };
 
 describe("common", () => {

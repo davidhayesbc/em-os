@@ -224,7 +224,7 @@ describe("migration registry", () => {
   });
 });
 
-describe("schema 0001", () => {
+describe("current schema", () => {
   it("a fresh DB has every Phase 1 table", () => {
     const db = track(openDb(tmp()));
     expect(tables(db)).toEqual(PHASE_1_TABLES);
@@ -363,6 +363,7 @@ describe("schema 0001", () => {
       "recurrence",
       "series_id",
       ...dated,
+      "confidence",
     ]);
     expect(columns(db, "meetings")).toEqual([
       "id",
@@ -610,6 +611,32 @@ describe("schema 0001", () => {
     expect(() =>
       db.prepare("UPDATE mcp_clients SET revoked_at = NULL WHERE id = 'mcl_1'").run(),
     ).toThrow(/UNIQUE/);
+  });
+});
+
+describe("t_43e3c03a_commitment_confidence", () => {
+  it("adds the confidence column to commitments", () => {
+    const db = track(openDb(tmp()));
+    expect(columns(db, "commitments")).toEqual(expect.arrayContaining(["confidence"]));
+  });
+
+  it("keeps existing commitment rows with null confidence when upgrading", () => {
+    const file = tmp();
+    const db = track(openDb(file, { migrations: migrations.slice(0, 1) }));
+    person(db, "per_1");
+    db.prepare(
+      `INSERT INTO commitments (id, direction, status, tags, created_by, owner_id, title, notes, pinned,
+         occurred_at, captured_at, updated_at, retention_state)
+       VALUES ('cmt_1', 'mine', 'active', '[]', 'user', 'per_1', 'T', '', 0, ?, ?, ?, 'active')`,
+    ).run(T0, T0, T0);
+    expect(columns(db, "commitments")).not.toContain("confidence");
+    expect(count(db, "commitments")).toBe(1);
+    expect(migrate(db).applied).toEqual(["t_43e3c03a_commitment_confidence"]);
+    expect(columns(db, "commitments")).toContain("confidence");
+    expect(db.prepare("SELECT id, confidence FROM commitments WHERE id = 'cmt_1'").get()).toEqual({
+      id: "cmt_1",
+      confidence: null,
+    });
   });
 });
 

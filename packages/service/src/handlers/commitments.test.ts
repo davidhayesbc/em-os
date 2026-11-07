@@ -1,4 +1,8 @@
 import type { NewCommitment, ServerEvent } from "@emos/api-contract";
+import {
+  commitmentsGet as commitmentsGetOp,
+  commitmentsList as commitmentsListOp,
+} from "@emos/api-contract";
 import { fixedClock } from "@emos/core";
 import { createCommitmentsRepo, openDb } from "@emos/store-sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -58,6 +62,7 @@ function input(over: Partial<NewCommitment> = {}): NewCommitment {
     completedAt: null,
     recurrence: null,
     seriesId: null,
+    confidence: null,
     ...over,
   };
 }
@@ -200,6 +205,52 @@ describe("commitment handlers", () => {
         actor: "user",
       }),
     ]);
+  });
+
+  it("recurrence successor of a capture-source item drops confidence and provenance", () => {
+    const c = repo().create(
+      input({
+        createdBy: "import",
+        confidence: 0.8,
+        due: { date: "2026-10-23", time: null, timeZone: "UTC" },
+        recurrence: { freq: "weekly", interval: 1, byWeekday: [5], byMonthDay: null },
+        seriesId: "series_capture",
+      }),
+    );
+    commitmentsComplete(ctx, { id: c.id });
+    const successor = repo()
+      .list({})
+      .find((item) => item.id !== c.id && item.seriesId === "series_capture");
+    if (!successor) throw new Error("Missing recurrence successor");
+
+    expect(successor).toMatchObject({
+      status: "active",
+      createdBy: "user",
+      confidence: null,
+    });
+    expect(repo().get(successor.id)).toMatchObject({ confidence: null });
+    expect(repo().get(c.id)).toMatchObject({ confidence: 0.8 });
+
+    const audit = repo().audit(successor.id)[0];
+    expect(audit).toMatchObject({ action: "create", actor: "user" });
+    expect(audit?.diff?.confidence?.to ?? null).toBeNull();
+  });
+
+  it("parsed op output hides persisted confidence while the repo keeps it", () => {
+    const c = repo().create(input({ createdBy: "import", confidence: 0.42 }));
+    const parsed = commitmentsListOp.output.parse(repo().list({}));
+    const item = parsed.find((commitment) => commitment.id === c.id);
+    expect(item).toBeDefined();
+    expect(item).not.toHaveProperty("confidence");
+    expect(repo().get(c.id)).toMatchObject({ confidence: 0.42 });
+  });
+
+  it("get output hides persisted confidence including audit diff", () => {
+    const c = repo().create(input({ createdBy: "import", confidence: 0.42 }));
+    const parsed = commitmentsGetOp.output.parse(commitmentsGet(ctx, { id: c.id }));
+    const serialized = JSON.stringify(parsed);
+    expect(serialized).not.toContain('"confidence"');
+    expect(repo().get(c.id)).toMatchObject({ confidence: 0.42 });
   });
 
   it("get returns linked sources and audit", async () => {

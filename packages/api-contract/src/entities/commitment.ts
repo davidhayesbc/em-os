@@ -16,6 +16,33 @@ export type Urgency = z.infer<typeof Urgency>;
 export const CreatedBy = z.enum(["user", "extractor", "import", "mcp"]);
 export type CreatedBy = z.infer<typeof CreatedBy>;
 
+/** Decimal string pattern accepted when a confidence arrives as text. */
+const CONFIDENCE_DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+/** Normalise a confidence value to a number in [0, 1] or `null`. */
+export function normalizeConfidence(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "number")
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") return null;
+    if (!CONFIDENCE_DECIMAL.test(trimmed)) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
+  }
+  return null;
+}
+
+/** A confidence score in [0, 1]. Invalid or missing values normalize to `null`. */
+export const Confidence = z
+  .preprocess(
+    (value) => normalizeConfidence(value),
+    z.union([z.number().min(0).max(1), z.literal(null)]),
+  )
+  .default(null);
+export type Confidence = z.infer<typeof Confidence>;
+
 export const CommitmentDue = z.object({
   date: LocalDate,
   time: LocalTime.nullable(), // local wall-clock `HH:MM`, null = all day
@@ -54,6 +81,11 @@ export const Commitment = Dated.extend({
   completedAt: IsoDateTime.nullable(),
   recurrence: Recurrence.nullable(),
   seriesId: z.string().nullable(), // shared by all occurrences of a recurring item
+  confidence: Confidence,
 });
 export type Commitment = z.infer<typeof Commitment>;
 export type NewCommitment = NewEntity<Commitment>;
+
+/** Public wire view of a commitment: internal storage fields such as `confidence` are hidden. */
+export const CommitmentView = Commitment.omit({ confidence: true });
+export type CommitmentView = z.infer<typeof CommitmentView>;

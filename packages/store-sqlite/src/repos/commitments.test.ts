@@ -35,6 +35,7 @@ function input(over: Partial<NewCommitment> = {}): NewCommitment {
     completedAt: null,
     recurrence: null,
     seriesId: null,
+    confidence: null,
     ...over,
   };
 }
@@ -157,5 +158,51 @@ describe("CommitmentsRepo", () => {
     expect(r.list({ status: ["active"], direction: "owed_to_me" }).map((c) => c.id)).toEqual([
       wanted.id,
     ]);
+  });
+
+  it.each([
+    ["extractor", "system"],
+    ["import", "import"],
+    ["mcp", "mcp"],
+  ] as const)("persists capture-time confidence for createdBy=%s", (createdBy, actor) => {
+    const r = repo();
+    const c = r.create(input({ createdBy, confidence: 0.75 }));
+    expect(c.confidence).toBe(0.75);
+    expect(r.get(c.id)).toMatchObject({ confidence: 0.75 });
+    expect(r.audit(c.id)[0]).toMatchObject({ action: "create", actor });
+  });
+
+  it("forces user-created confidence to null", () => {
+    const r = repo();
+    const c = r.create(input({ createdBy: "user", confidence: 0.75 }));
+    expect(c.confidence).toBeNull();
+    expect(r.get(c.id)).toMatchObject({ confidence: null });
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -0.1, 1.1, "not a number"] as const)(
+    "normalizes invalid confidence %j to null",
+    (confidence) => {
+      const r = repo();
+      const c = r.create(input({ createdBy: "import", confidence: confidence as number }));
+      expect(c.confidence).toBeNull();
+    },
+  );
+
+  it("preserves capture-time confidence and ignores edits that try to change it", () => {
+    const r = repo();
+    const c = r.create(input({ createdBy: "import", confidence: 0.6 }));
+    const replayed = r.save(
+      { ...c, title: "Updated title", updatedAt: now },
+      { action: "edit", actor: "import" },
+    );
+    expect(replayed.confidence).toBe(0.6);
+    expect(r.get(c.id)).toMatchObject({ confidence: 0.6 });
+    // A user edit that tries to fabricate confidence is ignored.
+    const edited = r.save(
+      { ...replayed, title: "User edit", confidence: 0.99, updatedAt: now },
+      { action: "edit", actor: "user" },
+    );
+    expect(edited.confidence).toBe(0.6);
+    expect(r.get(c.id)).toMatchObject({ confidence: 0.6 });
   });
 });

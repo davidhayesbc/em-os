@@ -1,9 +1,9 @@
-import type { Commitment, Direction } from "@emos/api-contract";
+import type { CommitmentView, Direction } from "@emos/api-contract";
 import { DIRECTION_LABEL, formatDue, isCurrentlyOverdue, STATUS_LABEL } from "./utils.js";
 
 export interface CommitmentListProps {
   direction: Direction;
-  items: Commitment[] | undefined;
+  items: CommitmentView[] | undefined;
   error: string | null;
   selectedId: string | null;
   onSelect: (id: string) => void;

@@ -3,6 +3,7 @@ import {
   AuditEvent,
   Commitment,
   CommitmentStatus,
+  CommitmentView,
   CreatedBy,
   Direction,
   DropReason,
@@ -17,6 +18,7 @@ export const NewCommitmentSchema = Commitment.omit({
   updatedAt: true,
   occurredAt: true,
   retentionState: true,
+  confidence: true, // internal to the capture pipeline; the public API never accepts it
 }).extend({
   occurredAt: Commitment.shape.occurredAt.optional(),
   retentionState: Commitment.shape.retentionState.optional(),
@@ -34,13 +36,13 @@ export const commitmentsList = defineOp({
     createdBy: z.array(CreatedBy).optional(),
     dueOnOrBefore: LocalDate.optional(),
   }),
-  output: z.array(Commitment),
+  output: z.array(CommitmentView),
 });
 export const commitmentsGet = defineOp({
   name: "commitments.get",
   input: Id,
   output: z.object({
-    commitment: Commitment,
+    commitment: CommitmentView,
     sources: z.array(SourceItem),
     audit: z.array(AuditEvent),
   }),
@@ -48,35 +50,35 @@ export const commitmentsGet = defineOp({
 export const commitmentsCreate = defineOp({
   name: "commitments.create",
   input: NewCommitment.extend({ sourceIds: z.array(z.string()).optional() }),
-  output: Commitment,
+  output: CommitmentView,
 });
 export const commitmentsUpdate = defineOp({
   name: "commitments.update",
   input: Id.extend({ patch: NewCommitment.partial() }),
-  output: Commitment,
+  output: CommitmentView,
 });
 export const commitmentsComplete = defineOp({
   name: "commitments.complete",
   input: Id,
-  output: Commitment,
+  output: CommitmentView,
 });
 export const commitmentsSnooze = defineOp({
   name: "commitments.snooze",
   input: Id.extend({ until: Commitment.shape.snoozedUntil.unwrap() }),
-  output: Commitment,
+  output: CommitmentView,
 });
 export const commitmentsDrop = defineOp({
   name: "commitments.drop",
   input: Id.extend({ reason: DropReason }),
-  output: Commitment,
+  output: CommitmentView,
 });
 export const commitmentsReopen = defineOp({
   name: "commitments.reopen",
   input: Id,
-  output: Commitment,
+  output: CommitmentView,
 });
 export const commitmentsPin = defineOp({
   name: "commitments.pin",
   input: Id.extend({ pinned: z.boolean() }),
-  output: Commitment,
+  output: CommitmentView,
 });

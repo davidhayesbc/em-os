@@ -23,4 +23,5 @@ export interface Migration {
 
 export const migrations: readonly Migration[] = [
   { name: "0001_initial", sql: SQL["0001_initial"] },
+  { name: "t_43e3c03a_commitment_confidence", sql: SQL.t_43e3c03a_commitment_confidence },
 ];
