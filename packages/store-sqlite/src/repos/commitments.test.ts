@@ -30,6 +30,8 @@ function input(over: Partial<NewCommitment> = {}): NewCommitment {
     title: "Synthetic commitment",
     notes: "",
     pinned: false,
+    pinProvenance: null,
+    ticketId: null,
     effortMinutes: null,
     snoozedUntil: null,
     completedAt: null,
@@ -204,5 +206,112 @@ describe("CommitmentsRepo", () => {
     );
     expect(edited.confidence).toBe(0.6);
     expect(r.get(c.id)).toMatchObject({ confidence: 0.6 });
+  });
+
+  it("user-created commitments have no ticket linkage or pin provenance", () => {
+    const r = repo();
+    const c = r.create(input({ pinProvenance: "user" as const, ticketId: "src_1" }));
+    expect(c.pinProvenance).toBeNull();
+    expect(c.ticketId).toBeNull();
+    expect(r.get(c.id)?.pinProvenance).toBeNull();
+    expect(r.get(c.id)?.ticketId).toBeNull();
+  });
+
+  it("capture sources normalize and store ticket linkage and pin provenance", () => {
+    const r = repo();
+    const fromImport = r.create(
+      input({
+        createdBy: "import",
+        status: "proposed",
+        pinned: true,
+        pinProvenance: "system" as const,
+        ticketId: "src_ticket_1",
+      }),
+    );
+    expect(fromImport.pinProvenance).toBe("system");
+    expect(fromImport.ticketId).toBe("src_ticket_1");
+    expect(fromImport.pinned).toBe(true);
+
+    const invalid = r.create(
+      input({
+        createdBy: "mcp",
+        status: "proposed",
+        pinProvenance: "automated" as unknown as "system",
+        ticketId: "src_ticket_2",
+      }),
+    );
+    expect(invalid.pinProvenance).toBeNull();
+    expect(invalid.ticketId).toBe("src_ticket_2");
+    expect(invalid.pinned).toBe(false);
+  });
+
+  it("user pin action sets user provenance; unpin clears it", () => {
+    const r = repo();
+    const c = r.create(input());
+    const pinned = r.save({ ...c, pinned: true, updatedAt: now }, { action: "pin", actor: "user" });
+    expect(pinned.pinned).toBe(true);
+    expect(pinned.pinProvenance).toBe("user");
+    expect(r.get(c.id)?.pinProvenance).toBe("user");
+
+    const unpinned = r.save(
+      { ...pinned, pinned: false, updatedAt: now },
+      { action: "unpin", actor: "user" },
+    );
+    expect(unpinned.pinned).toBe(false);
+    expect(unpinned.pinProvenance).toBeNull();
+    expect(r.get(c.id)?.pinProvenance).toBeNull();
+  });
+
+  it("non-pin save clears pin provenance when pinned is set to false", () => {
+    const r = repo();
+    const fromImport = r.create(
+      input({
+        createdBy: "import",
+        status: "proposed",
+        pinned: true,
+        pinProvenance: "system" as const,
+        ticketId: "src_ticket_1",
+      }),
+    );
+    const unpinned = r.save(
+      { ...fromImport, pinned: false, updatedAt: now },
+      { action: "edit", actor: "user" },
+    );
+    expect(unpinned.pinned).toBe(false);
+    expect(unpinned.pinProvenance).toBeNull();
+    expect(unpinned.ticketId).toBe("src_ticket_1");
+    expect(r.get(fromImport.id)?.pinProvenance).toBeNull();
+
+    const repinned = r.save(
+      { ...unpinned, pinned: true, updatedAt: now },
+      { action: "edit", actor: "user" },
+    );
+    expect(repinned.pinned).toBe(true);
+    expect(repinned.pinProvenance).toBeNull();
+  });
+
+  it("non-user saves cannot change pin provenance or ticket linkage", () => {
+    const r = repo();
+    const fromImport = r.create(
+      input({
+        createdBy: "import",
+        status: "proposed",
+        pinned: true,
+        pinProvenance: "system" as const,
+        ticketId: "src_ticket_1",
+      }),
+    );
+    const edited = r.save(
+      {
+        ...fromImport,
+        title: "Updated",
+        pinProvenance: "user" as const,
+        ticketId: "changed",
+        updatedAt: now,
+      },
+      { action: "edit", actor: "import" },
+    );
+    expect(edited.pinProvenance).toBe("system");
+    expect(edited.ticketId).toBe("src_ticket_1");
   });
 });

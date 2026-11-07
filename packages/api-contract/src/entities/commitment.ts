@@ -76,6 +76,8 @@ export const Commitment = Dated.extend({
   title: z.string(),
   notes: z.string(),
   pinned: z.boolean(),
+  pinProvenance: z.enum(["user", "system"]).nullable(),
+  ticketId: z.string().nullable(),
   effortMinutes: z.number().int().min(1).max(1440).nullable(), // at most one day
   snoozedUntil: IsoDateTime.nullable(),
   completedAt: IsoDateTime.nullable(),
@@ -86,6 +88,10 @@ export const Commitment = Dated.extend({
 export type Commitment = z.infer<typeof Commitment>;
 export type NewCommitment = NewEntity<Commitment>;
 
-/** Public wire view of a commitment: internal storage fields such as `confidence` are hidden. */
-export const CommitmentView = Commitment.omit({ confidence: true });
+/** Public wire view of a commitment: internal storage fields are hidden. */
+export const CommitmentView = Commitment.omit({
+  confidence: true,
+  pinProvenance: true,
+  ticketId: true,
+});
 export type CommitmentView = z.infer<typeof CommitmentView>;

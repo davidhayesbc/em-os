@@ -20,6 +20,11 @@ const json = (value: unknown) => (value === null ? null : JSON.stringify(value))
 const parse = <T>(value: string | null): T | null =>
   value === null ? null : (JSON.parse(value) as T);
 
+function normalizePinProvenance(value: unknown): Commitment["pinProvenance"] {
+  if (value === "user" || value === "system") return value;
+  return null;
+}
+
 function isCaptureSource(createdBy: Commitment["createdBy"]): boolean {
   return createdBy === "extractor" || createdBy === "import" || createdBy === "mcp";
 }
@@ -46,6 +51,8 @@ function commitment(r: Row): Commitment {
     title: str(r, "title"),
     notes: str(r, "notes"),
     pinned: Number(r.pinned) === 1,
+    pinProvenance: nullable(r, "pin_provenance") as Commitment["pinProvenance"],
+    ticketId: nullable(r, "ticket_id"),
     effortMinutes: r.effort_minutes === null ? null : Number(r.effort_minutes),
     snoozedUntil: nullable(r, "snoozed_until"),
     completedAt: nullable(r, "completed_at"),
@@ -72,6 +79,7 @@ function source(r: Row): SourceItem {
     contentHash: str(r, "content_hash"),
     sensitivity: str(r, "sensitivity") as SourceItem["sensitivity"],
     sections: parse<SourceItem["sections"]>(nullable(r, "sections")),
+    ticket: parse<SourceItem["ticket"]>(nullable(r, "ticket_data")),
     occurredAt: str(r, "occurred_at"),
     capturedAt: str(r, "captured_at"),
     updatedAt: str(r, "updated_at"),
@@ -95,6 +103,8 @@ const fields: Array<[keyof Commitment, string]> = [
   ["title", "title"],
   ["notes", "notes"],
   ["pinned", "pinned"],
+  ["pinProvenance", "pin_provenance"],
+  ["ticketId", "ticket_id"],
   ["effortMinutes", "effort_minutes"],
   ["snoozedUntil", "snoozed_until"],
   ["completedAt", "completed_at"],
@@ -116,6 +126,8 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
   return {
     create(c: NewCommitment, sourceIds: string[] = []): Commitment {
       const at = toDbInstant(d.now());
+      const capture = isCaptureSource(c.createdBy);
+      const normalizedPin = capture ? normalizePinProvenance(c.pinProvenance) : null;
       const value: Commitment = {
         ...c,
         id: d.id("cmt"),
@@ -124,6 +136,9 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
         updatedAt: at,
         retentionState: c.retentionState ?? "active",
         confidence: isCaptureSource(c.createdBy) ? normalizeConfidence(c.confidence) : null,
+        pinProvenance: normalizedPin,
+        ticketId: capture ? (c.ticketId ?? null) : null,
+        pinned: normalizedPin ? true : c.pinned,
       };
       db.transaction(() => {
         const columns = fields.map(([, column]) => column);
@@ -159,7 +174,20 @@ export function createCommitmentsRepo(db: Db, deps: Partial<Deps> = {}): Commitm
       const previous = this.get(c.id);
       if (!previous) throw new Error(`Unknown commitment ${c.id}`);
       // Confidence is set only at capture time and never changes via save.
-      const toSave: Commitment = { ...c, confidence: previous.confidence };
+      // pinProvenance is set by capture or explicit user pin actions; ticketId is set at capture.
+      const userPinAction =
+        audit.actor === "user" && (audit.action === "pin" || audit.action === "unpin");
+      const nextPinProvenance: Commitment["pinProvenance"] = userPinAction
+        ? audit.action === "pin"
+          ? "user"
+          : null
+        : previous.pinProvenance;
+      const toSave: Commitment = {
+        ...c,
+        confidence: previous.confidence,
+        pinProvenance: c.pinned ? nextPinProvenance : null,
+        ticketId: previous.ticketId,
+      };
       const wasTerminal = previous.status === "done" || previous.status === "dropped";
       const leavesTerminal = toSave.status !== "done" && toSave.status !== "dropped";
       const isUserReopen =

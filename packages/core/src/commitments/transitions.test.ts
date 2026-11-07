@@ -19,6 +19,8 @@ const base = (status: Commitment["status"] = "active"): Commitment => ({
   title: "Send the update",
   notes: "",
   pinned: false,
+  pinProvenance: null,
+  ticketId: null,
   effortMinutes: null,
   snoozedUntil: null,
   completedAt: null,
@@ -50,5 +52,12 @@ describe("commitment transitions", () => {
 
   it("edit is allowed while snoozed", () => {
     expect(transition(base("snoozed"), "edit", at).status).toBe("snoozed");
+  });
+
+  it("pin sets user provenance and unpin clears it", () => {
+    expect(transition(base(), "pin", at)).toMatchObject({ pinned: true, pinProvenance: "user" });
+    expect(
+      transition({ ...base(), pinned: true, pinProvenance: "user" }, "unpin", at),
+    ).toMatchObject({ pinned: false, pinProvenance: null });
   });
 });

@@ -71,6 +71,7 @@ function mapSourceItem(row: Row): SourceItem {
     contentHash: str(row, "content_hash"),
     sensitivity: str(row, "sensitivity") as SourceItem["sensitivity"],
     sections: parse<SourceItem["sections"]>(nullable(row, "sections")),
+    ticket: parse<SourceItem["ticket"]>(nullable(row, "ticket_data")),
     occurredAt: str(row, "occurred_at"),
     capturedAt: str(row, "captured_at"),
     updatedAt: str(row, "updated_at"),

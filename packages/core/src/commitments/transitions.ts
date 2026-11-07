@@ -33,9 +33,9 @@ export function transition(
       if (!args.reason) throw new ApiError("invalid_input", "reason is required");
       return { ...next, status: "dropped", dropReason: args.reason, snoozedUntil: null };
     case "pin":
-      return { ...next, pinned: true };
+      return { ...next, pinned: true, pinProvenance: "user" };
     case "unpin":
-      return { ...next, pinned: false };
+      return { ...next, pinned: false, pinProvenance: null };
     case "edit":
       return next;
   }

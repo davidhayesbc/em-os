@@ -73,6 +73,7 @@ export const meetingsAttachNotes: Handler<"meetings.attachNotes"> = (ctx, input)
       contentHash: contentHash(input.kind, input.text),
       sensitivity,
       sections: null,
+      ticket: null,
       occurredAt: meeting.start,
     };
     const { item } = ctx.store.sourceItems.upsert(sourceItem);

@@ -1,8 +1,5 @@
 import type { NewCommitment, ServerEvent } from "@emos/api-contract";
-import {
-  commitmentsGet as commitmentsGetOp,
-  commitmentsList as commitmentsListOp,
-} from "@emos/api-contract";
+import { ops } from "@emos/api-contract";
 import { fixedClock } from "@emos/core";
 import { createCommitmentsRepo, openDb } from "@emos/store-sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,8 +8,11 @@ import {
   commitmentsComplete,
   commitmentsCreate,
   commitmentsGet,
+  commitmentsList,
+  commitmentsPin,
   commitmentsReopen,
   commitmentsSnooze,
+  commitmentsUpdate,
 } from "./commitments.js";
 
 const now = "2026-10-24T12:00:00.000Z";
@@ -40,6 +40,14 @@ function source(id: string): void {
   );
 }
 
+function sourceWithTicket(id: string, ticket: unknown): void {
+  db.prepare(`INSERT INTO source_items
+    (id, connector_id, external_id, kind, origin, text, content_hash, sensitivity,
+     ticket_data, occurred_at, captured_at, updated_at, retention_state)
+    VALUES (?, 'fixture', ?, 'ticket', 'connector', 'Synthetic ticket', 'hash', 'normal', ?,
+            ?, ?, ?, 'active')`).run(id, id, JSON.stringify(ticket), now, now, now);
+}
+
 function input(over: Partial<NewCommitment> = {}): NewCommitment {
   return {
     direction: "mine",
@@ -57,6 +65,8 @@ function input(over: Partial<NewCommitment> = {}): NewCommitment {
     title: "Synthetic commitment",
     notes: "",
     pinned: false,
+    pinProvenance: null,
+    ticketId: null,
     effortMinutes: null,
     snoozedUntil: null,
     completedAt: null,
@@ -238,7 +248,7 @@ describe("commitment handlers", () => {
 
   it("parsed op output hides persisted confidence while the repo keeps it", () => {
     const c = repo().create(input({ createdBy: "import", confidence: 0.42 }));
-    const parsed = commitmentsListOp.output.parse(repo().list({}));
+    const parsed = ops["commitments.list"].output.parse(repo().list({}));
     const item = parsed.find((commitment) => commitment.id === c.id);
     expect(item).toBeDefined();
     expect(item).not.toHaveProperty("confidence");
@@ -247,10 +257,113 @@ describe("commitment handlers", () => {
 
   it("get output hides persisted confidence including audit diff", () => {
     const c = repo().create(input({ createdBy: "import", confidence: 0.42 }));
-    const parsed = commitmentsGetOp.output.parse(commitmentsGet(ctx, { id: c.id }));
+    const parsed = ops["commitments.get"].output.parse(commitmentsGet(ctx, { id: c.id }));
     const serialized = JSON.stringify(parsed);
     expect(serialized).not.toContain('"confidence"');
     expect(repo().get(c.id)).toMatchObject({ confidence: 0.42 });
+  });
+
+  it("recurrence successor from an import parent drops ticket link and pin provenance", () => {
+    const c = repo().create(
+      input({
+        createdBy: "import",
+        pinned: true,
+        pinProvenance: "system" as const,
+        ticketId: "src_ticket_1",
+        due: { date: "2026-10-23", time: null, timeZone: "UTC" },
+        recurrence: { freq: "weekly", interval: 1, byWeekday: [5], byMonthDay: null },
+        seriesId: "series_import",
+      }),
+    );
+    commitmentsComplete(ctx, { id: c.id });
+    const series = repo()
+      .list({})
+      .filter((item) => item.seriesId === "series_import");
+    expect(series).toHaveLength(2);
+    const successor = series.find((item) => item.id !== c.id);
+    if (!successor) throw new Error("Missing recurrence successor");
+    expect(successor).toMatchObject({
+      createdBy: "user",
+      pinProvenance: null,
+      ticketId: null,
+    });
+    expect(successor.pinned).toBe(true);
+    const createAudit = repo().audit(successor.id)[0];
+    if (!createAudit) throw new Error("Missing successor create audit");
+    expect(createAudit).toMatchObject({ action: "create", actor: "user" });
+    expect(createAudit.diff.pinProvenance?.to ?? null).toBeNull();
+    expect(createAudit.diff.ticketId?.to ?? null).toBeNull();
+  });
+
+  it("does not expose pinProvenance, ticketId, source ticket data or their audit diff on the RPC wire", () => {
+    const ticket = {
+      assigneeIdentityId: "idt_me",
+      due: { date: "2026-10-25", time: null, timeZone: "UTC" },
+      blockers: [{ sourceTicketId: "T-7", status: "open" as const }],
+      pinProvenance: "user" as const,
+      status: "open" as const,
+    };
+    sourceWithTicket("src_ticket", ticket);
+    const c = repo().create(
+      input({
+        createdBy: "import",
+        pinned: true,
+        pinProvenance: "system" as const,
+        ticketId: "src_ticket_1",
+      }),
+      ["src_ticket"],
+    );
+
+    const listParsed = ops["commitments.list"].output.safeParse(commitmentsList(ctx, {}));
+    expect(listParsed.success).toBe(true);
+    if (!listParsed.success) throw new Error("list output parse failed");
+    expect(listParsed.data[0]).not.toHaveProperty("pinProvenance");
+    expect(listParsed.data[0]).not.toHaveProperty("ticketId");
+
+    const getResult = commitmentsGet(ctx, { id: c.id });
+    const getParsed = ops["commitments.get"].output.safeParse(getResult);
+    expect(getParsed.success).toBe(true);
+    if (!getParsed.success) throw new Error("get output parse failed");
+    expect(getParsed.data.commitment).not.toHaveProperty("pinProvenance");
+    expect(getParsed.data.commitment).not.toHaveProperty("ticketId");
+    expect(getParsed.data.sources[0]).not.toHaveProperty("ticket");
+    expect(
+      getParsed.data.audit.every((e) => !("pinProvenance" in e.diff) && !("ticketId" in e.diff)),
+    ).toBe(true);
+
+    // The repo still returns the stored internal fields.
+    expect(repo().get(c.id)?.pinProvenance).toBe("system");
+    expect(repo().get(c.id)?.ticketId).toBe("src_ticket_1");
+    expect(repo().sources(c.id)[0]?.ticket).toEqual(ticket);
+
+    // A user pin action also must not leak pinProvenance into the parsed audit diff.
+    commitmentsPin(ctx, { id: c.id, pinned: true });
+    const pinnedGetParsed = ops["commitments.get"].output.safeParse(
+      commitmentsGet(ctx, { id: c.id }),
+    );
+    expect(pinnedGetParsed.success).toBe(true);
+    if (!pinnedGetParsed.success) throw new Error("pinned get output parse failed");
+    expect(pinnedGetParsed.data.commitment).not.toHaveProperty("pinProvenance");
+    expect(pinnedGetParsed.data.commitment).not.toHaveProperty("ticketId");
+    expect(
+      pinnedGetParsed.data.audit.every(
+        (e) => !("pinProvenance" in e.diff) && !("ticketId" in e.diff),
+      ),
+    ).toBe(true);
+  });
+
+  it("update with pinned false clears pin provenance, and pinned true keeps a cleared value", async () => {
+    const c = repo().create(input());
+    await commitmentsPin(ctx, { id: c.id, pinned: true });
+    expect(repo().get(c.id)?.pinProvenance).toBe("user");
+
+    const unpinned = await commitmentsUpdate(ctx, { id: c.id, patch: { pinned: false } });
+    expect(unpinned.pinned).toBe(false);
+    expect(repo().get(c.id)?.pinProvenance).toBeNull();
+
+    const repinned = await commitmentsUpdate(ctx, { id: c.id, patch: { pinned: true } });
+    expect(repinned.pinned).toBe(true);
+    expect(repo().get(c.id)?.pinProvenance).toBeNull();
   });
 
   it("get returns linked sources and audit", async () => {

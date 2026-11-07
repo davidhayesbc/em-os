@@ -122,6 +122,30 @@ describe("SourceItemsRepo", () => {
     expect(second.updatedAt).toBe(now);
   });
 
+  it("preserves ticket data on replay when the caller omits it", () => {
+    const r = repo();
+    const ticket = {
+      assigneeIdentityId: "idt_1",
+      due: null,
+      blockers: [{ sourceTicketId: "T-1", status: "open" as const }],
+      pinProvenance: "user" as const,
+      status: "open" as const,
+    };
+    const first = r.upsert(
+      newItem({
+        externalId: "ticket-retained",
+        ticket,
+      }),
+    ).item;
+    const second = r.upsert(
+      newItem({ externalId: "ticket-retained", text: "Updated", contentHash: hash("Updated") }),
+    ).item;
+
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toEqual(ticket);
+    expect(second.text).toBe("Updated");
+  });
+
   it("normalizes seconds-only and fractional instants", () => {
     const r = repo();
     const seconds = r.upsert(
@@ -381,5 +405,251 @@ describe("SourceItemsRepo", () => {
     expect(new Date(second.updatedAt).getTime()).toBeGreaterThan(
       new Date(first.updatedAt).getTime(),
     );
+  });
+
+  it("round-trips structured ticket data", () => {
+    const r = repo();
+    const ticket = {
+      assigneeIdentityId: "idt_alex",
+      due: { date: "2026-10-28", time: null, timeZone: "America/Vancouver" },
+      blockers: [
+        { sourceTicketId: "T-42", status: "open" as const },
+        { sourceTicketId: "T-43", status: "closed" as const },
+      ],
+      pinProvenance: "user" as const,
+      status: "open" as const,
+    };
+    const item = r.upsert(newItem({ kind: "ticket", externalId: "ticket-1", ticket })).item;
+
+    expect(r.get(item.id)?.ticket).toEqual(ticket);
+    expect(r.byIds([item.id])[0]?.ticket).toEqual(ticket);
+  });
+
+  it("ticket sources degrade missing/empty blockers to not blocked", () => {
+    const r = repo();
+    const withNullBlockers = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "no-blockers",
+        ticket: {
+          assigneeIdentityId: null,
+          due: null,
+          blockers: null,
+          pinProvenance: null,
+          status: null,
+        },
+      }),
+    ).item;
+    const withEmptyBlockers = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "empty-blockers",
+        ticket: {
+          assigneeIdentityId: null,
+          due: null,
+          blockers: [],
+          pinProvenance: null,
+          status: null,
+        },
+      }),
+    ).item;
+
+    expect(withNullBlockers.ticket?.blockers).toBeNull();
+    expect(withEmptyBlockers.ticket?.blockers).toEqual([]);
+  });
+
+  it("preserves ticket data on no-op replay", () => {
+    const { repo: r, advance } = repoWithMutableClock("2026-10-25T12:00:00.000Z");
+    const ticket = {
+      assigneeIdentityId: "idt_sam",
+      due: { date: "2026-10-27", time: "17:00", timeZone: "UTC" },
+      blockers: [{ sourceTicketId: "T-7", status: "open" as const }],
+      pinProvenance: "system" as const,
+      status: "open" as const,
+    };
+    const first = r.upsert(
+      newItem({ kind: "ticket", externalId: "noop-ticket", ticket, contentHash: hash("body") }),
+    ).item;
+    advance(60_000);
+    const second = r.upsert(
+      newItem({ kind: "ticket", externalId: "noop-ticket", ticket, contentHash: hash("body") }),
+    ).item;
+
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toEqual(ticket);
+    expect(second.updatedAt).toBe(first.updatedAt);
+  });
+
+  it("updates ticket data when source content changes", () => {
+    const { repo: r, advance } = repoWithMutableClock("2026-10-25T12:00:00.000Z");
+    const first = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "changing-ticket",
+        ticket: {
+          assigneeIdentityId: null,
+          due: null,
+          blockers: null,
+          pinProvenance: null,
+          status: null,
+        },
+        contentHash: hash("v1"),
+      }),
+    ).item;
+    advance(60_000);
+    const ticket = {
+      assigneeIdentityId: "idt_priya",
+      due: { date: "2026-10-26", time: null, timeZone: "America/Toronto" },
+      blockers: [{ sourceTicketId: "T-99", status: "open" as const }],
+      pinProvenance: "user" as const,
+      status: "open" as const,
+    };
+    const second = r.upsert(
+      newItem({ kind: "ticket", externalId: "changing-ticket", ticket, contentHash: hash("v2") }),
+    ).item;
+
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toEqual(ticket);
+    expect(new Date(second.updatedAt).getTime()).toBeGreaterThan(
+      new Date(first.updatedAt).getTime(),
+    );
+  });
+
+  it("omitting ticket on replay preserves the existing ticket data", () => {
+    const r = repo();
+    const ticket = {
+      assigneeIdentityId: "idt_alex",
+      due: null,
+      blockers: [{ sourceTicketId: "T-1", status: "open" as const }],
+      pinProvenance: "user" as const,
+      status: "open" as const,
+    };
+    const first = r.upsert(newItem({ kind: "ticket", externalId: "omit-preserves", ticket })).item;
+    const second = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "omit-preserves",
+        text: "Updated body",
+        contentHash: hash("Updated body"),
+      }),
+    ).item;
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toEqual(ticket);
+  });
+
+  it("explicit ticket null on replay clears existing ticket data", () => {
+    const r = repo();
+    const ticket = {
+      assigneeIdentityId: "idt_alex",
+      due: null,
+      blockers: [{ sourceTicketId: "T-1", status: "open" as const }],
+      pinProvenance: "user" as const,
+      status: "open" as const,
+    };
+    const first = r.upsert(newItem({ kind: "ticket", externalId: "null-clears", ticket })).item;
+    const second = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "null-clears",
+        text: "Updated body",
+        contentHash: hash("Updated body"),
+        ticket: null,
+      }),
+    ).item;
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toBeNull();
+  });
+
+  it("a new ticket object on replay replaces the existing ticket data", () => {
+    const r = repo();
+    const firstTicket = {
+      assigneeIdentityId: "idt_alex",
+      due: null,
+      blockers: [{ sourceTicketId: "T-1", status: "open" as const }],
+      pinProvenance: "user" as const,
+      status: "open" as const,
+    };
+    const first = r.upsert(
+      newItem({ kind: "ticket", externalId: "replace-ticket", ticket: firstTicket }),
+    ).item;
+    const secondTicket = {
+      assigneeIdentityId: "idt_sam",
+      due: { date: "2026-10-30", time: null, timeZone: "UTC" },
+      blockers: [{ sourceTicketId: "T-2", status: "closed" as const }],
+      pinProvenance: "system" as const,
+      status: "closed" as const,
+    };
+    const second = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "replace-ticket",
+        text: "Updated body",
+        contentHash: hash("Updated body"),
+        ticket: secondTicket,
+      }),
+    ).item;
+    expect(second.id).toBe(first.id);
+    expect(second.ticket).toEqual(secondTicket);
+  });
+
+  it("gate semantics: a ticket blocks another open ticket of mine, not a closed one", () => {
+    const r = repo();
+    // Ticket X is the candidate. It is open and has no blockers itself.
+    const candidate = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "candidate",
+        ticket: {
+          assigneeIdentityId: "idt_me",
+          due: null,
+          blockers: null,
+          pinProvenance: null,
+          status: "open" as const,
+        },
+      }),
+    ).item;
+    // Ticket Y is open and is blocked by candidate.
+    const openBlocked = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "open-blocked",
+        ticket: {
+          assigneeIdentityId: "idt_me",
+          due: null,
+          blockers: [{ sourceTicketId: "candidate", status: "open" as const }],
+          pinProvenance: null,
+          status: "open" as const,
+        },
+      }),
+    ).item;
+    // Ticket Z is closed and is also blocked by candidate.
+    const closedBlocked = r.upsert(
+      newItem({
+        kind: "ticket",
+        externalId: "closed-blocked",
+        ticket: {
+          assigneeIdentityId: "idt_me",
+          due: null,
+          blockers: [{ sourceTicketId: "candidate", status: "open" as const }],
+          pinProvenance: null,
+          status: "closed" as const,
+        },
+      }),
+    ).item;
+
+    function blocksOpenTicket(ticket: typeof candidate, all: (typeof candidate)[]): boolean {
+      if (ticket.ticket?.status !== "open") return false;
+      return all.some(
+        (other) =>
+          other.id !== ticket.id &&
+          other.ticket?.status === "open" &&
+          other.ticket?.blockers?.some((b) => b.sourceTicketId === ticket.externalId),
+      );
+    }
+
+    const all = [candidate, openBlocked, closedBlocked];
+    expect(blocksOpenTicket(candidate, all)).toBe(true);
+    expect(blocksOpenTicket(openBlocked, all)).toBe(false);
+    expect(blocksOpenTicket(closedBlocked, all)).toBe(false);
   });
 });

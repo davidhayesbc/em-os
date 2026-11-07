@@ -42,6 +42,8 @@ describe("Commitment confidence field", () => {
       title: "T",
       notes: "",
       pinned: false,
+      pinProvenance: null,
+      ticketId: null,
       effortMinutes: null,
       snoozedUntil: null,
       completedAt: null,

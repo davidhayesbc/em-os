@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Meeting, SourceItem } from "../entities/index.js";
+import { Meeting, SourceItemView } from "../entities/index.js";
 import { defineOp } from "../op.js";
 
 const MeetingPatch = Meeting.pick({
@@ -24,7 +24,7 @@ export const meetingsList = defineOp({
 export const meetingsGet = defineOp({
   name: "meetings.get",
   input: z.object({ id: z.string() }),
-  output: z.object({ meeting: Meeting, notes: z.array(SourceItem) }),
+  output: z.object({ meeting: Meeting, notes: z.array(SourceItemView) }),
 });
 
 export const meetingsUpdate = defineOp({
@@ -42,5 +42,5 @@ export const meetingsAttachNotes = defineOp({
     text: z.string().min(1).max(100_000),
     kind: NoteKind,
   }),
-  output: SourceItem,
+  output: SourceItemView,
 });
