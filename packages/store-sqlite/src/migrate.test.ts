@@ -664,9 +664,12 @@ describe("t_43e3c03a_commitment_confidence", () => {
       "t_e9515b7b_ticket_data",
     ]);
     expect(columns(db, "commitments")).toContain("confidence");
-    expect(db
-      .prepare("SELECT id, confidence, ticket_id, pin_provenance FROM commitments WHERE id = 'cmt_1'")
-      .get(),
+    expect(
+      db
+        .prepare(
+          "SELECT id, confidence, ticket_id, pin_provenance FROM commitments WHERE id = 'cmt_1'",
+        )
+        .get(),
     ).toEqual({
       id: "cmt_1",
       confidence: null,

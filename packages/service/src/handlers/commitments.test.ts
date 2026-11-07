@@ -326,7 +326,9 @@ describe("commitment handlers", () => {
     expect(getParsed.data.commitment).not.toHaveProperty("pinProvenance");
     expect(getParsed.data.commitment).not.toHaveProperty("ticketId");
     expect(getParsed.data.sources[0]).not.toHaveProperty("ticket");
-    expect(getParsed.data.audit.every((e) => !("pinProvenance" in e.diff) && !("ticketId" in e.diff))).toBe(true);
+    expect(
+      getParsed.data.audit.every((e) => !("pinProvenance" in e.diff) && !("ticketId" in e.diff)),
+    ).toBe(true);
 
     // The repo still returns the stored internal fields.
     expect(repo().get(c.id)?.pinProvenance).toBe("system");
@@ -335,13 +337,17 @@ describe("commitment handlers", () => {
 
     // A user pin action also must not leak pinProvenance into the parsed audit diff.
     commitmentsPin(ctx, { id: c.id, pinned: true });
-    const pinnedGetParsed = ops["commitments.get"].output.safeParse(commitmentsGet(ctx, { id: c.id }));
+    const pinnedGetParsed = ops["commitments.get"].output.safeParse(
+      commitmentsGet(ctx, { id: c.id }),
+    );
     expect(pinnedGetParsed.success).toBe(true);
     if (!pinnedGetParsed.success) throw new Error("pinned get output parse failed");
     expect(pinnedGetParsed.data.commitment).not.toHaveProperty("pinProvenance");
     expect(pinnedGetParsed.data.commitment).not.toHaveProperty("ticketId");
     expect(
-      pinnedGetParsed.data.audit.every((e) => !("pinProvenance" in e.diff) && !("ticketId" in e.diff)),
+      pinnedGetParsed.data.audit.every(
+        (e) => !("pinProvenance" in e.diff) && !("ticketId" in e.diff),
+      ),
     ).toBe(true);
   });
 
