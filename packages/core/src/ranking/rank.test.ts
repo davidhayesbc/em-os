@@ -1,4 +1,4 @@
-import type { Commitment, Goal, Meeting } from "@emos/api-contract";
+import type { Commitment, Goal, Meeting, SourceItem } from "@emos/api-contract";
 import { DEFAULT_PROFILE } from "@emos/api-contract";
 import { describe, expect, it } from "vitest";
 import { rank, selectTop } from "./rank.js";
@@ -1509,5 +1509,519 @@ describe("rank stale-source penalty", () => {
     });
 
     expect(result.map((r) => r.commitmentId)).toEqual(["a", "b"]);
+  });
+});
+
+describe("rank low-confidence penalty", () => {
+  it("penalises confidence 0.69 and not 0.7", () => {
+    const a = commitment({ id: "a", confidence: 0.69 });
+    const b = commitment({ id: "b", confidence: 0.7 });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a, b],
+      meetings: [],
+      goals: [],
+      config,
+    });
+
+    const ra = result.find((r) => r.commitmentId === "a");
+    const rb = result.find((r) => r.commitmentId === "b");
+
+    expect(ra?.score).toBe(-40);
+    expect(ra?.components).toContainEqual({
+      kind: "low_confidence",
+      points: -40,
+      detail: "low confidence",
+    });
+    expect(ra?.dominant).toBe("low_confidence");
+
+    expect(rb?.score).toBe(0);
+    expect(rb?.components).toEqual([
+      { kind: "neutral", points: 0, detail: "no additional signal" },
+    ]);
+  });
+
+  it("flat penalty: 0.2 and 0.5 both score -40", () => {
+    const a = commitment({ id: "a", confidence: 0.2 });
+    const b = commitment({ id: "b", confidence: 0.5 });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a, b],
+      meetings: [],
+      goals: [],
+      config,
+    });
+
+    const ra = result.find((r) => r.commitmentId === "a");
+    const rb = result.find((r) => r.commitmentId === "b");
+
+    expect(ra?.score).toBe(-40);
+    expect(rb?.score).toBe(-40);
+    expect(result.map((r) => r.commitmentId)).toEqual(["a", "b"]);
+  });
+
+  it("equal candidates differ by exactly the flat low-confidence penalty", () => {
+    const low = commitment({ id: "low", priority: 2, confidence: 0.4 });
+    const high = commitment({ id: "high", priority: 2, confidence: 1.0 });
+
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [low, high],
+      meetings: [],
+      goals: [],
+      config,
+    });
+
+    expect(result.map((r) => r.commitmentId)).toEqual(["high", "low"]);
+    expect(result[0]?.score).toBe(40);
+    expect(result[1]?.score).toBe(0);
+    expect(result[1]?.components).toContainEqual({
+      kind: "low_confidence",
+      points: -40,
+      detail: "low confidence",
+    });
+  });
+
+  it.each([null, "not-a-number", Number.NaN, -0.1, 1.1])(
+    "ignores invalid confidence %s",
+    (confidence) => {
+      const c = commitment({ id: "bad", confidence: confidence as unknown as number });
+      const [r] = rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [c],
+        meetings: [],
+        goals: [],
+        config,
+      });
+      expect(r?.score).toBe(0);
+      expect(r?.components).toEqual([
+        { kind: "neutral", points: 0, detail: "no additional signal" },
+      ]);
+      expect(r?.components.some((comp) => comp.kind === "low_confidence")).toBe(false);
+    },
+  );
+
+  it("emits a truthful zero-point low-confidence component with zero weight", () => {
+    const c = commitment({ id: "c", confidence: 0.5 });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [],
+      config: { ...config, weights: { ...config.weights, lowConfidence: 0 } },
+    });
+
+    expect(r).toEqual({
+      commitmentId: "c",
+      score: 0,
+      dominant: "low_confidence",
+      why: "low confidence",
+      components: [{ kind: "low_confidence", points: 0, detail: "low confidence" }],
+    });
+  });
+
+  it("does not demote a goal-linked low-confidence item below goal-slot consideration", () => {
+    const g = goal({ id: "g1", title: "Ship it" });
+    const c = commitment({ id: "low-goal", goalId: "g1", confidence: 0.5 });
+
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [g],
+      config,
+    });
+
+    expect(r?.score).toBe(110);
+    expect(r?.dominant).toBe("goal");
+    expect(r?.components).toContainEqual({ kind: "goal", points: 150, detail: "advances Ship it" });
+    expect(r?.components).toContainEqual({
+      kind: "low_confidence",
+      points: -40,
+      detail: "low confidence",
+    });
+  });
+});
+
+describe("rank assigned-ticket eligibility gate", () => {
+  function sourceItem(
+    overrides: Partial<Omit<SourceItem, "ticket">> & {
+      ticket?: Partial<NonNullable<SourceItem["ticket"]>> | null;
+    } = {},
+  ): SourceItem {
+    const { ticket: ticketOverride, ...rest } = overrides;
+    const baseTicket: NonNullable<SourceItem["ticket"]> = {
+      assigneeIdentityId: null,
+      due: null,
+      blockers: null,
+      pinProvenance: null,
+      status: "open" as const,
+    };
+    return {
+      id: "src_default",
+      connectorId: "ticket_test",
+      externalId: "TICKET-1",
+      kind: "ticket",
+      origin: "connector",
+      url: null,
+      authorIdentityId: null,
+      text: "Ticket text",
+      contentHash: "hash",
+      sensitivity: "normal",
+      sections: null,
+      ticket: ticketOverride ? { ...baseTicket, ...ticketOverride } : null,
+      occurredAt: "2026-10-20T12:00:00.000Z",
+      capturedAt: "2026-10-20T12:00:00.000Z",
+      updatedAt: "2026-10-20T12:00:00.000Z",
+      retentionState: "active",
+      ...rest,
+    };
+  }
+
+  it("admits a ticket due tomorrow", () => {
+    const c = commitment({
+      id: "due-tomorrow",
+      ticketId: "src_1",
+      due: { date: "2026-10-30", time: null, timeZone: TIME_ZONE },
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({
+          id: "src_1",
+          externalId: "TICKET-1",
+          ticket: { due: { date: "2026-10-30", time: null, timeZone: TIME_ZONE } },
+        }),
+      ],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["due-tomorrow"]);
+  });
+
+  it("admits an overdue ticket", () => {
+    const c = commitment({
+      id: "overdue",
+      ticketId: "src_1",
+      due: { date: "2026-10-27", time: null, timeZone: TIME_ZONE },
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [],
+      sourceItems: [sourceItem({ id: "src_1" })],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["overdue"]);
+  });
+
+  it("admits a ticket due in exactly 3 days and excludes one due in 4 days", () => {
+    const admits = commitment({
+      id: "admits",
+      ticketId: "src_1",
+      due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE },
+    });
+    const excludes = commitment({
+      id: "excludes",
+      ticketId: "src_2",
+      due: { date: "2026-11-02", time: null, timeZone: TIME_ZONE },
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [excludes, admits],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({ id: "src_1", externalId: "T-1" }),
+        sourceItem({ id: "src_2", externalId: "T-2" }),
+      ],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["admits"]);
+  });
+
+  it("admits a ticket that structurally blocks another open ticket of mine", () => {
+    const blocker = commitment({ id: "blocker", ticketId: "src_blocker" });
+    const blocked = commitment({ id: "blocked", ticketId: "src_blocked" });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [blocker, blocked],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({
+          id: "src_blocker",
+          externalId: "BLOCKER-1",
+          ticket: { blockers: null },
+        }),
+        sourceItem({
+          id: "src_blocked",
+          externalId: "BLOCKED-1",
+          ticket: {
+            blockers: [{ sourceTicketId: "BLOCKER-1", status: "open" as const }],
+          },
+        }),
+      ],
+      config,
+    });
+    // Only the blocker ticket passes the gate; the blocked ticket has no gate pass of its own.
+    expect(result.map((r) => r.commitmentId)).toEqual(["blocker"]);
+  });
+
+  it("does not admit a blocker relation that is only in the title/text", () => {
+    const blocker = commitment({
+      id: "blocker",
+      ticketId: "src_blocker",
+      title: "Blocks BLOCKED-1",
+    });
+    const blocked = commitment({ id: "blocked", ticketId: "src_blocked" });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [blocker, blocked],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({ id: "src_blocker", externalId: "BLOCKER-1", ticket: { blockers: null } }),
+        sourceItem({ id: "src_blocked", externalId: "BLOCKED-1", ticket: { blockers: null } }),
+      ],
+      config,
+    });
+    // Both are ticket-backed and neither passes the gate, so both are omitted.
+    expect(result.map((r) => r.commitmentId)).toEqual([]);
+  });
+
+  it("does not treat missing blocker relation data as blocked", () => {
+    const c = commitment({ id: "lonely", ticketId: "src_1" });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [],
+      sourceItems: [sourceItem({ id: "src_1", externalId: "T-1", ticket: { blockers: null } })],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual([]);
+  });
+
+  it("admits an explicitly user-pinned ticket regardless of due/blocked", () => {
+    const c = commitment({
+      id: "pinned",
+      ticketId: "src_1",
+      pinned: true,
+      pinProvenance: "user",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [],
+      sourceItems: [sourceItem({ id: "src_1" })],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["pinned"]);
+  });
+
+  it("does not treat an automated system pin as an explicit user pin", () => {
+    const c = commitment({
+      id: "auto-pinned",
+      ticketId: "src_1",
+      pinned: true,
+      pinProvenance: "system",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [],
+      sourceItems: [sourceItem({ id: "src_1" })],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual([]);
+  });
+
+  it("admits a ticket whose source ticket has a user pin provenance", () => {
+    const c = commitment({ id: "ticket-pinned", ticketId: "src_1" });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [],
+      sourceItems: [sourceItem({ id: "src_1", ticket: { pinProvenance: "user" as const } })],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["ticket-pinned"]);
+  });
+
+  it("omits a gated-out ticket entirely, not demoted", () => {
+    const gatedOut = commitment({
+      id: "gated-out",
+      ticketId: "src_1",
+      due: { date: "2026-11-30", time: null, timeZone: TIME_ZONE },
+    });
+    const plain = commitment({ id: "plain", priority: 2 });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [gatedOut, plain],
+      meetings: [],
+      goals: [],
+      sourceItems: [sourceItem({ id: "src_1" })],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["plain"]);
+    expect(result.some((r) => r.commitmentId === "gated-out")).toBe(false);
+  });
+
+  it("goalSlots cannot admit an excluded ticket even with unfilled quota", () => {
+    const g = goal({ id: "g1", title: "Goal A" });
+    const gatedOutGoal = commitment({
+      id: "gated-goal",
+      ticketId: "src_1",
+      goalId: "g1",
+      due: { date: "2026-11-30", time: null, timeZone: TIME_ZONE },
+    });
+    const plain = commitment({ id: "plain", pinned: true });
+    const items = [gatedOutGoal, plain];
+    const ranked = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: items,
+      meetings: [],
+      goals: [g],
+      sourceItems: [sourceItem({ id: "src_1" })],
+      config,
+    });
+    const top = selectTop(
+      ranked,
+      new Map(items.map((c) => [c.id, c])),
+      new Map([[g.id, g]]),
+      config,
+    );
+    expect(top.map((r) => r.commitmentId)).toEqual(["plain"]);
+    expect(top.some((r) => r.commitmentId === "gated-goal")).toBe(false);
+  });
+
+  it("leaves non-ticket commitments and other-assignee tickets untouched", () => {
+    const nonTicket = commitment({ id: "non-ticket", priority: 2 });
+    const otherAssignee = commitment({
+      id: "other-assignee",
+      direction: "owed_to_me",
+      ticketId: "src_1",
+      priority: 0,
+    });
+    const myTicket = commitment({
+      id: "my-ticket",
+      ticketId: "src_2",
+      due: { date: "2026-11-30", time: null, timeZone: TIME_ZONE },
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [nonTicket, otherAssignee, myTicket],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({ id: "src_1", externalId: "T-1" }),
+        sourceItem({ id: "src_2", externalId: "T-2" }),
+      ],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["non-ticket"]);
+  });
+
+  it("stays deterministic under reversed input order", () => {
+    const admits = commitment({
+      id: "admits",
+      ticketId: "src_1",
+      due: { date: "2026-10-30", time: null, timeZone: TIME_ZONE },
+    });
+    const excludes = commitment({
+      id: "excludes",
+      ticketId: "src_2",
+      due: { date: "2026-11-30", time: null, timeZone: TIME_ZONE },
+    });
+
+    const forwards = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [admits, excludes],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({ id: "src_1", externalId: "T-1" }),
+        sourceItem({ id: "src_2", externalId: "T-2" }),
+      ],
+      config,
+    });
+    const reversed = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [excludes, admits],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({ id: "src_1", externalId: "T-1" }),
+        sourceItem({ id: "src_2", externalId: "T-2" }),
+      ],
+      config,
+    });
+
+    expect(forwards.map((r) => r.commitmentId)).toEqual(reversed.map((r) => r.commitmentId));
+    expect(forwards.map((r) => r.commitmentId)).toEqual(["admits"]);
+  });
+});
+
+describe("rank combined stale-source + low-confidence penalties", () => {
+  const MS_PER_DAY = 86400000;
+
+  it("applies both penalties and keeps them under the goal-band ordering", () => {
+    const g = goal({ id: "g1", title: "Ship it" });
+    const c = commitment({
+      id: "both",
+      goalId: "g1",
+      confidence: 0.5,
+      updatedAt: new Date(NOON_TODAY.getTime() - 20 * MS_PER_DAY).toISOString(),
+    });
+
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [c],
+      meetings: [],
+      goals: [g],
+      config,
+    });
+
+    expect(r?.score).toBe(50);
+    expect(r?.dominant).toBe("goal");
+    expect(r?.components).toContainEqual({ kind: "goal", points: 150, detail: "advances Ship it" });
+    expect(r?.components).toContainEqual({
+      kind: "stale_source",
+      points: -60,
+      detail: "stale source",
+    });
+    expect(r?.components).toContainEqual({
+      kind: "low_confidence",
+      points: -40,
+      detail: "low confidence",
+    });
   });
 });

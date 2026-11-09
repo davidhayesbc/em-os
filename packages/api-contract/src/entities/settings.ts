@@ -12,6 +12,8 @@ export const RankConfig = z.object({
   goalSlots: z.number().int().nonnegative(),
   timeCriticalHours: z.number(),
   staleDays: z.number().int().nonnegative().default(14),
+  confidenceThreshold: z.number().min(0).max(1).default(0.7),
+  ticketDueSoonDays: z.number().int().nonnegative().default(3),
   weights: z.object({
     timeCritical: z.number(),
     overduePerDay: z.number(),
@@ -22,6 +24,7 @@ export const RankConfig = z.object({
     priority: z.tuple([z.number(), z.number(), z.number(), z.number()]),
     urgencyNow: z.number(),
     staleSource: z.number().default(60),
+    lowConfidence: z.number().default(40),
   }),
 });
 export type RankConfig = z.infer<typeof RankConfig>;
@@ -78,6 +81,8 @@ export const DEFAULT_PROFILE: Profile = Profile.parse({
     goalSlots: 1,
     timeCriticalHours: 24,
     staleDays: 14,
+    confidenceThreshold: 0.7,
+    ticketDueSoonDays: 3,
     weights: {
       timeCritical: 1000,
       overduePerDay: 50,
@@ -88,6 +93,7 @@ export const DEFAULT_PROFILE: Profile = Profile.parse({
       priority: [120, 80, 40, 0],
       urgencyNow: 100,
       staleSource: 60,
+      lowConfidence: 40,
     },
   },
   minFocusMinutes: 15,
