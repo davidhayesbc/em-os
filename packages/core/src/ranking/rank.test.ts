@@ -1781,6 +1781,158 @@ describe("rank assigned-ticket eligibility gate", () => {
     expect(result.map((r) => r.commitmentId)).toEqual(["blocker"]);
   });
 
+  it("does not admit a cross-connector blocker relation that shares an external id", () => {
+    const jiraCandidate = commitment({
+      id: "jira-candidate",
+      ticketId: "src_jira",
+    });
+    const githubMine = commitment({
+      id: "github-mine",
+      ticketId: "src_github",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [jiraCandidate, githubMine],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({
+          id: "src_jira",
+          connectorId: "jira",
+          externalId: "123",
+          ticket: { blockers: null },
+        }),
+        sourceItem({
+          id: "src_github",
+          connectorId: "github",
+          externalId: "999",
+          ticket: {
+            blockers: [{ sourceTicketId: "123", status: "open" as const }],
+          },
+        }),
+      ],
+      config,
+    });
+    // The github blocker relation is scoped to github; the jira candidate must not match it.
+    expect(result.map((r) => r.commitmentId)).toEqual([]);
+  });
+
+  it("admits a same-connector blocker relation while excluding a cross-connector one", () => {
+    const sameConnectorCandidate = commitment({
+      id: "same-connector-candidate",
+      ticketId: "src_same",
+    });
+    const sameConnectorBlocked = commitment({
+      id: "same-connector-blocked",
+      ticketId: "src_same_blocked",
+    });
+    const otherConnectorCandidate = commitment({
+      id: "other-connector-candidate",
+      ticketId: "src_other",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [sameConnectorCandidate, sameConnectorBlocked, otherConnectorCandidate],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({
+          id: "src_same",
+          connectorId: "jira",
+          externalId: "123",
+          ticket: { blockers: null },
+        }),
+        sourceItem({
+          id: "src_same_blocked",
+          connectorId: "jira",
+          externalId: "BLOCKED-1",
+          ticket: {
+            blockers: [{ sourceTicketId: "123", status: "open" as const }],
+          },
+        }),
+        sourceItem({
+          id: "src_other",
+          connectorId: "github",
+          externalId: "123",
+          ticket: { blockers: null },
+        }),
+      ],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["same-connector-candidate"]);
+  });
+
+  it("admits a blocker candidate when the blocked commitment is snoozed", () => {
+    const blocker = commitment({ id: "blocker", ticketId: "src_blocker" });
+    const blocked = commitment({
+      id: "blocked",
+      ticketId: "src_blocked",
+      status: "snoozed",
+      snoozedUntil: "2026-11-20T19:00:00.000Z",
+    });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [blocker, blocked],
+      meetings: [],
+      goals: [],
+      sourceItems: [
+        sourceItem({
+          id: "src_blocker",
+          externalId: "BLOCKER-1",
+          ticket: { blockers: null },
+        }),
+        sourceItem({
+          id: "src_blocked",
+          externalId: "BLOCKED-1",
+          ticket: {
+            blockers: [{ sourceTicketId: "BLOCKER-1", status: "open" as const }],
+          },
+        }),
+      ],
+      config,
+    });
+    expect(result.map((r) => r.commitmentId)).toEqual(["blocker"]);
+  });
+
+  it.each(["done", "dropped"] as const)(
+    "admits a blocker candidate when the blocked commitment status is '%s' but its ticket is open",
+    (status) => {
+      const blocker = commitment({ id: "blocker", ticketId: "src_blocker" });
+      const blocked = commitment({
+        id: "blocked",
+        ticketId: "src_blocked",
+        status,
+        dropReason: status === "dropped" ? "user" : null,
+      });
+      const result = rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [blocker, blocked],
+        meetings: [],
+        goals: [],
+        sourceItems: [
+          sourceItem({
+            id: "src_blocker",
+            externalId: "BLOCKER-1",
+            ticket: { blockers: null },
+          }),
+          sourceItem({
+            id: "src_blocked",
+            externalId: "BLOCKED-1",
+            ticket: {
+              blockers: [{ sourceTicketId: "BLOCKER-1", status: "open" as const }],
+            },
+          }),
+        ],
+        config,
+      });
+      expect(result.map((r) => r.commitmentId)).toEqual(["blocker"]);
+    },
+  );
+
   it("does not admit a blocker relation that is only in the title/text", () => {
     const blocker = commitment({
       id: "blocker",

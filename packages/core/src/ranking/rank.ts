@@ -44,7 +44,11 @@ export function rank(input: {
     return isAwake(c);
   });
 
-  const gatedCandidates = candidates.filter((c) => passesTicketGate(c, ctx, candidates, isAwake));
+  const mineTicketCommitments = input.commitments.filter(
+    (c) => c.direction === "mine" && c.retentionState === "active" && isTicketBacked(c),
+  );
+
+  const gatedCandidates = candidates.filter((c) => passesTicketGate(c, ctx, mineTicketCommitments));
 
   const scored = gatedCandidates.map((c) => {
     const scored = scoreCommitment(c, ctx);
@@ -89,8 +93,7 @@ function isTicketBacked(c: Commitment): boolean {
 function passesTicketGate(
   c: Commitment,
   ctx: ScoreContext,
-  allCandidates: Commitment[],
-  isAwake: (c: Commitment) => boolean,
+  mineTicketCommitments: Commitment[],
 ): boolean {
   if (!isTicketBacked(c)) return true;
 
@@ -98,7 +101,7 @@ function passesTicketGate(
   const ticket = sourceItem?.ticket;
 
   if (isDueSoon(c, ticket, ctx)) return true;
-  if (isBlockedOnMe(c, ctx, allCandidates, isAwake)) return true;
+  if (isBlockedOnMe(c, ctx, mineTicketCommitments)) return true;
   if (hasExplicitUserPin(c, sourceItem)) return true;
 
   return false;
@@ -118,22 +121,21 @@ function isDueSoon(
 function isBlockedOnMe(
   c: Commitment,
   ctx: ScoreContext,
-  allCandidates: Commitment[],
-  isAwake: (c: Commitment) => boolean,
+  mineTicketCommitments: Commitment[],
 ): boolean {
   if (!c.ticketId) return false;
   const sourceItem = ctx.sourceItemById.get(c.ticketId);
   if (!sourceItem?.ticket) return false;
   const candidateExternalId = sourceItem.externalId;
+  const candidateConnectorId = sourceItem.connectorId;
 
-  for (const other of allCandidates) {
+  for (const other of mineTicketCommitments) {
     if (other.id === c.id) continue;
-    if (!isTicketBacked(other)) continue;
-    if (!isAwake(other)) continue;
 
     const otherItem = other.ticketId != null ? ctx.sourceItemById.get(other.ticketId) : undefined;
     if (!otherItem?.ticket) continue;
     if (otherItem.ticket.status !== "open") continue;
+    if (otherItem.connectorId !== candidateConnectorId) continue;
 
     const blockers = otherItem.ticket.blockers;
     if (!blockers) continue;
@@ -145,7 +147,7 @@ function isBlockedOnMe(
 }
 
 function hasExplicitUserPin(c: Commitment, sourceItem?: SourceItem): boolean {
-  if (c.pinProvenance === "user") return true;
+  if (c.pinned === true && c.pinProvenance === "user") return true;
   if (sourceItem?.ticket?.pinProvenance === "user") return true;
   return false;
 }
