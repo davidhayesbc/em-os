@@ -1,5 +1,12 @@
-import type { Commitment, Goal, Meeting, RankConfig } from "@emos/api-contract";
-import { buildContext, type ComponentKind, type RankedItem, scoreCommitment } from "./why.js";
+import type { Commitment, Goal, Meeting, RankConfig, SourceItem } from "@emos/api-contract";
+import {
+  buildContext,
+  type ComponentKind,
+  localDayDiff,
+  type RankedItem,
+  type ScoreContext,
+  scoreCommitment,
+} from "./why.js";
 
 export { selectTop } from "./select.js";
 export type { ComponentKind, RankedItem };
@@ -10,22 +17,40 @@ export function rank(input: {
   commitments: Commitment[];
   meetings: Meeting[];
   goals: Goal[];
+  sourceItems?: SourceItem[];
   config: RankConfig;
 }): RankedItem[] {
-  const ctx = buildContext(input.now, input.timeZone, input.meetings, input.goals, input.config);
+  const ctx = buildContext(
+    input.now,
+    input.timeZone,
+    input.meetings,
+    input.goals,
+    input.config,
+    input.sourceItems ?? [],
+  );
   const byId = new Map(input.commitments.map((c) => [c.id, c]));
 
-  const candidates = input.commitments.filter((c) => {
-    if (c.direction !== "mine") return false;
-    if (c.retentionState !== "active") return false;
+  const isAwake = (c: Commitment) => {
     if (c.status === "active") return true;
     if (c.status === "snoozed" && c.snoozedUntil != null) {
       return new Date(c.snoozedUntil).getTime() <= input.now.getTime();
     }
     return false;
+  };
+
+  const candidates = input.commitments.filter((c) => {
+    if (c.direction !== "mine") return false;
+    if (c.retentionState !== "active") return false;
+    return isAwake(c);
   });
 
-  const scored = candidates.map((c) => {
+  const mineTicketCommitments = input.commitments.filter(
+    (c) => c.direction === "mine" && c.retentionState === "active" && isTicketBacked(c),
+  );
+
+  const gatedCandidates = candidates.filter((c) => passesTicketGate(c, ctx, mineTicketCommitments));
+
+  const scored = gatedCandidates.map((c) => {
     const scored = scoreCommitment(c, ctx);
     const score = scored.components.reduce((sum, comp) => sum + comp.points, 0);
     return {
@@ -59,4 +84,70 @@ export function rank(input: {
 
     return a.commitmentId > b.commitmentId ? 1 : -1;
   });
+}
+
+function isTicketBacked(c: Commitment): boolean {
+  return c.ticketId != null;
+}
+
+function passesTicketGate(
+  c: Commitment,
+  ctx: ScoreContext,
+  mineTicketCommitments: Commitment[],
+): boolean {
+  if (!isTicketBacked(c)) return true;
+
+  const sourceItem = c.ticketId != null ? ctx.sourceItemById.get(c.ticketId) : undefined;
+  const ticket = sourceItem?.ticket;
+
+  if (isDueSoon(c, ticket, ctx)) return true;
+  if (isBlockedOnMe(c, ctx, mineTicketCommitments)) return true;
+  if (hasExplicitUserPin(c, sourceItem)) return true;
+
+  return false;
+}
+
+function isDueSoon(
+  c: Commitment,
+  ticket: SourceItem["ticket"] | undefined,
+  ctx: ScoreContext,
+): boolean {
+  const due = c.due ?? ticket?.due ?? null;
+  if (!due) return false;
+  const daysUntil = localDayDiff(ctx.today, due.date, ctx.timeZone);
+  return daysUntil <= ctx.config.ticketDueSoonDays;
+}
+
+function isBlockedOnMe(
+  c: Commitment,
+  ctx: ScoreContext,
+  mineTicketCommitments: Commitment[],
+): boolean {
+  if (!c.ticketId) return false;
+  const sourceItem = ctx.sourceItemById.get(c.ticketId);
+  if (!sourceItem?.ticket) return false;
+  const candidateExternalId = sourceItem.externalId;
+  const candidateConnectorId = sourceItem.connectorId;
+
+  for (const other of mineTicketCommitments) {
+    if (other.id === c.id) continue;
+
+    const otherItem = other.ticketId != null ? ctx.sourceItemById.get(other.ticketId) : undefined;
+    if (!otherItem?.ticket) continue;
+    if (otherItem.ticket.status !== "open") continue;
+    if (otherItem.connectorId !== candidateConnectorId) continue;
+
+    const blockers = otherItem.ticket.blockers;
+    if (!blockers) continue;
+    if (blockers.some((b) => b.sourceTicketId === candidateExternalId && b.status === "open")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasExplicitUserPin(c: Commitment, sourceItem?: SourceItem): boolean {
+  if (c.pinned === true && c.pinProvenance === "user") return true;
+  if (sourceItem?.ticket?.pinProvenance === "user") return true;
+  return false;
 }

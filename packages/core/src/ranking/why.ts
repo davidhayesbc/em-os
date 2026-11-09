@@ -1,4 +1,4 @@
-import type { Commitment, Goal, Meeting, RankConfig } from "@emos/api-contract";
+import type { Commitment, Goal, Meeting, RankConfig, SourceItem } from "@emos/api-contract";
 import { addLocalDays, startOfLocalDay, toLocalDate } from "../time/zoned.js";
 
 export type ComponentKind =
@@ -10,6 +10,7 @@ export type ComponentKind =
   | "priority"
   | "urgency"
   | "stale_source"
+  | "low_confidence"
   | "neutral";
 
 /**
@@ -35,6 +36,7 @@ export interface ScoreContext {
   config: RankConfig;
   meetingById: Map<string, Meeting>;
   goalById: Map<string, Goal>;
+  sourceItemById: Map<string, SourceItem>;
 }
 
 const KIND_ORDER: Record<ComponentKind, number> = {
@@ -46,7 +48,8 @@ const KIND_ORDER: Record<ComponentKind, number> = {
   priority: 5,
   urgency: 6,
   stale_source: 7,
-  neutral: 8,
+  low_confidence: 8,
+  neutral: 9,
 };
 
 function staleAgeDays(updatedAt: unknown, nowMs: number): number | null {
@@ -58,7 +61,14 @@ function staleAgeDays(updatedAt: unknown, nowMs: number): number | null {
   return Math.floor(ageMs / 86400000);
 }
 
-function localDayDiff(a: string, b: string, timeZone: string): number {
+function isLowConfidence(value: unknown, threshold: number): value is number {
+  if (typeof value !== "number") return false;
+  if (!Number.isFinite(value)) return false;
+  if (value < 0 || value > 1) return false;
+  return value < threshold;
+}
+
+export function localDayDiff(a: string, b: string, timeZone: string): number {
   return Math.round(
     (startOfLocalDay(b, timeZone).getTime() - startOfLocalDay(a, timeZone).getTime()) / 86400000,
   );
@@ -248,11 +258,21 @@ export function scoreCommitment(
   // stale-source penalty: content unchanged for more than staleDays.
   const ageDays = staleAgeDays(c.updatedAt, ctx.now.getTime());
   if (ageDays !== null && ageDays > ctx.config.staleDays) {
-    const points = weights.staleSource === 0 ? 0 : -weights.staleSource;
+    const points = ctx.config.weights.staleSource === 0 ? 0 : -ctx.config.weights.staleSource;
     components.push({
       kind: "stale_source",
       points,
       detail: "stale source",
+    });
+  }
+
+  // low-confidence penalty: capture-provided confidence below threshold.
+  if (isLowConfidence(c.confidence, ctx.config.confidenceThreshold)) {
+    const points = ctx.config.weights.lowConfidence === 0 ? 0 : -ctx.config.weights.lowConfidence;
+    components.push({
+      kind: "low_confidence",
+      points,
+      detail: "low confidence",
     });
   }
 
@@ -281,6 +301,7 @@ export function buildContext(
   meetings: Meeting[],
   goals: Goal[],
   config: RankConfig,
+  sourceItems: SourceItem[] = [],
 ): ScoreContext {
   return {
     now,
@@ -294,5 +315,6 @@ export function buildContext(
         .map((m) => [m.id, m]),
     ),
     goalById: new Map(goals.filter((g) => g.retentionState === "active").map((g) => [g.id, g])),
+    sourceItemById: new Map(sourceItems.filter((s) => s.ticket != null).map((s) => [s.id, s])),
   };
 }
