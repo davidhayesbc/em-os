@@ -108,6 +108,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 **Core logic (pure)**
 
 - [x] **P1-06** Ranking engine `rank` + `selectTop` — deps: P1-05 — claim: done · 1f2991c253a19eb5e29b19afcdfb1a799cb5a936
+- [x] **t_a0575589** Ranking signal contracts: low-confidence penalty + assigned-ticket eligibility gate — deps: P1-06, t_43e3c03a, t_e9515b7b — claim: done · 44509b2
 - [ ] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: —
 - [ ] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: —
 - [ ] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: —
