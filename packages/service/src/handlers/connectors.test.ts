@@ -56,6 +56,46 @@ describe("connectors API", () => {
 
     const stored = await svc.secrets.get("connector:synthetic-fixture:secretKey");
     expect(stored).toBe("test/api-key");
+
+    const row = svc.db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing connector_configs row");
+    const configs = JSON.parse(row.value) as Record<string, { enabled: boolean; config: unknown }>;
+    const fixture = configs["synthetic-fixture"];
+    expect(fixture).toBeDefined();
+    if (!fixture) throw new Error("missing synthetic-fixture config");
+    const config = fixture.config as Record<string, unknown>;
+    expect(config.secretKey).toEqual({ $secretRef: "secretKey" });
+    expect(JSON.stringify(config)).not.toContain("test/api-key");
+  });
+
+  it("syncs an unconfigured connector without throwing and leaves visible sync_state", async () => {
+    const svc = await startTestService();
+    const client = clientFor(svc);
+
+    const result = await client.call("connectors.sync", { id: "synthetic-fixture" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const list = await client.call("connectors.list", {});
+    expect(list).toEqual([
+      {
+        id: "synthetic-fixture",
+        kind: "calendar",
+        enabled: false,
+        state: "ok",
+        lastSuccessAt: expect.any(String),
+        lastError: null,
+      },
+    ]);
+
+    const row = svc.db
+      .prepare("SELECT state FROM sync_state WHERE connector_id = 'synthetic-fixture'")
+      .get<{ state: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing sync_state row");
+    expect(row.state).toBe("ok");
   });
 
   it("returns conflict when a second connectors.sync runs for the same id", async () => {

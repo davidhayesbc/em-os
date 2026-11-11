@@ -1,4 +1,4 @@
-import type { Clock, Store } from "@emos/core";
+import type { Clock, Store, SyncState } from "@emos/core";
 import { ConnectorError } from "./errors.js";
 import { classifyError, extractServerName } from "./network.js";
 import type {
@@ -47,8 +47,11 @@ function publishStatus(events: SyncEventBus, connectorId: string, state: string)
 async function runOnce(
   deps: RunSyncDeps,
   state: { cursor: string | null; pages: number; items: number },
+  base: SyncState,
+  at: string,
 ): Promise<void> {
   const { def, ctx, appliers, store } = deps;
+  const connectorId = def.id;
   const controller = new AbortController();
 
   try {
@@ -60,6 +63,15 @@ async function runOnce(
         }
         state.cursor = safePage.nextCursor;
         state.items += safePage.items.length;
+        store.syncState.set({
+          connectorId,
+          cursor: state.cursor,
+          state: "syncing",
+          lastAttemptAt: at,
+          lastSuccessAt: base.lastSuccessAt,
+          lastError: null,
+          itemCount: base.itemCount + state.items,
+        });
       });
       state.pages++;
     }
@@ -138,13 +150,14 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
     items: 0,
   };
   let lastError: unknown;
+  const committedCursor = () => store.syncState.get(connectorId).cursor;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      await runOnce(deps, state);
+      await runOnce(deps, state, initial, at);
       const successState: SyncStateUpdate = {
         connectorId,
-        cursor: state.cursor,
+        cursor: committedCursor(),
         state: "ok",
         lastAttemptAt: at,
         lastSuccessAt: at,
@@ -161,7 +174,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
         const message = e instanceof Error ? e.message : kind;
         finalizeState(deps, {
           connectorId,
-          cursor: state.cursor,
+          cursor: committedCursor(),
           state: "error",
           lastAttemptAt: at,
           lastSuccessAt: initial.lastSuccessAt,
@@ -175,7 +188,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
         const message = buildOfflineMessage(e, def.id);
         finalizeState(deps, {
           connectorId,
-          cursor: state.cursor,
+          cursor: committedCursor(),
           state: "offline",
           lastAttemptAt: at,
           lastSuccessAt: initial.lastSuccessAt,
@@ -196,7 +209,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
   const exhausted = lastError instanceof Error ? lastError.message : String(lastError);
   finalizeState(deps, {
     connectorId,
-    cursor: state.cursor,
+    cursor: committedCursor(),
     state: "error",
     lastAttemptAt: at,
     lastSuccessAt: initial.lastSuccessAt,

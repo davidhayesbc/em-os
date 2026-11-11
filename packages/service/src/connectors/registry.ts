@@ -38,6 +38,11 @@ const SyntheticConfig = z.object({
   secretKey: z.string().optional(),
 });
 
+/** Looser variant used by the runtime/invoker so persisted `$secretRef` markers don't break parsing. */
+const InvokerConfig = SyntheticConfig.extend({
+  secretKey: z.any().optional(),
+});
+
 type SyntheticConfig = z.infer<typeof SyntheticConfig>;
 
 function buildMeeting(
@@ -79,7 +84,7 @@ export const syntheticFixtureConnector = {
     _cursor,
     _signal,
   ): AsyncIterableIterator<{ items: ConnectorItem[]; nextCursor: string | null }> {
-    const cfg = ctx.config as SyntheticConfig;
+    const cfg = InvokerConfig.parse(ctx.config);
     for (const page of cfg.pages) {
       await ctx.caps.call("fixture.page", {}, z.object({ ok: z.boolean() }));
       yield {
@@ -100,9 +105,11 @@ export const syntheticFixtureConnector = {
 export const connectorRegistry: RegistryEntry[] = [
   {
     def: syntheticFixtureConnector,
-    createInvoker: (config) =>
-      fixtureInvoker({
-        "fixture.page": (config as SyntheticConfig).pages.map(() => ({ ok: true })),
-      }),
+    createInvoker: (config) => {
+      const cfg = InvokerConfig.parse(config);
+      return fixtureInvoker({
+        "fixture.page": cfg.pages.map(() => ({ ok: true })),
+      });
+    },
   },
 ];

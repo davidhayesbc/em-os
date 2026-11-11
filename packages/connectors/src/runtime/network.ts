@@ -1,4 +1,4 @@
-import type { ConnectorErrorKind } from "./errors.js";
+import { type ConnectorErrorKind, isConnectorError } from "./errors.js";
 
 const OFFLINE_CODES = new Set([
   "ENOTFOUND",
@@ -83,8 +83,10 @@ export function extractServerName(e: unknown): string | undefined {
  * generic runtime).
  */
 export function classifyError(e: unknown): ConnectorErrorKind {
-  if (e instanceof Error && e.constructor.name === "ConnectorError") {
-    return (e as unknown as { kind: ConnectorErrorKind }).kind;
+  // Prefer the explicit type guard over constructor.name: connector errors are always created by
+  // this runtime, so instanceof is reliable; anything else falls through to network/default.
+  if (isConnectorError(e)) {
+    return e.kind;
   }
   const network = classifyNetworkError(e);
   if (network === "offline") return "offline";

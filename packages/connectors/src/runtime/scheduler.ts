@@ -37,6 +37,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
 
   function contextFor(def: ConnectorDefinition<unknown>): ConnectorContext<unknown> {
     const stored = getConfig(def.id);
+    // Unconfigured connectors fall back to {} here; the invoker factory validates/defaults it.
     const config = stored?.config ?? {};
     const caps = createInvoker(def, config);
     return {

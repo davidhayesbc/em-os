@@ -1,5 +1,9 @@
-import type { ExternalMeeting, Meeting, NewSourceItem, SourceItem } from "@emos/api-contract";
-import type { Clock, Store, SyncStateRepo } from "@emos/core";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ExternalMeeting } from "@emos/api-contract";
+import type { Clock, Store } from "@emos/core";
+import { createStore, type Db, openDb } from "@emos/store-sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createAppliers } from "./appliers.js";
@@ -31,60 +35,34 @@ function makeMeeting(externalId: string): ExternalMeeting {
   };
 }
 
-function createMemoryStore(): Store {
-  const syncState: Record<string, import("@emos/core").SyncState> = {};
-  const meetings: ExternalMeeting[] = [];
-  const sourceItems: NewSourceItem[] = [];
-
-  const repo: SyncStateRepo = {
-    get(id) {
-      return (
-        syncState[id] ?? {
-          connectorId: id,
-          cursor: null,
-          state: "never",
-          lastAttemptAt: null,
-          lastSuccessAt: null,
-          lastError: null,
-          itemCount: 0,
-        }
-      );
-    },
-    set(s) {
-      syncState[s.connectorId] = { ...s };
-    },
-  };
+function createSqliteStore() {
+  const dir = mkdtempSync(join(tmpdir(), "emos-orch-test-"));
+  const file = join(dir, "emos.db");
+  let db: Db = openDb(file);
 
   return {
-    transaction: <T>(fn: () => T): T => fn(),
-    syncState: repo,
-    meetings: {
-      upsertExternal(m) {
-        meetings.push(m);
-        return { meeting: m as Meeting, created: true };
-      },
-      get: () => null,
-      listRange: () => [],
-      update: () => {
-        throw new Error("not implemented");
-      },
-      attachNote: () => {},
-      notes: () => [],
-      previousOf: () => null,
+    get db() {
+      return db;
     },
-    sourceItems: {
-      upsert(i) {
-        sourceItems.push(i);
-        return { item: i as SourceItem, created: true };
-      },
-      get: () => null,
-      byIds: () => [],
+    get store(): Store {
+      return createStore(db);
     },
-    accomplishments: {} as Store["accomplishments"],
-    commitments: {} as Store["commitments"],
-    goals: {} as Store["goals"],
-    people: {} as Store["people"],
-    settings: {} as Store["settings"],
+    get file() {
+      return file;
+    },
+    recreate(): Store {
+      db.close();
+      db = openDb(file);
+      return createStore(db);
+    },
+    cleanup() {
+      try {
+        db.close();
+      } catch {
+        // ignore double-close
+      }
+      rmSync(dir, { recursive: true, force: true });
+    },
   };
 }
 
@@ -115,14 +93,18 @@ function emptyContext(config: unknown = {}): ConnectorContext<unknown> {
 }
 
 describe("runSync orchestration", () => {
-  let store: ReturnType<typeof createMemoryStore>;
+  let _db: Db;
+  let store: Store;
+  let sqlite: ReturnType<typeof createSqliteStore>;
   let events: {
     calls: { type: string; connectorId: string; state: string }[];
     publish(e: { type: "sync.status"; connectorId: string; state: string }): void;
   };
 
   beforeEach(() => {
-    store = createMemoryStore();
+    sqlite = createSqliteStore();
+    _db = sqlite.db;
+    store = sqlite.store;
     events = {
       calls: [],
       publish(e) {
@@ -133,12 +115,64 @@ describe("runSync orchestration", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    sqlite.cleanup();
   });
 
-  it("applies two pages and advances the cursor", async () => {
+  it("persists the advanced cursor inside the page transaction", async () => {
+    let unblock: (() => void) | undefined;
+    const blocker = new Promise<void>((r) => {
+      unblock = r;
+    });
+
+    const def: ConnectorDefinition<unknown> = {
+      id: "test",
+      kind: "calendar",
+      configSchema: emptyConfigSchema,
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [{ entity: "meeting", data: makeMeeting("a") }], nextCursor: "c1" };
+        await blocker;
+        yield { items: [{ entity: "meeting", data: makeMeeting("b") }], nextCursor: null };
+      },
+    };
+
+    const promise = runSync({
+      store,
+      def,
+      ctx: emptyContext(),
+      appliers: createAppliers(store),
+      events,
+      clock: fixedClock,
+    });
+
+    // Wait for the first page to commit before page 2 resolves.
+    await vi.waitFor(() => {
+      const state = store.syncState.get("test");
+      if (state.cursor !== "c1") throw new Error("cursor not committed yet");
+    });
+
+    const midState = store.syncState.get("test");
+    expect(midState.cursor).toBe("c1");
+    expect(midState.state).toBe("syncing");
+    expect(midState.itemCount).toBe(1);
+
+    const midMeetings = store.meetings.listRange(
+      "2026-10-19T00:00:00.000Z",
+      "2026-10-21T00:00:00.000Z",
+    );
+    expect(midMeetings.map((m) => m.externalId)).toEqual(["a"]);
+
+    unblock?.();
+    const result = await promise;
+    expect(result).toEqual({ pages: 2, items: 2 });
+    expect(store.syncState.get("test").state).toBe("ok");
+  });
+
+  it("cursor survives reopening the database after a successful run", async () => {
     const def = createTestConnector([
-      { items: [{ entity: "meeting", data: makeMeeting("a") }], nextCursor: "page2" },
-      { items: [{ entity: "meeting", data: makeMeeting("b") }], nextCursor: null },
+      { items: [{ entity: "meeting", data: makeMeeting("a") }], nextCursor: "c1" },
+      { items: [{ entity: "meeting", data: makeMeeting("b") }], nextCursor: "c2" },
     ]);
 
     const result = await runSync({
@@ -151,23 +185,52 @@ describe("runSync orchestration", () => {
     });
 
     expect(result).toEqual({ pages: 2, items: 2 });
-    expect(store.syncState.get("test").cursor).toBe(null);
+    expect(store.syncState.get("test").cursor).toBe("c2");
+    expect(store.syncState.get("test").state).toBe("ok");
+
+    const reopened = sqlite.recreate();
+    const persisted = reopened.syncState.get("test");
+    expect(persisted.cursor).toBe("c2");
+    expect(persisted.itemCount).toBe(2);
+  });
+
+  it("applies two pages and advances the cursor", async () => {
+    const def = createTestConnector([
+      { items: [{ entity: "meeting", data: makeMeeting("a") }], nextCursor: "page2" },
+      { items: [{ entity: "meeting", data: makeMeeting("b") }], nextCursor: "c2" },
+    ]);
+
+    const result = await runSync({
+      store,
+      def,
+      ctx: emptyContext(),
+      appliers: createAppliers(store),
+      events,
+      clock: fixedClock,
+    });
+
+    expect(result).toEqual({ pages: 2, items: 2 });
+    expect(store.syncState.get("test").cursor).toBe("c2");
     expect(store.syncState.get("test").state).toBe("ok");
     expect(store.syncState.get("test").itemCount).toBe(2);
     expect(events.calls.filter((e) => e.state === "ok").length).toBe(1);
   });
 
-  it("keeps page 1 and leaves the cursor at page 1 when applier throws on page 2", async () => {
+  it("rolls back a failing page and leaves the cursor at the last committed page", async () => {
     const def = createTestConnector([
-      { items: [{ entity: "meeting", data: makeMeeting("a") }], nextCursor: "page2" },
-      { items: [{ entity: "meeting", data: makeMeeting("b") }], nextCursor: null },
+      { items: [{ entity: "meeting", data: makeMeeting("a") }], nextCursor: "c1" },
+      {
+        items: [
+          { entity: "meeting", data: makeMeeting("p1") },
+          { entity: "meeting", data: makeMeeting("p2") },
+        ],
+        nextCursor: "c2",
+      },
     ]);
-    const applied: string[] = [];
     const failingAppliers = {
       meeting: (m: ExternalMeeting) => {
-        if (m.externalId === "b") throw new ConnectorError("schema", "bad meeting");
+        if (m.externalId === "p2") throw new ConnectorError("schema", "bad meeting");
         store.meetings.upsertExternal(m);
-        applied.push(m.externalId);
       },
       sourceItem: () => {},
     };
@@ -181,11 +244,18 @@ describe("runSync orchestration", () => {
       clock: fixedClock,
     });
 
-    expect(applied).toEqual(["a"]);
+    const persisted = store.syncState.get("test");
     expect(result).toEqual({ pages: 1, items: 1 });
-    expect(store.syncState.get("test").cursor).toBe("page2");
-    expect(store.syncState.get("test").state).toBe("error");
-    expect(store.syncState.get("test").lastError).toBe("bad meeting");
+    expect(persisted.cursor).toBe("c1");
+    expect(persisted.state).toBe("error");
+    expect(persisted.lastError).toBe("bad meeting");
+    expect(persisted.itemCount).toBe(1);
+
+    const meetings = store.meetings.listRange(
+      "2026-10-19T00:00:00.000Z",
+      "2026-10-21T00:00:00.000Z",
+    );
+    expect(meetings.map((m) => m.externalId)).toEqual(["a"]);
   });
 
   it("retries transient errors twice then succeeds with three attempts", async () => {

@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 import { API_VERSION } from "@emos/api-contract";
 import type { Scheduler } from "@emos/connectors";
 import { type Clock, type LogFields, type Logger, type SecretStore, systemClock } from "@emos/core";
-import { assertNotInGitCheckout, dataLayout, toDbInstant } from "@emos/store-sqlite";
+import { assertNotInGitCheckout, type Db, dataLayout, toDbInstant } from "@emos/store-sqlite";
 import {
   isAllowedHost,
   loadOrCreateToken,
@@ -77,6 +77,8 @@ export interface RunningService {
   token: string;
   scheduler: Scheduler;
   secrets: SecretStore;
+  /** The open database handle; tests can read raw rows. */
+  db: Db;
   stop(): Promise<void>;
 }
 
@@ -433,7 +435,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
     };
     const addr = srv.address();
     const host = addr !== null && typeof addr !== "string" ? addr.address : LOOPBACK;
-    return { port, host, token, scheduler: context.scheduler, secrets, stop };
+    return { port, host, token, scheduler: context.scheduler, secrets, db: ctx.db, stop };
   } catch (e) {
     for (const end of [...streams]) end();
     if (server?.listening) {

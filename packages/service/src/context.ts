@@ -59,21 +59,19 @@ export function createContext(deps: {
   const appliers = createAppliers(store);
   const scheduler = createScheduler({
     registry: registry.map((r) => r.def),
-    createInvoker: (def) => {
+    createInvoker: (def, config) => {
       const entry = registry.find((r) => r.def.id === def.id);
-      const stored = connectorConfig(def.id);
       if (!entry) {
         throw new Error(`No invoker registered for ${def.id}`);
       }
-      return entry.createInvoker((stored?.config ?? {}) as Record<string, unknown>);
+      return entry.createInvoker(config as Record<string, unknown>);
     },
     getConfig: (id) => connectorConfig(id),
     runSync: async (def, ctx) => {
       const stored = connectorConfig(def.id);
-      const config =
-        typeof stored?.config === "object" && stored.config !== null
-          ? await restoreSecrets(deps.secrets, def.id, stored.config as Record<string, unknown>)
-          : (stored?.config ?? {});
+      const config = stored
+        ? await restoreSecrets(deps.secrets, def.id, stored.config as Record<string, unknown>)
+        : ctx.config;
       return runSync({
         store,
         def,
