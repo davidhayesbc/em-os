@@ -12,6 +12,7 @@ export { healthGet } from "./ops/health.js";
 export * from "./ops/index.js";
 export * from "./ops/meetings.js";
 export * from "./ops/people.js";
+export * from "./ops/prep.js";
 export * from "./ops/quick-capture.js";
 export { serviceShutdown } from "./ops/service.js";
 export * from "./ops/settings.js";

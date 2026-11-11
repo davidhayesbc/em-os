@@ -605,17 +605,17 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - otherwise `ready`.
 - Op: `prep.get {meetingId} → MeetingPrep`. `classifyMeeting` is applied by the calendar connector's applier (P1-14).
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - Rule `^standup|stand-up` → `standup`.
   - Two attendees, one in the roster → `one_on_one` with that person's id.
   - A non-roster other attendee → `other`.
   - A linked active item → `needs_work`.
   - A linked done item → `ready`.
   - The previous standup's open action items are carried; done ones are not.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-09): meeting classification and minimal prep`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-09): meeting classification and minimal prep`.
 
 **Acceptance:** 1:1 and standup prep can be served from the store.
 
