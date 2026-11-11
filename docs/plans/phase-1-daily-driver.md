@@ -109,7 +109,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 - [x] **P1-06** Ranking engine `rank` + `selectTop` — deps: P1-05 — claim: done · 1f2991c253a19eb5e29b19afcdfb1a799cb5a936
 - [x] **t_a0575589** Ranking signal contracts: low-confidence penalty + assigned-ticket eligibility gate — deps: P1-06, t_43e3c03a, t_e9515b7b — claim: done · 44509b2
-- [ ] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: t_10bb0f29 · p1-07-calendar-fit-planner
+- [x] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: done · 106a8a0
 - [ ] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: —
 - [ ] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: t_5a43eb2f · p1-09-meeting-classification-prep
 - [ ] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09, P1-12 — claim: —
@@ -531,7 +531,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - **Free time:** working hours minus busy time. For today, clip to `now`. Drop blocks shorter than `minMinutes`.
 - **Placement:** greedy in rank order, into the earliest block with enough remaining minutes. Items that don't fit go to `unplaced`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - Meetings 9:00–9:15 and 10:30–11:00 with hours 09–17 → free blocks 9:15–10:30 and 11:00–17:00.
   - A 10-minute gap is dropped.
   - A declined meeting doesn't block time.
@@ -539,10 +539,10 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - **Meeting in another zone:** a meeting at 09:00 America/New_York on a America/Los_Angeles day is busy from 06:00, outside working hours, so it consumes nothing.
   - DST day `2026-11-01` in America/Los_Angeles has a correct 8-hour window.
   - A 90-minute item skips a 75-minute block.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-07): calendar-fit day planner`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-07): calendar-fit day planner`.
 
 **Acceptance:** It's pure and handles time zones and DST, and items are placed only into real free time.
 
