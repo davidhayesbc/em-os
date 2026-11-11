@@ -49,6 +49,9 @@ describe("op registry", () => {
     expectTypeOf<OpName>().toEqualTypeOf<
       | "health.get"
       | "backup.create"
+      | "connectors.list"
+      | "connectors.sync"
+      | "connectors.configure"
       | "service.shutdown"
       | "commitments.list"
       | "commitments.get"

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@emos/api-contract": "0.0.0",
+    "@emos/connectors": "0.0.0",
     "@emos/core": "0.0.0",
     "@emos/store-sqlite": "0.0.0",
     "@napi-rs/keyring": "2.1.1"

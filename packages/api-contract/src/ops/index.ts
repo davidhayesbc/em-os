@@ -10,6 +10,7 @@ import {
   commitmentsSnooze,
   commitmentsUpdate,
 } from "./commitments.js";
+import { connectorsConfigure, connectorsList, connectorsSync } from "./connectors.js";
 import { goalsCreate, goalsList, goalsUpdate } from "./goals.js";
 import { healthGet } from "./health.js";
 import { meetingsAttachNotes, meetingsGet, meetingsList, meetingsUpdate } from "./meetings.js";
@@ -31,6 +32,9 @@ import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js
 export const ops = {
   "health.get": healthGet,
   "backup.create": backupCreate,
+  "connectors.list": connectorsList,
+  "connectors.sync": connectorsSync,
+  "connectors.configure": connectorsConfigure,
   "service.shutdown": serviceShutdown,
   "commitments.list": commitmentsList,
   "commitments.get": commitmentsGet,
