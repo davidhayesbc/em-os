@@ -117,7 +117,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Connectors**
 
-- [ ] **P1-12** Connector runtime, registry, scheduler, offline handling, fixture invoker — deps: Phase 0 — claim: t_50a838b2 · p1-12-connector-runtime
+- [x] **P1-12** Connector runtime, registry, scheduler, offline handling, fixture invoker — deps: Phase 0 — claim: done · 00db3b2
 - [ ] **P1-13** MCP direct transport + tool-mapping presets — deps: P1-12 — claim: —
 - [ ] **P1-14** Calendar connector (MCP capability + ICS native) — deps: P1-01, P1-04, P1-09, P1-12, P1-13 — claim: —
 
@@ -723,7 +723,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - `connectors.configure { id, enabled, config }` — validated against `configSchema`; secret fields are stored via `SecretStore` and never echoed.
 - Events: `sync.status`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - Two pages apply and the cursor advances to the second page's.
   - An applier throw on page 2 keeps page 1 and leaves the cursor at page 1.
   - A transient error ×2 then success → success with 3 attempts.
@@ -732,10 +732,10 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - `configure` with a secret doesn't return it in `connectors.list`.
   - An `ENOTFOUND` error → `state: "offline"` with the VPN hint, after 1 attempt.
   - A connector added to `service/src/connectors/registry.ts` appears in `connectors.list`.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-12): connector runtime with transactional cursors`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-12): connector runtime with transactional cursors`.
 
 **Acceptance:** A connector can be added just by defining `sync`, and failures are isolated and visible.
 
