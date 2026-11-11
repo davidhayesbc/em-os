@@ -1,5 +1,5 @@
 import type { LocalDate, Meeting } from "@emos/api-contract";
-import { addLocalDays, localMinutes, startOfLocalDay, toLocalDate } from "../time/zoned.js";
+import { addLocalDays, startOfLocalDay, toLocalDate } from "../time/zoned.js";
 
 export interface Block {
   start: string;
@@ -140,9 +140,7 @@ export function freeBlocks(i: {
   const zone = i.timeZone;
   const dayStart = startOfLocalDay(i.localDate, zone);
   const nextDay = addLocalDays(i.localDate, 1);
-  const dayLength = Math.round(
-    (startOfLocalDay(nextDay, zone).getTime() - dayStart.getTime()) / 60000,
-  );
+  const dayEnd = startOfLocalDay(nextDay, zone);
 
   const workStart = parseWallTime(i.workingHours.start);
   const workEnd = parseWallTime(i.workingHours.end);
@@ -150,28 +148,25 @@ export function freeBlocks(i: {
     throw new RangeError("Working hours end must be after start");
   }
 
+  // Working-window boundaries as real UTC instants, not wall-minute subtraction,
+  // so spring-forward/fall-back days keep the correct physical duration.
+  const workStartMs = localInstant(i.localDate, zone, workStart).getTime();
+  const workEndMs = localInstant(i.localDate, zone, workEnd).getTime();
+
   const busyIntervals: Interval[] = [];
   for (const meeting of i.meetings) {
     if (!isBusy(meeting)) continue;
 
     const startInstant = new Date(meeting.start);
     const endInstant = new Date(meeting.end);
-    const startDate = toLocalDate(startInstant, zone);
-    const endDate = toLocalDate(endInstant, zone);
 
-    if (endDate < i.localDate || startDate > i.localDate) continue;
+    // Clip the meeting to the physical local day and the working window.
+    const startMs = Math.max(dayStart.getTime(), startInstant.getTime());
+    const endMs = Math.min(dayEnd.getTime(), endInstant.getTime());
+    if (endMs <= startMs) continue;
 
-    const startMin = startDate < i.localDate ? 0 : localMinutes(startInstant, zone);
-    let endMin = endDate > i.localDate ? dayLength : localMinutes(endInstant, zone);
-
-    // The meeting may be reported in a different order around a DST transition;
-    // clamp it to the day and intersect with working hours.
-    if (endMin < startMin) {
-      endMin = dayLength;
-    }
-
-    const clippedStart = Math.max(startMin, workStart);
-    const clippedEnd = Math.min(endMin, workEnd);
+    const clippedStart = Math.max(startMs, workStartMs);
+    const clippedEnd = Math.min(endMs, workEndMs);
     if (clippedEnd > clippedStart) {
       busyIntervals.push({ start: clippedStart, end: clippedEnd });
     }
@@ -180,39 +175,39 @@ export function freeBlocks(i: {
   const merged = mergeIntervals(busyIntervals);
 
   const isToday = i.localDate === toLocalDate(i.now, zone);
-  const nowMin = isToday ? localMinutes(i.now, zone) : Number.NEGATIVE_INFINITY;
+  const nowMs = isToday ? i.now.getTime() : Number.NEGATIVE_INFINITY;
 
   const free: Block[] = [];
-  let cursor = workStart;
+  let cursor = workStartMs;
   for (const busy of merged) {
     if (busy.start > cursor) {
       let blockStart = cursor;
-      if (isToday && nowMin > blockStart) {
-        blockStart = nowMin;
+      if (isToday && nowMs > blockStart) {
+        blockStart = nowMs;
       }
       const blockEnd = busy.start;
-      const minutes = blockEnd - blockStart;
+      const minutes = Math.round((blockEnd - blockStart) / 60000);
       if (minutes >= i.minMinutes) {
         free.push({
-          start: localInstant(i.localDate, zone, blockStart).toISOString(),
-          end: localInstant(i.localDate, zone, blockEnd).toISOString(),
+          start: new Date(blockStart).toISOString(),
+          end: new Date(blockEnd).toISOString(),
           minutes,
         });
       }
     }
     cursor = Math.max(cursor, busy.end);
   }
-  if (cursor < workEnd) {
+  if (cursor < workEndMs) {
     let blockStart = cursor;
-    if (isToday && nowMin > blockStart) {
-      blockStart = nowMin;
+    if (isToday && nowMs > blockStart) {
+      blockStart = nowMs;
     }
-    const blockEnd = workEnd;
-    const minutes = blockEnd - blockStart;
+    const blockEnd = workEndMs;
+    const minutes = Math.round((blockEnd - blockStart) / 60000);
     if (minutes >= i.minMinutes) {
       free.push({
-        start: localInstant(i.localDate, zone, blockStart).toISOString(),
-        end: localInstant(i.localDate, zone, blockEnd).toISOString(),
+        start: new Date(blockStart).toISOString(),
+        end: new Date(blockEnd).toISOString(),
         minutes,
       });
     }
