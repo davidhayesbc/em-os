@@ -117,7 +117,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Connectors**
 
-- [ ] **P1-12** Connector runtime, registry, scheduler, offline handling, fixture invoker — deps: Phase 0 — claim: —
+- [ ] **P1-12** Connector runtime, registry, scheduler, offline handling, fixture invoker — deps: Phase 0 — claim: t_50a838b2 · p1-12-connector-runtime
 - [ ] **P1-13** MCP direct transport + tool-mapping presets — deps: P1-12 — claim: —
 - [ ] **P1-14** Calendar connector (MCP capability + ICS native) — deps: P1-01, P1-04, P1-09, P1-12, P1-13 — claim: —
 
