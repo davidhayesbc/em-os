@@ -24,6 +24,7 @@ import {
   personNotesCreate,
   personNotesList,
 } from "./people.js";
+import { prepGet } from "./prep.js";
 import { commitmentsQuickCapture } from "./quick-capture.js";
 import { serviceShutdown } from "./service.js";
 import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
@@ -52,6 +53,7 @@ export const ops = {
   "meetings.get": meetingsGet,
   "meetings.update": meetingsUpdate,
   "meetings.attachNotes": meetingsAttachNotes,
+  "prep.get": prepGet,
   "settings.get": settingsGet,
   "settings.update": settingsUpdate,
   "layout.get": layoutGet,
