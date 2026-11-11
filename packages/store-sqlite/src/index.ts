@@ -18,3 +18,4 @@ export { toDbInstant } from "./time.js";
 export { createSettingsRepo } from "./repos/settings.js";
 export { createPeopleRepo } from "./repos/people.js";
 export { createSourceItemsRepo } from "./repos/source-items.js";
+export { createSyncStateRepo } from "./repos/sync-state.js";

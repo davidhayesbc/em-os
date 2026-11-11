@@ -16,14 +16,19 @@ try {
 try {
   // `service.shutdown` stops the service itself; then exit.
   const svc = await startService({ ...args, onShutdown: () => process.exit(0) });
+  svc.scheduler.start();
+
   let stopping = false;
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
-    svc.stop().then(
-      () => process.exit(0),
-      () => process.exit(1),
-    );
+    svc.scheduler
+      .stop()
+      .then(() => svc.stop())
+      .then(
+        () => process.exit(0),
+        () => process.exit(1),
+      );
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

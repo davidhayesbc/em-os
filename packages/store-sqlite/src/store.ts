@@ -7,6 +7,7 @@ import { createMeetingsRepo } from "./repos/meetings.js";
 import { createPeopleRepo } from "./repos/people.js";
 import { createSettingsRepo } from "./repos/settings.js";
 import { createSourceItemsRepo } from "./repos/source-items.js";
+import { createSyncStateRepo } from "./repos/sync-state.js";
 
 /**
  * The `Store` port (@emos/core) over SQLite. APPEND-ONLY: each Phase 1 slice adds one line
@@ -22,5 +23,6 @@ export function createStore(db: Db): Store {
     people: createPeopleRepo(db),
     settings: createSettingsRepo(db),
     sourceItems: createSourceItemsRepo(db),
+    syncState: createSyncStateRepo(db),
   };
 }

@@ -12,6 +12,7 @@ export * from "./ports/repos/meetings.js";
 export * from "./ports/repos/people.js";
 export * from "./ports/repos/settings.js";
 export * from "./ports/repos/source-items.js";
+export * from "./ports/repos/sync-state.js";
 export * from "./ports/secrets.js";
 export * from "./ports/store.js";
 export * from "./ranking/index.js";

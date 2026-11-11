@@ -7,6 +7,7 @@ export * from "./events.js";
 export * from "./op.js";
 export { backupCreate } from "./ops/backup.js";
 export * from "./ops/commitments.js";
+export * from "./ops/connectors.js";
 export * from "./ops/goals.js";
 export { healthGet } from "./ops/health.js";
 export * from "./ops/index.js";

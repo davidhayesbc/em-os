@@ -34,7 +34,14 @@ const isTestFile = (f: string) => /\.test\.tsx?$/.test(f) || /(^|\/)test-helpers
 
 describe("build-only tsconfig", () => {
   it("covers every package built by scripts/build.mjs", () => {
-    expect(packages.sort()).toEqual(["api-contract", "cli", "core", "service", "store-sqlite"]);
+    expect(packages.sort()).toEqual([
+      "api-contract",
+      "cli",
+      "connectors",
+      "core",
+      "service",
+      "store-sqlite",
+    ]);
   });
 
   it.each(packages)("%s: tsconfig.build.json leaves out tests and test helpers", (name) => {

@@ -3,6 +3,7 @@
  * fields to this interface; keep this file append-only.
  */
 import type { SettingsRepo } from "./repos/settings.js";
+import type { SyncStateRepo } from "./repos/sync-state.js";
 
 export interface Store {
   transaction<T>(fn: () => T): T;
@@ -13,4 +14,5 @@ export interface Store {
   people: import("./repos/people.js").PeopleRepo;
   settings: SettingsRepo;
   sourceItems: import("./repos/source-items.js").SourceItemsRepo;
+  syncState: SyncStateRepo;
 }

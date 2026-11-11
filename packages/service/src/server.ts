@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { API_VERSION } from "@emos/api-contract";
+import type { Scheduler } from "@emos/connectors";
 import { type Clock, type LogFields, type Logger, type SecretStore, systemClock } from "@emos/core";
 import { assertNotInGitCheckout, dataLayout, toDbInstant } from "@emos/store-sqlite";
 import {
@@ -60,6 +61,8 @@ export interface StartServiceOptions {
   events?: EventBus;
   /** SSE heartbeat interval (default 25 s). */
   heartbeatMs?: number;
+  /** Default: the connector registry from `service/src/connectors/registry.ts`. */
+  registry?: import("./connectors/registry.js").RegistryEntry[];
   /**
    * Called after a `service.shutdown` request has stopped the service (main.ts exits). Not
    * called for `stop()` by the owner.
@@ -72,6 +75,8 @@ export interface RunningService {
   /** The bound address; always 127.0.0.1. */
   host: string;
   token: string;
+  scheduler: Scheduler;
+  secrets: SecretStore;
   stop(): Promise<void>;
 }
 
@@ -361,6 +366,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
       log,
       secrets,
       events,
+      registry: opts.registry,
       requestShutdown: () => {
         shutdownRequested = true;
       },
@@ -401,6 +407,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
     const stop = (): Promise<void> => {
       stopping ??= (async () => {
         for (const end of [...streams]) end();
+        await context.scheduler.stop();
         await new Promise<void>((r) => {
           srv.close(() => r());
           srv.closeAllConnections();
@@ -426,7 +433,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
     };
     const addr = srv.address();
     const host = addr !== null && typeof addr !== "string" ? addr.address : LOOPBACK;
-    return { port, host, token, stop };
+    return { port, host, token, scheduler: context.scheduler, secrets, stop };
   } catch (e) {
     for (const end of [...streams]) end();
     if (server?.listening) {
