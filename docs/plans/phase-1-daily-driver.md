@@ -111,7 +111,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [x] **t_a0575589** Ranking signal contracts: low-confidence penalty + assigned-ticket eligibility gate — deps: P1-06, t_43e3c03a, t_e9515b7b — claim: done · 44509b2
 - [ ] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: —
 - [ ] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: —
-- [ ] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: —
+- [ ] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: t_5a43eb2f · p1-09-meeting-classification-prep
 - [ ] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09, P1-12 — claim: —
 - [ ] **P1-11** End-of-day wrap use case + ops — deps: P1-02, P1-10 — claim: —
 
