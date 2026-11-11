@@ -2,6 +2,7 @@ export * from "./commitments/index.js";
 export * from "./goals/index.js";
 export * from "./meetings/index.js";
 export * from "./people/index.js";
+export * from "./planning/index.js";
 export * from "./ports/clock.js";
 export * from "./ports/ids.js";
 export * from "./ports/logger.js";
