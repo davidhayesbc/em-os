@@ -158,7 +158,7 @@ export function scoreCommitment(
 
   if (c.meetingId) {
     const meeting = ctx.meetingById.get(c.meetingId);
-    if (meeting && meeting.status === "confirmed") {
+    if (meeting && meeting.status === "confirmed" && meeting.selfResponse !== "declined") {
       const start = new Date(meeting.start).getTime();
       const windowEnd = ctx.now.getTime() + ctx.config.timeCriticalHours * 3600000;
       if (start >= ctx.now.getTime() && start <= windowEnd) {

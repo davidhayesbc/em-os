@@ -245,6 +245,192 @@ describe("rank", () => {
     expect(r?.why).toBe("meeting 9:30am");
   });
 
+  it("suppresses the band-1 meeting signal when selfResponse is declined", () => {
+    const mtg = meeting({ id: "m1", selfResponse: "declined" });
+    const linked = commitment({ id: "linked", meetingId: "m1" });
+    const control = commitment({ id: "control" });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [linked, control],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(result.map((r) => r?.commitmentId)).toEqual(["control", "linked"]);
+    for (const item of result) {
+      expect(item?.score).toBe(0);
+      expect(item?.dominant).toBe("neutral");
+      expect(item?.why).toBe("no additional signal");
+      expect(item?.components).toEqual([
+        { kind: "neutral", points: 0, detail: "no additional signal" },
+      ]);
+    }
+  });
+
+  it("keeps due-today time-critical signal when the linked meeting is declined", () => {
+    const mtg = meeting({ id: "m1", selfResponse: "declined" });
+    const a = commitment({
+      id: "a",
+      meetingId: "m1",
+      due: { date: "2026-10-29", time: null, timeZone: TIME_ZONE },
+    });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r?.score).toBe(config.weights.timeCritical);
+    expect(r?.dominant).toBe("time_critical");
+    expect(r?.why).toBe("due today");
+    expect(r?.components).toEqual([
+      { kind: "time_critical", points: config.weights.timeCritical, detail: "due today" },
+    ]);
+  });
+
+  it("keeps due-tomorrow time-critical signal when the linked meeting is declined", () => {
+    const mtg = meeting({ id: "m1", selfResponse: "declined" });
+    const a = commitment({
+      id: "a",
+      meetingId: "m1",
+      due: { date: "2026-10-30", time: null, timeZone: TIME_ZONE },
+    });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    expect(r?.score).toBe(config.weights.timeCritical);
+    expect(r?.why).toBe("due tomorrow");
+    expect(r?.components).toEqual([
+      { kind: "time_critical", points: config.weights.timeCritical, detail: "due tomorrow" },
+    ]);
+  });
+
+  it("keeps overdue math when the linked meeting is declined", () => {
+    const mtg = meeting({ id: "m1", selfResponse: "declined" });
+    const a = commitment({
+      id: "a",
+      meetingId: "m1",
+      due: { date: "2026-10-27", time: null, timeZone: TIME_ZONE },
+    });
+    const [r] = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [a],
+      meetings: [mtg],
+      goals: [],
+      config,
+    });
+    const expectedPoints = config.weights.timeCritical + config.weights.overduePerDay * 2;
+    expect(r?.score).toBe(expectedPoints);
+    expect(r?.why).toBe("overdue 2d");
+    expect(r?.components).toEqual([
+      { kind: "time_critical", points: expectedPoints, detail: "overdue 2d" },
+    ]);
+  });
+
+  it.each(["accepted", "tentative", "needs_action", null] as const)(
+    "non-declined selfResponse %j still produces the meeting time-critical signal",
+    (selfResponse) => {
+      const mtg = meeting({ id: "m1", selfResponse });
+      const a = commitment({ id: "a", meetingId: "m1" });
+      const [r] = rank({
+        now: NOON_TODAY,
+        timeZone: TIME_ZONE,
+        commitments: [a],
+        meetings: [mtg],
+        goals: [],
+        config,
+      });
+      expect(r?.score).toBe(config.weights.timeCritical);
+      expect(r?.dominant).toBe("time_critical");
+      expect(r?.why).toBe("meeting 1pm");
+      expect(r?.components).toEqual([
+        { kind: "time_critical", points: config.weights.timeCritical, detail: "meeting 1pm" },
+      ]);
+    },
+  );
+
+  it("declined meeting at the time-critical window edge stays suppressed", () => {
+    const edgeStart = new Date(
+      NOON_TODAY.getTime() + config.timeCriticalHours * 3600000,
+    ).toISOString();
+    const declined = meeting({
+      id: "m_declined",
+      start: edgeStart,
+      end: edgeStart,
+      selfResponse: "declined",
+    });
+    const accepted = meeting({
+      id: "m_accepted",
+      start: edgeStart,
+      end: edgeStart,
+      selfResponse: "accepted",
+    });
+    const cDeclined = commitment({ id: "c_declined", meetingId: "m_declined" });
+    const cAccepted = commitment({ id: "c_accepted", meetingId: "m_accepted" });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [cDeclined, cAccepted],
+      meetings: [declined, accepted],
+      goals: [],
+      config,
+    });
+    const rDeclined = result.find((r) => r.commitmentId === "c_declined");
+    const rAccepted = result.find((r) => r.commitmentId === "c_accepted");
+    expect(rDeclined?.score).toBe(0);
+    expect(rDeclined?.why).toBe("no additional signal");
+    expect(rAccepted?.score).toBe(config.weights.timeCritical);
+    expect(rAccepted?.why).toBe("meeting 12pm");
+  });
+
+  it("declined suppression is per meeting instance, not per series", () => {
+    const declinedMtg = meeting({
+      id: "m_declined",
+      start: "2026-10-29T20:00:00.000Z",
+      selfResponse: "declined",
+    });
+    const acceptedMtg = meeting({
+      id: "m_accepted",
+      start: "2026-10-29T21:00:00.000Z",
+      selfResponse: "accepted",
+    });
+    const cDeclined = commitment({ id: "c_declined", meetingId: "m_declined" });
+    const cAccepted = commitment({ id: "c_accepted", meetingId: "m_accepted" });
+    const result = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [cDeclined, cAccepted],
+      meetings: [declinedMtg, acceptedMtg],
+      goals: [],
+      config,
+    });
+    expect(result.find((r) => r.commitmentId === "c_declined")?.why).toBe("no additional signal");
+    expect(result.find((r) => r.commitmentId === "c_accepted")?.why).toBe("meeting 2pm");
+
+    // Swap responses: the suppressed/fired outputs flip.
+    const swappedDeclined = { ...declinedMtg, selfResponse: "accepted" as const };
+    const swappedAccepted = { ...acceptedMtg, selfResponse: "declined" as const };
+    const swapped = rank({
+      now: NOON_TODAY,
+      timeZone: TIME_ZONE,
+      commitments: [cDeclined, cAccepted],
+      meetings: [swappedDeclined, swappedAccepted],
+      goals: [],
+      config,
+    });
+    expect(swapped.find((r) => r.commitmentId === "c_declined")?.why).toBe("meeting 1pm");
+    expect(swapped.find((r) => r.commitmentId === "c_accepted")?.why).toBe("no additional signal");
+  });
+
   it("due today outranks due in 3 days", () => {
     const a = commitment({ id: "a", due: { date: "2026-10-29", time: null, timeZone: TIME_ZONE } });
     const b = commitment({ id: "b", due: { date: "2026-11-01", time: null, timeZone: TIME_ZONE } });
