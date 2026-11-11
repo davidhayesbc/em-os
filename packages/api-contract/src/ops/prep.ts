@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Commitment, IsoDateTime, Meeting, Person } from "../entities/index.js";
+import { CommitmentView, IsoDateTime, Meeting, Person } from "../entities/index.js";
 import { defineOp } from "../op.js";
 
 export const MeetingPrep = z.object({
@@ -7,9 +7,9 @@ export const MeetingPrep = z.object({
   classification: Meeting.shape.classification,
   status: z.enum(["ready", "needs_work", "nothing_linked"]),
   person: Person.nullable(),
-  openMine: z.array(Commitment),
-  openTheirs: z.array(Commitment),
-  linked: z.array(Commitment),
+  openMine: z.array(CommitmentView),
+  openTheirs: z.array(CommitmentView),
+  linked: z.array(CommitmentView),
   lastNotes: z
     .object({
       sourceItemId: z.string(),

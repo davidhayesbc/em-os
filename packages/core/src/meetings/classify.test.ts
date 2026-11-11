@@ -129,4 +129,15 @@ describe("classifyMeeting", () => {
       personId: null,
     });
   });
+
+  it("skips rules with invalid regex patterns and falls through (R1)", () => {
+    const rules: Profile["meetingRules"] = [
+      { pattern: "(", classification: "standup" },
+      { pattern: "1:1", classification: "one_on_one" },
+    ];
+    expect(classifyMeeting(meeting({ title: "1:1 Catch-up" }), rules, "per_self")).toEqual({
+      classification: "one_on_one",
+      personId: null,
+    });
+  });
 });

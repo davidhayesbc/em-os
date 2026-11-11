@@ -1,13 +1,13 @@
-import type { Commitment, Meeting, Person, SourceItem } from "@emos/api-contract";
+import type { Commitment, CommitmentView, Meeting, Person, SourceItem } from "@emos/api-contract";
 
 export interface MeetingPrep {
   meetingId: string;
   classification: Meeting["classification"];
   status: "ready" | "needs_work" | "nothing_linked";
   person: Person | null;
-  openMine: Commitment[];
-  openTheirs: Commitment[];
-  linked: Commitment[];
+  openMine: CommitmentView[];
+  openTheirs: CommitmentView[];
+  linked: CommitmentView[];
   lastNotes: { sourceItemId: string; occurredAt: string; excerpt: string } | null;
   carriedActionItems: Meeting["actionItems"];
 }
@@ -37,12 +37,16 @@ export function buildPrep(i: {
   }
 
   const personId = person?.id ?? null;
-  const openMine = commitments.filter(
-    (c) => c.counterpartId === personId && c.direction === "mine" && isActive(c),
-  );
-  const openTheirs = commitments.filter(
-    (c) => c.counterpartId === personId && c.direction === "owed_to_me" && isActive(c),
-  );
+  const openMine = personId
+    ? commitments.filter(
+        (c) => c.counterpartId === personId && c.direction === "mine" && isActive(c),
+      )
+    : [];
+  const openTheirs = personId
+    ? commitments.filter(
+        (c) => c.counterpartId === personId && c.direction === "owed_to_me" && isActive(c),
+      )
+    : [];
 
   const lastNotes = ((): MeetingPrep["lastNotes"] => {
     if (previousNotes.length === 0) return null;

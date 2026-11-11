@@ -231,4 +231,77 @@ describe("prep API", () => {
     ]);
     expect(prep.status).toBe("nothing_linked");
   });
+
+  it("does not leak internal commitment fields or null-counterpart items for a standup (B1 + B2)", async () => {
+    const dataDir = tmpDir();
+    const seedDb = openDb(dataLayout(dataDir).dbFile);
+    let currentId: string;
+    let seedCount = 0;
+    let personCount = 0;
+    let commitmentCount = 0;
+    let selfId: string;
+    try {
+      const people = createPeopleRepo(seedDb, {
+        now: () => new Date(at),
+        id: (prefix) => `${prefix}_self_${++personCount}`,
+      });
+      selfId = people.create({ ...personInput("Self"), relationship: "self" }).id;
+      const meetings = createMeetingsRepo(seedDb, {
+        now: () => new Date(at),
+        id: (prefix) => `${prefix}_seed_${++seedCount}`,
+      });
+      currentId = meetings.upsertExternal(
+        standupMeeting("2026-10-25T09:00:00.000Z", "standup-current"),
+      ).meeting.id;
+
+      const commitments = createCommitmentsRepo(seedDb, {
+        now: () => new Date(at),
+        id: (prefix) => `${prefix}_commitment_${++commitmentCount}`,
+      });
+      commitments.create(
+        commitmentInput({
+          title: "Unrelated mine",
+          direction: "mine",
+          status: "active",
+          counterpartId: null,
+          meetingId: null,
+          ownerId: selfId,
+          confidence: 0.9,
+          pinProvenance: "user",
+          ticketId: "TICKET-1",
+        }),
+      );
+      commitments.create(
+        commitmentInput({
+          title: "Unrelated owed to me",
+          direction: "owed_to_me",
+          status: "active",
+          counterpartId: null,
+          meetingId: null,
+          ownerId: selfId,
+          confidence: 0.8,
+          pinProvenance: "system",
+          ticketId: "TICKET-2",
+        }),
+      );
+    } finally {
+      seedDb.close();
+    }
+
+    const svc = await startTestService({ dataDir });
+    const client = createClient({
+      transport: httpTransport(`http://127.0.0.1:${svc.port}`),
+      token: svc.token,
+    });
+
+    const prep = await client.call("prep.get", { meetingId: currentId });
+    expect(prep.openMine).toEqual([]);
+    expect(prep.openTheirs).toEqual([]);
+    const all = [...prep.openMine, ...prep.openTheirs, ...prep.linked];
+    for (const c of all) {
+      expect(c).not.toHaveProperty("confidence");
+      expect(c).not.toHaveProperty("pinProvenance");
+      expect(c).not.toHaveProperty("ticketId");
+    }
+  });
 });

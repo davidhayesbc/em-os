@@ -10,7 +10,12 @@ export function classifyMeeting(
   }
 
   for (const rule of rules) {
-    const re = new RegExp(rule.pattern, "i");
+    let re: RegExp;
+    try {
+      re = new RegExp(rule.pattern, "i");
+    } catch {
+      continue;
+    }
     if (re.test(m.title)) {
       return { classification: rule.classification, personId: null };
     }

@@ -1,4 +1,5 @@
 import type { Commitment, Meeting, Person, SourceItem } from "@emos/api-contract";
+import { ops } from "@emos/api-contract";
 import { describe, expect, it } from "vitest";
 import { buildPrep } from "./prep.js";
 
@@ -262,5 +263,81 @@ describe("buildPrep", () => {
     });
     expect(prep.lastNotes?.excerpt).toHaveLength(280);
     expect(prep.lastNotes?.excerpt).toBe("a".repeat(280));
+  });
+
+  it("does not borrow null-counterpart commitments for person-less meetings (B2)", () => {
+    const prep = buildPrep({
+      meeting: meeting({
+        id: "mtg_standup",
+        classification: "standup",
+        personId: null,
+        title: "Standup",
+      }),
+      person: null,
+      commitments: [
+        commitment({
+          id: "c_unrelated_mine",
+          counterpartId: null,
+          direction: "mine",
+          status: "active",
+        }),
+        commitment({
+          id: "c_unrelated_theirs",
+          counterpartId: null,
+          direction: "owed_to_me",
+          status: "active",
+        }),
+      ],
+      previous: null,
+      previousNotes: [],
+    });
+    expect(prep.openMine.map((c) => c.id)).toEqual([]);
+    expect(prep.openTheirs.map((c) => c.id)).toEqual([]);
+  });
+
+  it("exposes only CommitmentView fields for prep commitments (B1)", () => {
+    const prep = buildPrep({
+      meeting: meeting({ id: "mtg_now" }),
+      person: alex,
+      commitments: [
+        commitment({
+          id: "c_mine",
+          counterpartId: "per_alex",
+          direction: "mine",
+          status: "active",
+          confidence: 0.9,
+          pinProvenance: "user",
+          ticketId: "TICKET-1",
+        }),
+        commitment({
+          id: "c_theirs",
+          counterpartId: "per_alex",
+          direction: "owed_to_me",
+          status: "active",
+          confidence: 0.8,
+          pinProvenance: "system",
+          ticketId: "TICKET-2",
+        }),
+        commitment({
+          id: "c_linked",
+          meetingId: "mtg_now",
+          status: "active",
+          confidence: 0.7,
+          pinProvenance: "user",
+          ticketId: "TICKET-3",
+        }),
+      ],
+      previous: null,
+      previousNotes: [],
+    });
+    const parsed = ops["prep.get"].output.safeParse(prep);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const all = [...parsed.data.openMine, ...parsed.data.openTheirs, ...parsed.data.linked];
+    for (const c of all) {
+      expect(c).not.toHaveProperty("confidence");
+      expect(c).not.toHaveProperty("pinProvenance");
+      expect(c).not.toHaveProperty("ticketId");
+    }
   });
 });
