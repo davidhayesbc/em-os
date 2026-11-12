@@ -11,6 +11,7 @@ export { type OpenDbOptions, openDb } from "./open.js";
 export { assertNotInGitCheckout, type DataLayout, dataLayout, resolveDataDir } from "./paths.js";
 export { createAccomplishmentsRepo } from "./repos/accomplishments.js";
 export { createCommitmentsRepo } from "./repos/commitments.js";
+export { createDayPlansRepo } from "./repos/day-plans.js";
 export { createGoalsRepo } from "./repos/goals.js";
 export { createMeetingsRepo } from "./repos/meetings.js";
 export { createStore } from "./store.js";

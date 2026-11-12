@@ -76,6 +76,8 @@ describe("op registry", () => {
       | "meetings.update"
       | "meetings.attachNotes"
       | "prep.get"
+      | "today.get"
+      | "today.refresh"
       | "people.list"
       | "people.get"
       | "people.create"

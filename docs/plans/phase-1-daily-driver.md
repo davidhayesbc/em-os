@@ -112,7 +112,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [x] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: done · 106a8a0
 - [x] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: done · 0b1b50c
 - [x] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: done · 7107197
-- [ ] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09, P1-12 — claim: coder · p1-10-today-get
+- [x] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09, P1-12 — claim: done · <merge commit>
 - [ ] **P1-11** End-of-day wrap use case + ops — deps: P1-02, P1-10 — claim: —
 
 **Connectors**
@@ -638,8 +638,8 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
     header: { meetingCount: number; freeMinutes: number; toTriage: number; lastSyncAt: IsoDateTime | null; failingConnectors: string[] };
     weekLoad: DayLoad[];
     timeline: { meetings: { id: string; title: string; start: IsoDateTime; end: IsoDateTime; classification: Classification; prepStatus: MeetingPrep["status"] }[]; plan: DayPlan };
-    top: { item: RankedItem | null; commitment: Commitment; done: boolean }[];   // done items keep their slot; item null when no longer ranked (done)
-    waitingOn: Commitment[];                                                   // owed_to_me active, due asc (null last)
+    top: { item: RankedItem | null; commitment: CommitmentView; done: boolean }[];   // wire view omits confidence/pinProvenance/ticketId
+    waitingOn: CommitmentView[];                                                   // owed_to_me active, due asc (null last); wire view omits internal fields above
     progress: { done: number; total: number };
   }
   interface DayPlansRepo { get(localDate: LocalDate): string[] | null; set(localDate: LocalDate, ids: string[]): void }
@@ -649,16 +649,16 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - `toTriage` is `0` in Phase 1: it counts proposed commitments with `createdBy` ≠ `import`.
   - `header.lastSyncAt` and `failingConnectors` come from `sync_state` (P1-12). `offline` connectors are listed with state `offline`, not as failures.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - **Empty store:** returns `onboarded: false`, empty arrays, `progress {0,0}`, and no throw.
   - **Day plan is stable:** after completing item 2 and adding a new due-today item, `top` ids are unchanged, item 2 is `done: true`, and progress is `{1,5}`. After `today.refresh`, the new item appears.
   - `waitingOn` is sorted by due date.
   - The header `freeMinutes` equals the sum of `plan.freeBlocks`.
   - A generated dataset (inside the test: 30 people, 500 commitments, 200 meetings) builds correctly. The timing check lives in a separate non-gating script, `npm run perf -w @emos/service`, which reports p50/p95 against the 500 ms budget.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-10): today aggregation with stable daily top list`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-10): today aggregation with stable daily top list`.
 
 **Acceptance:** One call gives every widget its data, and the daily list doesn't jump around.
 

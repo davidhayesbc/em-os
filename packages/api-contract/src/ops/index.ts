@@ -33,6 +33,7 @@ import { prepGet } from "./prep.js";
 import { commitmentsQuickCapture } from "./quick-capture.js";
 import { serviceShutdown } from "./service.js";
 import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
+import { todayGet, todayRefresh } from "./today.js";
 
 // Append-only registry, keyed by op name. Other tasks add entries.
 export const ops = {
@@ -60,6 +61,8 @@ export const ops = {
   "meetings.update": meetingsUpdate,
   "meetings.attachNotes": meetingsAttachNotes,
   "prep.get": prepGet,
+  "today.get": todayGet,
+  "today.refresh": todayRefresh,
   "settings.get": settingsGet,
   "settings.update": settingsUpdate,
   "layout.get": layoutGet,
