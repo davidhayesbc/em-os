@@ -6,6 +6,9 @@ import type { Db } from "@emos/store-sqlite";
 const KEY = "connector_configs";
 const SANITIZED_KEY = "connector_configs_sanitized_v1";
 
+/** Maximum nesting depth allowed for connector configs. */
+const MAX_CONFIG_DEPTH = 64;
+
 /** Field names that signal a secret value (case-insensitive). */
 const SECRET_FIELD_RE = /secret|token|password|api[_-]?key|private/i;
 
@@ -24,17 +27,32 @@ function secretStoreKey(connectorId: string, path: string): string {
 
 type JsonPath = Array<string | number>;
 
-/** Escape dots/backslashes in a path segment so `a.b` and `a\.b` cannot collide. */
+/** Escape dots/backslashes in a path segment so `a.b` and `a\\.b` cannot collide. */
 function escapePathSegment(segment: string): string {
   return segment.replace(/\\/g, "\\\\").replace(/\./g, "\\.");
 }
 
+const FORBIDDEN_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
+function assertSafeSegment(segment: string, path: JsonPath): void {
+  if (FORBIDDEN_SEGMENTS.has(segment)) {
+    throw new ApiError(
+      "invalid_input",
+      `Forbidden config key ${segment} at ${pathString(path.concat(segment))}`,
+    );
+  }
+}
+
 function pathString(path: JsonPath): string {
-  // NOTE: numeric array indices and numeric-looking object keys collide (e.g. token.0 vs
-  // token.{"0":"x"}). Future callers should escape numeric string segments if they need to
-  // distinguish arrays from objects with numeric-looking keys.
   return path
-    .map((segment) => (typeof segment === "number" ? String(segment) : escapePathSegment(segment)))
+    .map((segment) => {
+      if (typeof segment === "number") return String(segment);
+      // Tag numeric-looking string keys (and literal keys that start with the tag character)
+      // so arrays and numeric-keyed objects cannot collide.
+      if (/^\d+$/.test(segment)) return `#${segment}`;
+      if (segment.startsWith("#")) return `#${segment}`;
+      return escapePathSegment(segment);
+    })
     .join(".");
 }
 
@@ -69,7 +87,7 @@ function isSecretPath(path: JsonPath): boolean {
  * Recursively collect every `$secretRef` path in a stored config. These are the keychain paths
  * the service has tracked for this connector.
  */
-function collectSecretRefs(value: unknown, path: JsonPath = []): string[] {
+function collectSecretRefs(value: unknown, path: JsonPath = [], depth = 0): string[] {
   const refs: string[] = [];
   if (isSecretMarker(value)) {
     refs.push(pathString(path));
@@ -77,13 +95,19 @@ function collectSecretRefs(value: unknown, path: JsonPath = []): string[] {
   }
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      refs.push(...collectSecretRefs(value[i], [...path, i]));
+      path.push(i);
+      if (depth < MAX_CONFIG_DEPTH) refs.push(...collectSecretRefs(value[i], path, depth + 1));
+      path.pop();
     }
     return refs;
   }
   if (typeof value === "object" && value !== null) {
-    for (const [key, val] of Object.entries(value)) {
-      refs.push(...collectSecretRefs(val, [...path, key]));
+    for (const key of Object.keys(value)) {
+      assertSafeSegment(key, path);
+      path.push(key);
+      if (depth < MAX_CONFIG_DEPTH)
+        refs.push(...collectSecretRefs((value as Record<string, unknown>)[key], path, depth + 1));
+      path.pop();
     }
     return refs;
   }
@@ -94,7 +118,10 @@ function collectSecretRefs(value: unknown, path: JsonPath = []): string[] {
  * Validate that the caller-supplied config does not contain forged `$secretRef` markers.
  * Markers are only valid in secret-named fields, and the reference must name that field.
  */
-function assertNoForgedMarkers(value: unknown, path: JsonPath = []): void {
+function assertNoForgedMarkers(value: unknown, path: JsonPath = [], depth = 0): void {
+  if (depth > MAX_CONFIG_DEPTH) {
+    throw new ApiError("invalid_input", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
+  }
   if (isSecretMarker(value)) {
     const field = secretFieldForPath(path);
     if (field === undefined) {
@@ -110,13 +137,18 @@ function assertNoForgedMarkers(value: unknown, path: JsonPath = []): void {
   }
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      assertNoForgedMarkers(value[i], [...path, i]);
+      path.push(i);
+      assertNoForgedMarkers(value[i], path, depth + 1);
+      path.pop();
     }
     return;
   }
   if (typeof value === "object" && value !== null) {
-    for (const [key, val] of Object.entries(value)) {
-      assertNoForgedMarkers(val, [...path, key]);
+    for (const key of Object.keys(value)) {
+      assertSafeSegment(key, path);
+      path.push(key);
+      assertNoForgedMarkers((value as Record<string, unknown>)[key], path, depth + 1);
+      path.pop();
     }
     return;
   }
@@ -132,7 +164,11 @@ async function stripSecretsRecursive(
   value: unknown,
   path: JsonPath,
   strict: boolean,
+  depth = 0,
 ): Promise<unknown> {
+  if (depth > MAX_CONFIG_DEPTH) {
+    throw new ApiError("invalid_input", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
+  }
   // A pre-existing marker is a sentinel, not a container; do not recurse into it.
   if (isSecretMarker(value)) return value;
 
@@ -157,15 +193,29 @@ async function stripSecretsRecursive(
   if (Array.isArray(value)) {
     const out: unknown[] = [];
     for (let i = 0; i < value.length; i++) {
-      out.push(await stripSecretsRecursive(secrets, connectorId, value[i], [...path, i], strict));
+      path.push(i);
+      out.push(
+        await stripSecretsRecursive(secrets, connectorId, value[i], path, strict, depth + 1),
+      );
+      path.pop();
     }
     return out;
   }
 
   if (typeof value === "object" && value !== null) {
-    const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value)) {
-      out[key] = await stripSecretsRecursive(secrets, connectorId, val, [...path, key], strict);
+    const out = Object.create(null) as Record<string, unknown>;
+    for (const key of Object.keys(value)) {
+      assertSafeSegment(key, path);
+      path.push(key);
+      out[key] = await stripSecretsRecursive(
+        secrets,
+        connectorId,
+        (value as Record<string, unknown>)[key],
+        path,
+        strict,
+        depth + 1,
+      );
+      path.pop();
     }
     return out;
   }
@@ -197,7 +247,11 @@ async function restoreSecretsRecursive(
   connectorId: string,
   value: unknown,
   path: JsonPath,
+  depth = 0,
 ): Promise<unknown> {
+  if (depth > MAX_CONFIG_DEPTH) {
+    throw new ConnectorError("config", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
+  }
   if (isSecretMarker(value)) {
     const field = secretFieldForPath(path);
     if (field === undefined || value.$secretRef !== field) {
@@ -215,15 +269,26 @@ async function restoreSecretsRecursive(
   if (Array.isArray(value)) {
     const out: unknown[] = [];
     for (let i = 0; i < value.length; i++) {
-      out.push(await restoreSecretsRecursive(secrets, connectorId, value[i], [...path, i]));
+      path.push(i);
+      out.push(await restoreSecretsRecursive(secrets, connectorId, value[i], path, depth + 1));
+      path.pop();
     }
     return out;
   }
 
   if (typeof value === "object" && value !== null) {
-    const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value)) {
-      out[key] = await restoreSecretsRecursive(secrets, connectorId, val, [...path, key]);
+    const out = Object.create(null) as Record<string, unknown>;
+    for (const key of Object.keys(value)) {
+      assertSafeSegment(key, path);
+      path.push(key);
+      out[key] = await restoreSecretsRecursive(
+        secrets,
+        connectorId,
+        (value as Record<string, unknown>)[key],
+        path,
+        depth + 1,
+      );
+      path.pop();
     }
     return out;
   }
@@ -247,7 +312,7 @@ export function readConnectorConfigs(db: Db): Record<string, StoredConnectorConf
   if (!row) return {};
   try {
     const parsed = JSON.parse(row.value) as Record<string, unknown>;
-    const result: Record<string, StoredConnectorConfig> = {};
+    const result = Object.create(null) as Record<string, StoredConnectorConfig>;
     for (const [id, value] of Object.entries(parsed)) {
       if (
         typeof value === "object" &&
@@ -273,31 +338,52 @@ export async function writeConnectorConfig(
   id: string,
   value: StoredConnectorConfig,
 ): Promise<void> {
-  if (typeof value.config !== "object" || value.config === null || Array.isArray(value.config)) {
-    throw new ApiError("invalid_input", `Connector config must be an object`);
-  }
-
-  assertNoForgedMarkers(value.config);
-
-  const configs = readConnectorConfigs(db);
-  const previous = configs[id]?.config;
-  const previousRefs = previous === undefined ? [] : collectSecretRefs(previous);
-
-  const config = await stripSecrets(secrets, id, value.config);
-  const currentRefs = collectSecretRefs(config);
-
-  configs[id] = { enabled: value.enabled, config };
-  db.prepare(
-    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-  ).run(KEY, JSON.stringify(configs));
-
-  // F4: delete keychain entries for secret paths that were present before but are absent now.
-  for (const ref of previousRefs) {
-    if (!currentRefs.includes(ref)) {
-      await secrets.delete(secretStoreKey(id, ref));
+  return writeMutex.run(async () => {
+    if (typeof value.config !== "object" || value.config === null || Array.isArray(value.config)) {
+      throw new ApiError("invalid_input", `Connector config must be an object`);
     }
+
+    assertNoForgedMarkers(value.config);
+
+    const configs = readConnectorConfigs(db);
+    const previous = configs[id]?.config;
+    const previousRefs = previous === undefined ? [] : collectSecretRefs(previous);
+
+    const config = await stripSecrets(secrets, id, value.config);
+    const currentRefs = collectSecretRefs(config);
+
+    // Delete stale keychain entries BEFORE persisting settings so a failing delete leaves
+    // the old reference intact instead of orphaning the secret.
+    for (const ref of previousRefs) {
+      if (!currentRefs.includes(ref)) {
+        try {
+          await secrets.delete(secretStoreKey(id, ref));
+        } catch (e) {
+          throw new ApiError(
+            "internal",
+            `Failed to delete stale secret ${ref}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+    }
+
+    configs[id] = { enabled: value.enabled, config };
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(KEY, JSON.stringify(configs));
+  });
+}
+
+class AsyncMutex {
+  private current: Promise<unknown> = Promise.resolve();
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.current.then(() => fn());
+    this.current = result.catch(() => {});
+    return result;
   }
 }
+
+const writeMutex = new AsyncMutex();
 
 /**
  * One-time re-sanitisation of connector configs that were written before secret hardening.
@@ -339,6 +425,7 @@ export async function sanitizeLegacyConnectorConfigs(
   // NOTE: this rewrite rebuilds each entry from `enabled` + `config` only; any future sibling
   // fields added to StoredConnectorConfig are silently dropped.
   let allSucceeded = true;
+  const failedIds: string[] = [];
   for (const [id, value] of Object.entries(parsed)) {
     if (
       typeof value === "object" &&
@@ -353,6 +440,7 @@ export async function sanitizeLegacyConnectorConfigs(
         configs[id] = { enabled, config };
       } catch (e) {
         allSucceeded = false;
+        failedIds.push(id);
         log?.warn("connector_configs_sanitizer.connector_failed", {
           connectorId: id,
           errorName: e instanceof Error ? e.name : typeof e,
@@ -373,7 +461,8 @@ export async function sanitizeLegacyConnectorConfigs(
     ).run(SANITIZED_KEY, "1");
   } else {
     log?.warn("connector_configs_sanitizer.incomplete", {
-      retryCount: Object.keys(configs).length,
+      failedIds: failedIds.join(","),
+      retryCount: failedIds.length,
     });
   }
 }
@@ -386,17 +475,19 @@ export async function clearConnectorSecrets(
   secrets: SecretStore,
   connectorId: string,
 ): Promise<void> {
-  const configs = readConnectorConfigs(db);
-  const config = configs[connectorId]?.config;
-  if (config === undefined) return;
+  return writeMutex.run(async () => {
+    const configs = readConnectorConfigs(db);
+    const config = configs[connectorId]?.config;
+    if (config === undefined) return;
 
-  const refs = collectSecretRefs(config);
-  for (const ref of refs) {
-    await secrets.delete(secretStoreKey(connectorId, ref));
-  }
+    const refs = collectSecretRefs(config);
+    for (const ref of refs) {
+      await secrets.delete(secretStoreKey(connectorId, ref));
+    }
 
-  delete configs[connectorId];
-  db.prepare(
-    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-  ).run(KEY, JSON.stringify(configs));
+    delete configs[connectorId];
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(KEY, JSON.stringify(configs));
+  });
 }
