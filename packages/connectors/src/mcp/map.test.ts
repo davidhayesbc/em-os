@@ -137,12 +137,50 @@ describe("applyResultMapping", () => {
     };
 
     expect(() => applyResultMapping(raw, mapping)).toThrow(ConnectorError);
-    expect(() => applyResultMapping(raw, mapping)).toThrow(/non-array/);
+    expect(() => applyResultMapping(raw, mapping)).toThrow(/did not resolve to an array/);
     try {
       applyResultMapping(raw, mapping);
     } catch (e) {
       expect(e).toBeInstanceOf(ConnectorError);
       expect((e as ConnectorError).kind).toBe("schema");
+    }
+  });
+
+  it("throws schema when a non-spread items path resolves to an object", () => {
+    const raw = { events: { a: 1 } };
+    const mapping = {
+      items: "$.events",
+      fields: {},
+    };
+
+    expect(() => applyResultMapping(raw, mapping)).toThrow(ConnectorError);
+    try {
+      applyResultMapping(raw, mapping);
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConnectorError);
+      expect((e as ConnectorError).kind).toBe("schema");
+      expect((e as ConnectorError).message).toBe(
+        'items path "$.events" did not resolve to an array',
+      );
+    }
+  });
+
+  it("throws schema when a non-spread items path resolves to a string", () => {
+    const raw = { events: "not-an-array" };
+    const mapping = {
+      items: "$.events",
+      fields: {},
+    };
+
+    expect(() => applyResultMapping(raw, mapping)).toThrow(ConnectorError);
+    try {
+      applyResultMapping(raw, mapping);
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConnectorError);
+      expect((e as ConnectorError).kind).toBe("schema");
+      expect((e as ConnectorError).message).toBe(
+        'items path "$.events" did not resolve to an array',
+      );
     }
   });
 

@@ -89,11 +89,8 @@ export function applyResultMapping(
   mapping: ResultMapping,
 ): { items: Record<string, unknown>[]; nextCursor: string | null } {
   const itemsRes = resolvePath(raw, undefined, mapping.items);
-  if (itemsRes.kind === "notArray") {
-    throw new ConnectorError(
-      "schema",
-      `items path "${mapping.items}" resolved to a non-array value`,
-    );
+  if (itemsRes.kind !== "missing" && !Array.isArray(itemsRes.value)) {
+    throw new ConnectorError("schema", `items path "${mapping.items}" did not resolve to an array`);
   }
   const rawItems: unknown[] = itemsRes.kind === "missing" ? [] : (itemsRes.value as unknown[]);
 

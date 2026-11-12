@@ -229,4 +229,79 @@ describe("createMcpInvoker", () => {
 
     await invoker.close();
   });
+
+  it("retries transport creation after a transient connect failure", async () => {
+    const serverDef: McpServerDef = {
+      name: "example-server",
+      type: "stdio",
+      command: "node",
+    };
+    let createCalls = 0;
+    const invoker = createMcpInvokerForTest(serverDef, examplePreset, memorySecretStore(), {
+      createTransport: async () => {
+        createCalls++;
+        if (createCalls === 1) {
+          throw new Error("socket hang up");
+        }
+        const { transport } = await createTestServer();
+        return transport;
+      },
+    });
+
+    const schema = z.object({
+      items: z.array(
+        z.object({
+          externalId: z.string(),
+          title: z.string(),
+          start: z.string(),
+          end: z.string(),
+          attendees: z.array(z.string()),
+          url: z.string(),
+          status: z.string(),
+          recurringEventId: z.null(),
+        }),
+      ),
+      nextCursor: z.string().nullable(),
+    });
+
+    await expect(
+      invoker.call(
+        "calendar.listEvents",
+        { timeMin: "2026-10-20", timeMax: "2026-10-21", cursor: "" },
+        schema,
+      ),
+    ).rejects.toThrow("socket hang up");
+
+    const result = await invoker.call(
+      "calendar.listEvents",
+      { timeMin: "2026-10-20", timeMax: "2026-10-21", cursor: "" },
+      schema,
+    );
+
+    expect(createCalls).toBe(2);
+    expect(result.items).toHaveLength(1);
+
+    await invoker.close();
+  });
+
+  it("closes cleanly after a failed connect", async () => {
+    const serverDef: McpServerDef = {
+      name: "example-server",
+      type: "stdio",
+      command: "node",
+    };
+    let createCalls = 0;
+    const invoker = createMcpInvokerForTest(serverDef, examplePreset, memorySecretStore(), {
+      createTransport: async () => {
+        createCalls++;
+        throw new Error("socket hang up");
+      },
+    });
+
+    const schema = z.object({ items: z.array(z.object({ id: z.string() })), nextCursor: z.null() });
+
+    await expect(invoker.call("calendar.listEvents", {}, schema)).rejects.toThrow("socket hang up");
+    await expect(invoker.close()).resolves.toBeUndefined();
+    expect(createCalls).toBe(1);
+  });
 });

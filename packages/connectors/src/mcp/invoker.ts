@@ -117,7 +117,10 @@ function makeMcpInvoker(
       const client = new Client({ name: "em-os-connectors", version: "0.0.0" });
       await client.connect(transport);
       return client;
-    })();
+    })().catch((e) => {
+      clientPromise = undefined;
+      throw e;
+    });
     return clientPromise;
   }
 
