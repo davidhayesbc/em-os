@@ -129,7 +129,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Importer (ephemeral, `@emos/importer-em-template`)**
 
-- [ ] **P1-16** Synthetic em-template fixture workspace (with pinned mtimes) — deps: Phase 0 — claim: coder · p1-16-fixture-workspace
+- [x] **P1-16** Synthetic em-template fixture workspace (with pinned mtimes) — deps: Phase 0 — claim: done · 6aa9dc1
 - [ ] **P1-17** Importer framework + Markdown / todo-line parsers — deps: P1-16 — claim: —
 - [ ] **P1-18** People + Stakeholders import — deps: P1-01, P1-17 — claim: —
 - [ ] **P1-19** Meetings, notes and daily-log import — deps: P1-04, P1-09, P1-18 — claim: —
@@ -906,9 +906,9 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   | Other | a risk register with an inline corroboration, 1 workstream, 1 decision, `My-Growth/brag-doc.md`, 1 JD, `Acronyms.md`, 1 weekly summary |
   | Drift | one file with CRLF endings, one with a missing standard section, one unparseable todo line |
 
-- [ ] **Step 1: Author the files, `EXPECTED.md`** (counts per entity, active vs. archived todos, the expected merge and unknown-pronoun list) **and `fixtures/mtimes.json`**. `mtimes.json` maps each fixture path to a fixed ISO modified time, because git checkouts reset real mtimes. Expected counts assume the import date `2026-10-20` and these mtimes. The self person in the fixture is the synthetic `Morgan Lee`.
-- [ ] **Step 2: Run `node scripts/check-fixtures.mjs packages/importer-em-template/fixtures`.** Expected: no violations.
-- [ ] **Step 3: Commit** `test(p1-16): synthetic em-template workspace fixture`.
+- [x] **Step 1: Author the files, `EXPECTED.md`** (counts per entity, active vs. archived todos, the expected merge and unknown-pronoun list) **and `fixtures/mtimes.json`**. `mtimes.json` maps each fixture path to a fixed ISO modified time, because git checkouts reset real mtimes. Expected counts assume the import date `2026-10-20` and these mtimes. The self person in the fixture is the synthetic `Morgan Lee`.
+- [x] **Step 2: Run `node scripts/check-fixtures.mjs packages/importer-em-template/fixtures`.** Expected: no violations.
+- [x] **Step 3: Commit** `test(p1-16): synthetic em-template workspace fixture`.
 
 **Acceptance:** Every mapping row in the format notes is exercised at least once.
 

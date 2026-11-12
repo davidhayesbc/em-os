@@ -39,6 +39,7 @@ describe("build-only tsconfig", () => {
       "cli",
       "connectors",
       "core",
+      "importer-em-template",
       "service",
       "store-sqlite",
     ]);
