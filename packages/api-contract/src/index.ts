@@ -17,3 +17,4 @@ export * from "./ops/prep.js";
 export * from "./ops/quick-capture.js";
 export { serviceShutdown } from "./ops/service.js";
 export * from "./ops/settings.js";
+export * from "./ops/today.js";

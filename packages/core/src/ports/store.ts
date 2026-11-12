@@ -2,6 +2,7 @@
  * Persistence port. Synchronous API. Later slices append their repository
  * fields to this interface; keep this file append-only.
  */
+import type { DayPlansRepo } from "./repos/day-plans.js";
 import type { SettingsRepo } from "./repos/settings.js";
 import type { SyncStateRepo } from "./repos/sync-state.js";
 
@@ -9,6 +10,7 @@ export interface Store {
   transaction<T>(fn: () => T): T;
   accomplishments: import("./repos/accomplishments.js").AccomplishmentsRepo;
   commitments: import("./repos/commitments.js").CommitmentsRepo;
+  dayPlans: DayPlansRepo;
   goals: import("./repos/goals.js").GoalsRepo;
   meetings: import("./repos/meetings.js").MeetingsRepo;
   people: import("./repos/people.js").PeopleRepo;

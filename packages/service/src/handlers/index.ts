@@ -35,6 +35,7 @@ import { prepGet } from "./prep.js";
 import { commitmentsQuickCapture } from "./quick-capture.js";
 import { serviceShutdown } from "./service.js";
 import { layoutGet, layoutSet, settingsGet, settingsUpdate } from "./settings.js";
+import { todayGet, todayRefresh } from "./today.js";
 
 // Append-only registry, keyed by op name (see @emos/api-contract ops). Other tasks add entries.
 export const handlers: { [N in OpName]?: Handler<N> } = {
@@ -62,6 +63,8 @@ export const handlers: { [N in OpName]?: Handler<N> } = {
   "meetings.update": meetingsUpdate,
   "meetings.attachNotes": meetingsAttachNotes,
   "prep.get": prepGet,
+  "today.get": todayGet,
+  "today.refresh": todayRefresh,
   "settings.get": settingsGet,
   "settings.update": settingsUpdate,
   "layout.get": layoutGet,

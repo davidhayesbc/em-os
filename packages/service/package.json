@@ -13,6 +13,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "node ../../scripts/build.mjs",
+    "perf": "npm run build && node perf/today.perf.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
