@@ -38,9 +38,9 @@ function parseExpectedTable(): Map<string, number> {
   for (const line of expected.split(/\r?\n/)) {
     const match = line.match(/^\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|/);
     if (!match) continue;
-    const key = match[1]!.trim();
-    const value = Number.parseInt(match[2]!, 10);
-    counts.set(key, value);
+    const [, key, value] = match;
+    if (key === undefined || value === undefined) continue;
+    counts.set(key.trim(), Number.parseInt(value, 10));
   }
   return counts;
 }
@@ -52,7 +52,9 @@ function readFrontmatterAliases(text: string): string[] {
   const fm = text.slice(3, end);
   const aliasesMatch = fm.match(/aliases:\s*\[(.*?)\]/s);
   if (!aliasesMatch) return [];
-  return aliasesMatch[1]!
+  const [, content] = aliasesMatch;
+  if (content === undefined) return [];
+  return content
     .split(",")
     .map((s) => s.trim().replace(/^['"]|['"]$/g, ""))
     .filter(Boolean);
@@ -67,11 +69,20 @@ function fileIdentities(text: string): string[] {
   const ids: string[] = [];
   ids.push(...readFrontmatterAliases(text));
   const chat = text.match(/Chat:\s*@(\S+)/);
-  if (chat) ids.push(chat[1]!);
+  if (chat) {
+    const [, handle] = chat;
+    if (handle) ids.push(handle);
+  }
   const codeHost = text.match(/Code host:\s*(\S+)/);
-  if (codeHost) ids.push(codeHost[1]!);
+  if (codeHost) {
+    const [, handle] = codeHost;
+    if (handle) ids.push(handle);
+  }
   const email = text.match(/Email:\s*(\S+)/);
-  if (email) ids.push(email[1]!);
+  if (email) {
+    const [, handle] = email;
+    if (handle) ids.push(handle);
+  }
   return ids;
 }
 
@@ -239,8 +250,9 @@ function deriveCommitments(
     for (const line of lines) {
       const checkbox = line.match(/^-\s*\[(x| )\]\s*(.*)$/);
       if (!checkbox) continue;
-      const checked = checkbox[1] === "x";
-      const rest = checkbox[2]!;
+      const [, check, rest] = checkbox;
+      if (check === undefined || rest === undefined) continue;
+      const checked = check === "x";
       const hasId = /<!--\s*id:/.test(rest);
       if (!hasId) {
         result.unparseable++;
