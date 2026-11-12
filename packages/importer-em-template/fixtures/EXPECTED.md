@@ -30,26 +30,28 @@ The fixture exercises every row of the `em-template` mapping notes:
 
 ## Entity counts
 
-| Entity | Count | Notes |
+Counts below were recomputed from the fixture tree. Each row states its derivation so a reviewer can re-add the numbers.
+
+| Entity | Count | Derivation |
 |---|---|---|
-| persons | 5 | Alex Rivera, Sam Chen, Zoë Quinn, Jordan Patel, Priya Nair |
-| identities | 9 | aliases + chat/code-host handles + email (after merging Sam Chen) |
-| person_notes | 34 | People/Stakeholder notes + 1:1 sensitive sections + Team-Health named note |
-| growth_goals (People) | 3 | one per People file |
-| growth_goals (My-Growth) | 1 | from `brag-doc.md` |
-| meetings | 7 | 4 one-on-ones + 3 standups |
-| source_items | 19 | one per 1:1, standup, daily log, weekly summary, report, decision, and daily-log meeting section |
-| commitments (active) | 14 | open items owned by or waiting on the user, with recent mtimes |
-| commitments (done) | 2 | `[x]` items |
-| commitments (dropped) | 8 | open items owned by others or unparseable line |
-| risks | 2 | R1 and R2 from the risk register |
-| risk_linked_notes | 1 | dated corroboration on R1 |
-| goals | 1 | `Workstreams/api-cleanup.md` |
-| decisions | 1 | `Decisions/001-use-sqlite.md` |
-| references / glossary | 2 | `Systems/inventory.md` and `Acronyms.md` |
-| accomplishments | 2 | from `My-Growth/brag-doc.md` |
-| documents | 2 | brag-doc rubric + Senior Engineer JD rubric |
-| drafts | 2 | weekly summary + report draft histories |
+| persons | 5 | 3 People files + 3 Stakeholder files − 1 duplicate (Sam Chen) = 5 humans: Alex Rivera, Sam Chen, Zoë Quinn, Jordan Patel, Priya Nair. |
+| identities | 16 | Per-file handles/aliases after merging Sam Chen: Alex (3), Sam (6), Zoë (3), Jordan (3), Priya (3). |
+| person_notes | 31 | People/Stakeholder sensitive sections/dated bullets (13): Alex 3 + Sam 3 + Zoë 3 + Jordan 2 + Priya 1 + Stakeholder Sam 1; 1:1 sensitive sections (16) = 4 meetings × 4 sections; Team-Health named notes (2) = Alex + Zoë. 13 + 16 + 2 = 31. |
+| growth_goals (People) | 2 | `People/sam-chen.md` and `People/zoe-quinn.md`; `People/alex-rivera.md` intentionally omits the section. |
+| growth_goals (My-Growth) | 1 | `My-Growth/brag-doc.md` line "Improve delegation in Q4." |
+| meetings | 7 | 4 one-on-ones + 3 standups. |
+| source_items | 16 | 4 one-on-ones + 3 standups + 3 daily logs + 1 weekly summary + 1 report + 1 decision + 3 daily-log meeting sections. |
+| commitments (active) | 23 | 35 parseable open checkboxes − 12 dropped = 23 active. Active items are user-owned or `!waiting-*` and have a due date, priority or urgency tag, or their source file mtime is within 30 days of 2026-10-20. |
+| commitments (done) | 1 | Only one `[x]` line exists: `Todos.md` "explore AI tooling". |
+| commitments (dropped) | 12 | 7 owned by other people (Alex/Sam/Zoë/Priya) + 1 stale undated user-owned item in `1-1s/Alex-Rivera/2026-10-13.md` (pinned mtime 2026-09-01, outside the 30-day window) + 2 owner-first / standard-form items owned by Alex in `Todos.md` + 2 other-owned items in `Todos.md`. |
+| risks | 2 | R1 and R2 from the risk register. |
+| risk_linked_notes | 1 | Dated corroboration on R1. |
+| goals | 1 | `Workstreams/api-cleanup.md`. |
+| decisions | 1 | `Decisions/001-use-sqlite.md`. |
+| references / glossary | 2 | `Systems/inventory.md` and `Acronyms.md`. |
+| accomplishments | 2 | From `My-Growth/brag-doc.md`: shipped local-first sync, mentored two interns. |
+| documents | 2 | Brag-doc rubric + Senior Engineer JD rubric. |
+| drafts | 2 | Weekly summary draft history + report draft history. |
 
 ## Person merge
 
@@ -61,9 +63,12 @@ The fixture exercises every row of the `em-template` mapping notes:
 
 ## Todo activation summary
 
-Assuming all fixture files carrying user-owned or user-owed open todos have mtimes within 30 days of 2026-10-20:
+Activation rule: `[x]` → done; `[ ]` owned by or owed to the user → active only if it has a due date, priority/urgency tag, or a source file mtime within 30 days of 2026-10-20; everything else → dropped.
 
-- Active (proposed) open todos: 14
-- Done todos: 2
-- Dropped / archived todos: 8
-- Unparseable todo line: 1 (reported in the dry-run, not imported as a commitment)
+| Category | Count | Explanation |
+|---|---|---|
+| Active (proposed) open todos | 23 | User-owned or `!waiting-*` items with due/priority/urgency, or from recently pinned files. |
+| Done todos | 1 | The single `[x]` line in `Todos.md`. |
+| Dropped / archived todos | 12 | Other-owned items and one stale undated user-owned item in `1-1s/Alex-Rivera/2026-10-13.md` (mtime pinned to 2026-09-01). |
+| Unparseable todo line | 1 | `Todos.md` line 15; reported in the dry-run, not imported as a commitment. |
+| Generated skipped lines | 2 | `TODO.md` task A and task B; not imported. |

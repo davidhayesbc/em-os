@@ -1,0 +1,10 @@
+# Negate the root-level workspace-directory ignores so the synthetic
+# importer-em-template fixture files under this exact path are tracked.
+!People/
+!People/**
+!1-1s/
+!1-1s/**
+!Daily-Logs/
+!Daily-Logs/**
+!Weekly-Summaries/
+!Weekly-Summaries/**

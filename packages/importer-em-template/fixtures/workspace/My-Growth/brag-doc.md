@@ -12,3 +12,9 @@
 ## Development plan
 
 - Take a facilitation course by 2026-12.
+
+## Rubric
+
+- Strategic impact: shapes team direction and raises the technical bar.
+- Delivery: ships reliably across teams.
+- Collaboration: mentors junior engineers and builds psychological safety.
