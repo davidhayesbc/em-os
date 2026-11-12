@@ -50,7 +50,7 @@ export const connectorsSync: Handler<"connectors.sync"> = async (ctx, { id }) =>
         state: "error" as ConnectorRunState,
         lastAttemptAt: now,
         lastSuccessAt: initial.lastSuccessAt,
-        lastError: sanitizeLastError(e.message),
+        lastError: sanitizeLastError(e.message) || null,
         itemCount: initial.itemCount,
       });
       ctx.events.publish({ type: "sync.status", connectorId: id, state: "error" });

@@ -50,9 +50,9 @@ function pathString(path: JsonPath): string {
       // Tag numeric-looking string keys (and literal keys that start with the tag character)
       // so arrays and numeric-keyed objects cannot collide. This is an intentional break from
       // earlier path encoding that stored numeric-keyed object secrets under the bare segment
-      // (e.g. `slots.0`). Pre-existing secrets at those bare paths are orphaned until the
-      // connector is reconfigured; no runtime schema today triggers that shape, so we pin the
-      // behaviour with a test rather than adding a migration.
+      // (e.g. `slots.0`). Pre-existing secrets at those bare paths are permanently orphaned
+      // (accepted); no runtime schema today triggers that shape, so we pin the behaviour with a
+      // test rather than adding a migration.
       if (/^\d+$/.test(segment)) return `#${segment}`;
       if (segment.startsWith("#")) return `#${segment}`;
       return escapePathSegment(segment);
@@ -89,8 +89,9 @@ function isSecretPath(path: JsonPath): boolean {
 
 /**
  * Recursively collect every `$secretRef` path in a stored config. These are the keychain paths
- * the service has tracked for this connector. Forbidden segments are ignored on the read path
- * so a legacy row can still be removed; depth violations throw instead of silently truncating.
+ * the service has tracked for this connector. Over-deep subtrees are skipped best-effort so a
+ * legacy row can still be removed or rewritten; forbidden segments are still descended into so
+ * their keychain entries are not leaked.
  */
 function collectSecretRefs(value: unknown, path: JsonPath = [], depth = 0): string[] {
   const refs: string[] = [];
@@ -100,7 +101,7 @@ function collectSecretRefs(value: unknown, path: JsonPath = [], depth = 0): stri
   }
   if (Array.isArray(value)) {
     if (depth >= MAX_CONFIG_DEPTH) {
-      throw new ApiError("invalid_input", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
+      return refs;
     }
     for (let i = 0; i < value.length; i++) {
       path.push(i);
@@ -111,10 +112,9 @@ function collectSecretRefs(value: unknown, path: JsonPath = [], depth = 0): stri
   }
   if (typeof value === "object" && value !== null) {
     if (depth >= MAX_CONFIG_DEPTH) {
-      throw new ApiError("invalid_input", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
+      return refs;
     }
     for (const key of Object.keys(value)) {
-      if (FORBIDDEN_SEGMENTS.has(key)) continue;
       path.push(key);
       refs.push(...collectSecretRefs((value as Record<string, unknown>)[key], path, depth + 1));
       path.pop();
@@ -259,7 +259,7 @@ async function restoreSecretsRecursive(
   path: JsonPath,
   depth = 0,
 ): Promise<unknown> {
-  if (depth >= MAX_CONFIG_DEPTH) {
+  if (depth > MAX_CONFIG_DEPTH) {
     throw new ConnectorError("config", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
   }
   if (isSecretMarker(value)) {
@@ -362,12 +362,16 @@ export async function writeConnectorConfig(
     const config = await stripSecrets(secrets, id, value.config);
     const currentRefs = collectSecretRefs(config);
 
-    const staleRefs = previousRefs.filter((ref) => !currentRefs.includes(ref));
+    // Persist the new config before deleting stale secrets. If a delete fails, the persisted
+    // config still only references secrets that were just written successfully; the stale
+    // secrets that could not be deleted become orphans rather than dangling refs. A retry will
+    // no-op on the already-deleted entries and re-attempt the failed one.
+    configs[id] = { enabled: value.enabled, config };
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(KEY, JSON.stringify(configs));
 
-    // Delete stale keychain entries before persisting settings. If any delete fails, abort and
-    // leave the previous config untouched so the persisted settings never reference secrets that
-    // no longer exist. Note: secrets deleted before the failure are already gone; the caller must
-    // resolve the underlying keychain error and retry to reach a consistent state.
+    const staleRefs = previousRefs.filter((ref) => !currentRefs.includes(ref));
     const failed: string[] = [];
     for (const ref of staleRefs) {
       try {
@@ -382,11 +386,6 @@ export async function writeConnectorConfig(
         `Failed to delete stale secret(s) ${failed.join(", ")}: keychain operation failed`,
       );
     }
-
-    configs[id] = { enabled: value.enabled, config };
-    db.prepare(
-      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(KEY, JSON.stringify(configs));
   });
 }
 

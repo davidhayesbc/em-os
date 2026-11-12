@@ -204,6 +204,35 @@ describe("restoreSecrets", () => {
 
     expect(out.apiKeys).toEqual([["NESTED-KEY-1"]]);
   });
+
+  it("restores a secret stored at the legacy depth boundary (64)", async () => {
+    const secrets = createRecordingSecretStore();
+
+    function nest(depth: number, leaf: unknown): unknown {
+      let current = leaf;
+      for (let i = 0; i < depth; i++) {
+        current = { [`k${i}`]: current };
+      }
+      return current;
+    }
+
+    // 63 wrappers put the secretKey marker at depth 64, the highest level the legacy writer
+    // accepted. Reverting the :262 guard to >= makes this throw instead of restoring.
+    const config = nest(63, { secretKey: { $secretRef: "secretKey" } });
+    const path = `${Array.from({ length: 63 }, (_, i) => `k${i}`)
+      .reverse()
+      .join(".")}.secretKey`;
+    await secrets.set(`connector:boundary:${path}`, "BOUNDARY-SECRET");
+
+    const out = (await restoreSecrets(secrets, "boundary", config)) as {
+      [key: string]: unknown;
+    };
+    let current: unknown = out;
+    for (let i = 62; i >= 0; i--) {
+      current = (current as Record<string, unknown>)?.[`k${i}`];
+    }
+    expect((current as { secretKey?: string })?.secretKey).toBe("BOUNDARY-SECRET");
+  });
 });
 
 describe("writeConnectorConfig", () => {
@@ -348,7 +377,7 @@ describe("writeConnectorConfig", () => {
     expect(secrets.values.get("connector:b:token")).toBe("B-SECRET");
   });
 
-  it("does not persist settings when deleting a stale secret fails", async () => {
+  it("persists the new config even when deleting a stale secret fails", async () => {
     db = openDb(":memory:");
     secrets = createRecordingSecretStore();
     await writeConnectorConfig(db, secrets, "conn", {
@@ -365,12 +394,14 @@ describe("writeConnectorConfig", () => {
       writeConnectorConfig(db, secrets, "conn", { enabled: true, config: { secretKey: "KEEP" } }),
     ).rejects.toMatchObject({ code: "internal" });
 
+    // The new config is persisted first; stale deletions run afterwards and can leave orphans.
     const configs = readConnectorConfigs(db);
-    expect(configs.conn?.config).toEqual({
-      oldToken: { $secretRef: "oldToken" },
-      secretKey: { $secretRef: "secretKey" },
+    expect(configs.conn?.config).toEqual({ secretKey: { $secretRef: "secretKey" } });
+    await expect(restoreSecrets(secrets, "conn", configs.conn?.config)).resolves.toEqual({
+      secretKey: "KEEP",
     });
     expect(secrets.values.has("connector:conn:oldToken")).toBe(true);
+    expect(secrets.values.has("connector:conn:secretKey")).toBe(true);
   });
 
   it("rejects a non-object whole config", async () => {
@@ -746,7 +777,7 @@ describe("sanitizeLegacyConnectorConfigs", () => {
 });
 
 describe("partial stale secret deletion failure", () => {
-  it("aborts before persisting and attempts every stale delete even if the first fails", async () => {
+  it("persists the new config before deleting stale secrets so no dangling refs exist", async () => {
     const db = openDb(":memory:");
     const secrets = createRecordingSecretStore();
     await writeConnectorConfig(db, secrets, "conn", {
@@ -767,16 +798,17 @@ describe("partial stale secret deletion failure", () => {
       writeConnectorConfig(db, secrets, "conn", { enabled: true, config: { secretKey: "KEEP" } }),
     ).rejects.toMatchObject({ code: "internal" });
 
+    // The new config was persisted before the delete phase, so every remaining $secretRef resolves.
     const configs = readConnectorConfigs(db);
-    expect(configs.conn?.config).toEqual({
-      oldToken: { $secretRef: "oldToken" },
-      otherToken: { $secretRef: "otherToken" },
-      secretKey: { $secretRef: "secretKey" },
+    expect(configs.conn?.config).toEqual({ secretKey: { $secretRef: "secretKey" } });
+    await expect(restoreSecrets(secrets, "conn", configs.conn?.config)).resolves.toEqual({
+      secretKey: "KEEP",
     });
-    // oldToken's delete failed, so it is still present; otherToken's delete succeeded.
+
+    // oldToken's delete failed, so it is still present as an orphan; otherToken's delete succeeded.
     expect(secrets.values.has("connector:conn:oldToken")).toBe(true);
     expect(secrets.values.has("connector:conn:otherToken")).toBe(false);
-    // The new settings were not persisted because at least one delete failed.
+    expect(secrets.values.has("connector:conn:secretKey")).toBe(true);
     expect(secrets.log.filter((e) => e.op === "delete")).toHaveLength(2);
   });
 });
@@ -806,11 +838,14 @@ describe("legacy forbidden key recovery", () => {
 
     await expect(clearConnectorSecrets(db, secrets, "bad")).resolves.toBeUndefined();
     expect(readConnectorConfigs(db).bad).toBeUndefined();
+    // The forbidden-segment keychain entry must also be removed so the secret is not leaked.
+    expect(secrets.values.has("connector:bad:constructor.token")).toBe(false);
+    expect(secrets.values.size).toBe(0);
   });
 });
 
-describe("collectSecretRefs depth", () => {
-  it("throws when a legacy config exceeds the depth cap instead of silently truncating", async () => {
+describe("legacy over-deep config recovery", () => {
+  it("lets write and remove succeed on a legacy row that exceeds the depth cap", async () => {
     const db = openDb(":memory:");
     const secrets = createRecordingSecretStore();
 
@@ -829,9 +864,14 @@ describe("collectSecretRefs depth", () => {
       }),
     );
 
-    await expect(clearConnectorSecrets(db, secrets, "deep")).rejects.toMatchObject({
-      code: "invalid_input",
-    });
+    // Caller-input validation still rejects a new config that exceeds the depth cap, but the
+    // stored over-deep row itself can be rewritten and removed without DB surgery.
+    await expect(
+      writeConnectorConfig(db, secrets, "deep", { enabled: true, config: { token: "NEW" } }),
+    ).resolves.toBeUndefined();
+
+    await expect(clearConnectorSecrets(db, secrets, "deep")).resolves.toBeUndefined();
+    expect(readConnectorConfigs(db).deep).toBeUndefined();
   });
 });
 

@@ -586,6 +586,59 @@ describe("connectors API", () => {
     expect(state?.lastError).toBe(row?.last_error);
   });
 
+  it("normalizes an all-control sync error to null in sync_state and connectors.list", async () => {
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z");
+    const clock: import("@emos/core").Clock = { now: () => fixedNow };
+    const { ConnectorError } = await import("@emos/connectors");
+    const throwingConnector: ConnectorDefinition<unknown> = {
+      id: "all-control-error",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      sync(): AsyncIterable<import("@emos/connectors").SyncPage> {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next: () => Promise.reject(new ConnectorError("schema", "\n\u001b\u0000")),
+              return: () => Promise.resolve({ done: true, value: undefined }),
+            };
+          },
+        } as AsyncIterable<import("@emos/connectors").SyncPage>;
+      },
+    };
+    const svc = await startTestService({
+      clock,
+      registry: [
+        ...connectorRegistry,
+        { def: throwingConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "all-control-error",
+      enabled: true,
+      config: {},
+    });
+
+    const result = await client.call("connectors.sync", { id: "all-control-error" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const row = svc.db
+      .prepare("SELECT last_error FROM sync_state WHERE connector_id = ?")
+      .get<{ last_error: string | null }>("all-control-error");
+    expect(row).toBeDefined();
+    expect(row?.last_error).toBeNull();
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "all-control-error");
+    expect(state?.lastError).toBeNull();
+  });
+
   it("normalizes an all-control last_error to null on connectors.list", async () => {
     const svc = await startTestService();
     const client = clientFor(svc);
