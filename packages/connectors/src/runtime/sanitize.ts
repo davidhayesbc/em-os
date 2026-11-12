@@ -6,8 +6,8 @@ export const LAST_ERROR_MAX_LENGTH = 500;
  * - strips C0/C1 control characters and Unicode format characters (\p{Cc}, \p{Cf}),
  *   which removes ANSI escape sequences and newlines;
  * - truncates on code-point boundaries so surrogate pairs are never split;
- * - returns `null` when the cleaned message is empty, so `state: "error"` is paired with a
- *   visible reason whenever possible.
+ * - returns a string (possibly empty). Callers must apply `|| null` before persisting so
+ *   `state: "error"` is paired with a visible reason whenever possible.
  */
 export function sanitizeLastError(value: string): string {
   const cleaned = value.replace(/[\p{Cc}\p{Cf}]/gu, "");
@@ -54,11 +54,15 @@ function collectSecretValues(config: unknown): string[] {
  * `[redacted]`. It also redacts the JSON-stringified form of each value so that secrets
  * leaked via `JSON.stringify(ctx.config)` are caught even when quotes/backslashes are escaped.
  *
+ * Control boundary: redaction is exact-match on the raw value and its `JSON.stringify` form
+ * only. URL-encoded, base64-encoded, or otherwise transformed occurrences are NOT caught.
+ * The durable fix is for connectors never to interpolate config values into thrown messages.
+ *
  * Longer values are replaced first so a shorter secret cannot leave a fragment of a longer
  * one behind.
  */
 export function redactSecrets(message: string, config: unknown): string {
-  const rawValues = [...new Set(collectSecretValues(config))].filter((v) => v.length > 0);
+  const rawValues = [...new Set(collectSecretValues(config))].filter((v) => v.length >= 4);
   const targets: string[] = [];
 
   for (const value of rawValues) {

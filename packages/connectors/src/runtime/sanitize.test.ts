@@ -59,9 +59,15 @@ describe("redactSecrets", () => {
   });
 
   it("replaces longer secrets before shorter ones to avoid partial fragments", () => {
-    const config = { token: "abc", apiKey: "abcdef" };
-    const message = "abc abcdef";
+    const config = { token: "abcd", apiKey: "abcdef" };
+    const message = "abcd abcdef";
     expect(redactSecrets(message, config)).toBe("[redacted] [redacted]");
+  });
+
+  it("skips very short secret values to avoid over-redaction", () => {
+    const config = { token: "abc", apiKey: "secret-value" };
+    const message = "abc secret-value";
+    expect(redactSecrets(message, config)).toBe("abc [redacted]");
   });
 
   it("returns the message unchanged when the config has no secret values", () => {
