@@ -103,6 +103,26 @@ describe("stripSecrets", () => {
     expect(secrets.values.get("connector:deep:accounts.0.token")).toBe("ACCOUNT-A");
     expect(secrets.values.get("connector:deep:accounts.1.token")).toBe("ACCOUNT-B");
   });
+
+  it("strips a secret nested two or more levels below a secret-named key", async () => {
+    const secrets = createRecordingSecretStore();
+    const out = (await stripSecrets(secrets, "deep", {
+      apiKey: { wrapper: { raw: "DEEP-SECRET-1" } },
+    })) as { apiKey: { wrapper: { raw: unknown } } };
+
+    expect(out.apiKey.wrapper.raw).toEqual({ $secretRef: "apiKey" });
+    expect(secrets.values.get("connector:deep:apiKey.wrapper.raw")).toBe("DEEP-SECRET-1");
+  });
+
+  it("strips secrets inside an array of arrays", async () => {
+    const secrets = createRecordingSecretStore();
+    const out = (await stripSecrets(secrets, "deep", {
+      apiKeys: [["NESTED-KEY-1"]],
+    })) as { apiKeys: unknown[] };
+
+    expect(out.apiKeys).toEqual([[{ $secretRef: "apiKeys" }]]);
+    expect(secrets.values.get("connector:deep:apiKeys.0.0")).toBe("NESTED-KEY-1");
+  });
 });
 
 describe("restoreSecrets", () => {
@@ -161,6 +181,26 @@ describe("restoreSecrets", () => {
       restoreSecrets(secrets, "conn", { token: { $secretRef: "token" } }),
     ).rejects.toThrow(new ConnectorError("config", "Missing secret for token"));
   });
+
+  it("restores a secret nested two or more levels below a secret-named key", async () => {
+    const secrets = createRecordingSecretStore();
+    await secrets.set("connector:deep:apiKey.wrapper.raw", "DEEP-SECRET-1");
+    const out = (await restoreSecrets(secrets, "deep", {
+      apiKey: { wrapper: { raw: { $secretRef: "apiKey" } } },
+    })) as { apiKey: { wrapper: { raw: string } } };
+
+    expect(out.apiKey.wrapper.raw).toBe("DEEP-SECRET-1");
+  });
+
+  it("restores secrets inside an array of arrays", async () => {
+    const secrets = createRecordingSecretStore();
+    await secrets.set("connector:deep:apiKeys.0.0", "NESTED-KEY-1");
+    const out = (await restoreSecrets(secrets, "deep", {
+      apiKeys: [[{ $secretRef: "apiKeys" }]],
+    })) as { apiKeys: string[][] };
+
+    expect(out.apiKeys).toEqual([["NESTED-KEY-1"]]);
+  });
 });
 
 describe("writeConnectorConfig", () => {
@@ -209,6 +249,17 @@ describe("writeConnectorConfig", () => {
     ).rejects.toThrow("Secret marker at token must reference token");
   });
 
+  it("rejects a forged marker nested in a secret path", async () => {
+    db = openDb(":memory:");
+    secrets = createRecordingSecretStore();
+    await expect(
+      writeConnectorConfig(db, secrets, "conn", {
+        enabled: true,
+        config: { auth: { token: { $secretRef: "endpoint" } } },
+      }),
+    ).rejects.toThrow("Secret marker at auth.token must reference token");
+  });
+
   it("accepts a valid marker in a matching secret field", async () => {
     db = openDb(":memory:");
     secrets = createRecordingSecretStore();
@@ -253,6 +304,56 @@ describe("writeConnectorConfig", () => {
     expect(secrets.values.get("connector:nested:auth.token")).toBe("NESTED-SUPER-SECRET-42");
     expect(secrets.values.get("connector:nested:apiKeys.0")).toBe("ARRAY-KEY-ONE");
     expect(secrets.values.get("connector:nested:apiKeys.1")).toBe("ARRAY-KEY-TWO");
+  });
+
+  it("stores deeply nested secrets without writing raw values to settings", async () => {
+    db = openDb(":memory:");
+    secrets = createRecordingSecretStore();
+    await writeConnectorConfig(db, secrets, "deep", {
+      enabled: true,
+      config: {
+        apiKey: { wrapper: { raw: "PERSISTED-DEEP-SECRET" } },
+      },
+    });
+    const row = db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing row");
+    expect(JSON.stringify(row)).not.toContain("PERSISTED-DEEP-SECRET");
+
+    const configs = readConnectorConfigs(db);
+    expect(configs.deep?.config).toEqual({
+      apiKey: { wrapper: { raw: { $secretRef: "apiKey" } } },
+    });
+
+    expect(secrets.values.get("connector:deep:apiKey.wrapper.raw")).toBe("PERSISTED-DEEP-SECRET");
+  });
+
+  it("stores array-of-array secrets without writing raw values to settings", async () => {
+    db = openDb(":memory:");
+    secrets = createRecordingSecretStore();
+    await writeConnectorConfig(db, secrets, "deep", {
+      enabled: true,
+      config: {
+        apiKeys: [["NESTED-KEY-1", "NESTED-KEY-2"]],
+      },
+    });
+    const row = db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing row");
+    expect(JSON.stringify(row)).not.toContain("NESTED-KEY-1");
+    expect(JSON.stringify(row)).not.toContain("NESTED-KEY-2");
+
+    const configs = readConnectorConfigs(db);
+    expect(configs.deep?.config).toEqual({
+      apiKeys: [[{ $secretRef: "apiKeys" }, { $secretRef: "apiKeys" }]],
+    });
+
+    expect(secrets.values.get("connector:deep:apiKeys.0.0")).toBe("NESTED-KEY-1");
+    expect(secrets.values.get("connector:deep:apiKeys.0.1")).toBe("NESTED-KEY-2");
   });
 
   it("deletes stale keychain entries when a secret field is removed or renamed", async () => {

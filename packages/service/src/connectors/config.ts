@@ -38,14 +38,15 @@ function isSecretMarker(value: unknown): value is { $secretRef: string } {
 }
 
 /**
- * Returns the secret field name for a given JSON path. For object properties this is the last
- * segment; for array elements it is the parent key (so `apiKeys[0]` belongs to the `apiKeys` field).
+ * Returns the nearest secret-named field segment for a given JSON path by walking from the leaf
+ * upwards. Numeric indices are skipped, so strings under `apiKeys.0.1` or `apiKey.wrapper.raw`
+ * resolve to `apiKeys` / `apiKey` respectively.
  */
 function secretFieldForPath(path: JsonPath): string | undefined {
-  const last = path[path.length - 1];
-  if (typeof last === "string" && isSecretField(last)) return last;
-  const parent = path[path.length - 2];
-  if (typeof parent === "string" && isSecretField(parent)) return parent;
+  for (let i = path.length - 1; i >= 0; i--) {
+    const segment = path[i];
+    if (typeof segment === "string" && isSecretField(segment)) return segment;
+  }
   return undefined;
 }
 

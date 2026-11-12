@@ -179,6 +179,48 @@ describe("connectors API", () => {
     expect(captured).toEqual({ apiKeys: ["ARRAY-KEY-ONE", "ARRAY-KEY-TWO"] });
   });
 
+  it("configures a connector with a deeply nested secret and restores it at sync", async () => {
+    let captured: unknown;
+    const deepConnector: ConnectorDefinition<unknown> = {
+      id: "deep-auth",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync(ctx) {
+        captured = ctx.config;
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: deepConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "deep-auth",
+      enabled: true,
+      config: { apiKey: { wrapper: { raw: "PERSISTED-DEEP-SECRET" } } },
+    });
+
+    const row = svc.db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing row");
+    expect(JSON.stringify(row)).not.toContain("PERSISTED-DEEP-SECRET");
+
+    await expect(svc.secrets.get("connector:deep-auth:apiKey.wrapper.raw")).resolves.toBe(
+      "PERSISTED-DEEP-SECRET",
+    );
+
+    await client.call("connectors.sync", { id: "deep-auth" });
+    expect(captured).toEqual({ apiKey: { wrapper: { raw: "PERSISTED-DEEP-SECRET" } } });
+  });
+
   it("rejects a forged secret marker in a non-secret field", async () => {
     const passthroughConnector: ConnectorDefinition<unknown> = {
       id: "wide",
