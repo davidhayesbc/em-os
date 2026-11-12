@@ -27,7 +27,8 @@ export const connectorsList: Handler<"connectors.list"> = (ctx) => {
       enabled: stored?.enabled ?? false,
       state: state.state as ConnectorRunState,
       lastSuccessAt: state.lastSuccessAt,
-      lastError: state.lastError != null ? sanitizeLastError(state.lastError) : null,
+      lastError:
+        typeof state.lastError === "string" ? sanitizeLastError(state.lastError) || null : null,
     };
   });
 };

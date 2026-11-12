@@ -257,17 +257,37 @@ describe("writeConnectorConfig", () => {
     }
 
     await expect(
-      writeConnectorConfig(db, secrets, "deep", { enabled: true, config: nest(65) }),
+      writeConnectorConfig(db, secrets, "deep", { enabled: true, config: nest(64) }),
     ).rejects.toMatchObject({ code: "invalid_input" });
 
     await expect(
       writeConnectorConfig(db, secrets, "deep", { enabled: true, config: nest(5000) }),
     ).rejects.toMatchObject({ code: "invalid_input" });
 
-    // Depth exactly at the cap is accepted (no secret path, so it is a no-op keychain-wise).
+    // Depth just below the cap is accepted (no secret path, so it is a no-op keychain-wise).
     await expect(
-      writeConnectorConfig(db, secrets, "deep", { enabled: true, config: nest(64) }),
+      writeConnectorConfig(db, secrets, "deep", { enabled: true, config: nest(63) }),
     ).resolves.toBeUndefined();
+  });
+
+  it("enforces the exact depth boundary", async () => {
+    db = openDb(":memory:");
+    secrets = createRecordingSecretStore();
+
+    function buildAtDepth(depth: number): unknown {
+      let current: unknown = "leaf";
+      for (let i = 0; i < depth; i++) {
+        current = { [`k${i}`]: current };
+      }
+      return current;
+    }
+
+    await expect(
+      writeConnectorConfig(db, secrets, "boundary", { enabled: true, config: buildAtDepth(63) }),
+    ).resolves.toBeUndefined();
+    await expect(
+      writeConnectorConfig(db, secrets, "boundary", { enabled: true, config: buildAtDepth(64) }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
   });
 
   it("keeps array indices distinct from numeric-looking object keys", async () => {
@@ -722,5 +742,168 @@ describe("sanitizeLegacyConnectorConfigs", () => {
       $secretRef: "secretKey",
     });
     expect(secrets.values.get("connector:legacy:secretKey")).toBe("LEGACY-PLAINTEXT");
+  });
+});
+
+describe("partial stale secret deletion failure", () => {
+  it("aborts before persisting and attempts every stale delete even if the first fails", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    await writeConnectorConfig(db, secrets, "conn", {
+      enabled: true,
+      config: { oldToken: "OLD", otherToken: "OTHER", secretKey: "KEEP" },
+    });
+    secrets.log.length = 0;
+
+    let deleteCount = 0;
+    secrets.delete = async (key) => {
+      secrets.log.push({ op: "delete", key });
+      deleteCount++;
+      if (deleteCount === 1) throw new Error("keychain locked");
+      secrets.values.delete(key);
+    };
+
+    await expect(
+      writeConnectorConfig(db, secrets, "conn", { enabled: true, config: { secretKey: "KEEP" } }),
+    ).rejects.toMatchObject({ code: "internal" });
+
+    const configs = readConnectorConfigs(db);
+    expect(configs.conn?.config).toEqual({
+      oldToken: { $secretRef: "oldToken" },
+      otherToken: { $secretRef: "otherToken" },
+      secretKey: { $secretRef: "secretKey" },
+    });
+    // oldToken's delete failed, so it is still present; otherToken's delete succeeded.
+    expect(secrets.values.has("connector:conn:oldToken")).toBe(true);
+    expect(secrets.values.has("connector:conn:otherToken")).toBe(false);
+    // The new settings were not persisted because at least one delete failed.
+    expect(secrets.log.filter((e) => e.op === "delete")).toHaveLength(2);
+  });
+});
+
+describe("legacy forbidden key recovery", () => {
+  it("allows configure and remove on a row with constructor/prototype keys", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "connector_configs",
+      JSON.stringify({
+        bad: {
+          enabled: true,
+          config: { constructor: { token: { $secretRef: "token" } } },
+        },
+      }),
+    );
+    await secrets.set("connector:bad:constructor.token", "FORBIDDEN-SECRET");
+
+    // Read-path validation used to reject these stored keys, leaving the connector wedged.
+    await expect(
+      writeConnectorConfig(db, secrets, "bad", { enabled: true, config: { token: "NEW" } }),
+    ).resolves.toBeUndefined();
+
+    const configs = readConnectorConfigs(db);
+    expect(configs.bad?.config).toEqual({ token: { $secretRef: "token" } });
+
+    await expect(clearConnectorSecrets(db, secrets, "bad")).resolves.toBeUndefined();
+    expect(readConnectorConfigs(db).bad).toBeUndefined();
+  });
+});
+
+describe("collectSecretRefs depth", () => {
+  it("throws when a legacy config exceeds the depth cap instead of silently truncating", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+
+    function nest(depth: number, leaf: unknown): unknown {
+      let current = leaf;
+      for (let i = 0; i < depth; i++) {
+        current = { [`k${i}`]: current };
+      }
+      return current;
+    }
+
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "connector_configs",
+      JSON.stringify({
+        deep: { enabled: true, config: nest(65, { $secretRef: "token" }) },
+      }),
+    );
+
+    await expect(clearConnectorSecrets(db, secrets, "deep")).rejects.toMatchObject({
+      code: "invalid_input",
+    });
+  });
+});
+
+describe("writeConnectorConfig concurrency", () => {
+  it("serializes concurrent writes for the same connector id", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    let active = 0;
+    let maxActive = 0;
+
+    secrets.set = async (key, value) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 5));
+      secrets.values.set(key, value);
+      secrets.log.push({ op: "set", key, value });
+      active--;
+    };
+
+    await Promise.all([
+      writeConnectorConfig(db, secrets, "conn", { enabled: true, config: { token: "A" } }),
+      writeConnectorConfig(db, secrets, "conn", { enabled: true, config: { token: "B" } }),
+    ]);
+
+    // The AsyncMutex serializes writes, so keychain sets never overlap.
+    expect(maxActive).toBe(1);
+    const configs = readConnectorConfigs(db);
+    expect(configs.conn).toBeDefined();
+  });
+});
+
+describe("pathString numeric-key encoding", () => {
+  it("intentionally orphans pre-existing secrets stored under bare numeric or #-prefixed object keys", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "connector_configs",
+      JSON.stringify({
+        numeric: {
+          enabled: true,
+          config: {
+            tokens: { "0": { $secretRef: "tokens" }, "#hash": { $secretRef: "tokens" } },
+          },
+        },
+      }),
+    );
+    await secrets.set("connector:numeric:tokens.0", "LEGACY-NUMERIC-SECRET");
+    await secrets.set("connector:numeric:tokens.#hash", "LEGACY-HASH-SECRET");
+
+    const configs = readConnectorConfigs(db);
+    // The new encoding looks for tokens.#0 / tokens.##hash, so the bare legacy secrets are
+    // invisible to restore and would throw a missing-secret error.
+    await expect(restoreSecrets(secrets, "numeric", configs.numeric?.config)).rejects.toThrow(
+      "Missing secret for tokens.#0",
+    );
+    expect(secrets.values.get("connector:numeric:tokens.0")).toBe("LEGACY-NUMERIC-SECRET");
+    expect(secrets.values.get("connector:numeric:tokens.#hash")).toBe("LEGACY-HASH-SECRET");
+
+    // Reconfiguring stores new secrets under the tagged paths and leaves legacy paths orphaned.
+    await writeConnectorConfig(db, secrets, "numeric", {
+      enabled: true,
+      config: { tokens: { "0": "NEW-NUMERIC-SECRET", "#hash": "NEW-HASH-SECRET" } },
+    });
+    expect(secrets.values.has("connector:numeric:tokens.0")).toBe(true);
+    expect(secrets.values.has("connector:numeric:tokens.#hash")).toBe(true);
+    expect(secrets.values.get("connector:numeric:tokens.#0")).toBe("NEW-NUMERIC-SECRET");
+    expect(secrets.values.get("connector:numeric:tokens.##hash")).toBe("NEW-HASH-SECRET");
+
+    // Removing the connector deletes only the tagged secrets; legacy bare paths stay orphaned.
+    await clearConnectorSecrets(db, secrets, "numeric");
+    expect(readConnectorConfigs(db).numeric).toBeUndefined();
+    expect(secrets.values.has("connector:numeric:tokens.0")).toBe(true);
+    expect(secrets.values.has("connector:numeric:tokens.#hash")).toBe(true);
   });
 });

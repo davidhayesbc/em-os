@@ -186,7 +186,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
           state: "error",
           lastAttemptAt: at,
           lastSuccessAt: initial.lastSuccessAt,
-          lastError: sanitizeLastError(message),
+          lastError: sanitizeLastError(message) || null,
           itemCount: initial.itemCount + state.items,
         });
         return { pages: state.pages, items: state.items };
@@ -200,7 +200,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
           state: "offline",
           lastAttemptAt: at,
           lastSuccessAt: initial.lastSuccessAt,
-          lastError: sanitizeLastError(message),
+          lastError: sanitizeLastError(message) || null,
           itemCount: initial.itemCount + state.items,
         });
         return { pages: state.pages, items: state.items };
@@ -221,7 +221,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
     state: "error",
     lastAttemptAt: at,
     lastSuccessAt: initial.lastSuccessAt,
-    lastError: sanitizeLastError(exhausted),
+    lastError: sanitizeLastError(exhausted) || null,
     itemCount: initial.itemCount + state.items,
   });
   return { pages: state.pages, items: state.items };

@@ -586,6 +586,61 @@ describe("connectors API", () => {
     expect(state?.lastError).toBe(row?.last_error);
   });
 
+  it("normalizes an all-control last_error to null on connectors.list", async () => {
+    const svc = await startTestService();
+    const client = clientFor(svc);
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z").toISOString();
+
+    svc.db
+      .prepare(
+        "INSERT INTO sync_state (connector_id, state, cursor, last_attempt_at, last_success_at, last_error, item_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("synthetic-fixture", "error", null, fixedNow, null, "\n\u001b\u0000", 0);
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "synthetic-fixture");
+    expect(state?.lastError).toBeNull();
+  });
+
+  it("sanitizes a legacy last_error row directly from sync_state on connectors.list", async () => {
+    const svc = await startTestService();
+    const client = clientFor(svc);
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z").toISOString();
+
+    // Build a 3000-character legacy last_error containing control characters.
+    let raw = "legacy\n\u001b[31m";
+    raw = raw.padEnd(3000, "x");
+    expect(raw).toHaveLength(3000);
+    expect(raw).toContain("\n");
+    expect(raw).toContain("\u001b");
+
+    svc.db
+      .prepare(
+        "INSERT INTO sync_state (connector_id, state, cursor, last_attempt_at, last_success_at, last_error, item_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("synthetic-fixture", "error", null, fixedNow, null, raw, 0);
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "synthetic-fixture");
+    expect(state).toBeDefined();
+    expect(state?.lastError).not.toBeNull();
+    const returned = state?.lastError ?? "";
+    expect(Array.from(returned)).toHaveLength(500);
+    expect(returned).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+
+    // The stored row is left untouched.
+    const row = svc.db
+      .prepare("SELECT last_error FROM sync_state WHERE connector_id = ?")
+      .get<{ last_error: string }>("synthetic-fixture");
+    expect(row?.last_error).toBe(raw);
+  });
+
   it("removes a connector config and deletes its keychain secrets", async () => {
     const svc = await startTestService();
     const client = clientFor(svc);

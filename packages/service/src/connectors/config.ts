@@ -6,7 +6,7 @@ import type { Db } from "@emos/store-sqlite";
 const KEY = "connector_configs";
 const SANITIZED_KEY = "connector_configs_sanitized_v1";
 
-/** Maximum nesting depth allowed for connector configs. */
+/** Maximum nesting depth allowed for connector config containers. Nodes at or beyond this depth are rejected. */
 const MAX_CONFIG_DEPTH = 64;
 
 /** Field names that signal a secret value (case-insensitive). */
@@ -48,7 +48,11 @@ function pathString(path: JsonPath): string {
     .map((segment) => {
       if (typeof segment === "number") return String(segment);
       // Tag numeric-looking string keys (and literal keys that start with the tag character)
-      // so arrays and numeric-keyed objects cannot collide.
+      // so arrays and numeric-keyed objects cannot collide. This is an intentional break from
+      // earlier path encoding that stored numeric-keyed object secrets under the bare segment
+      // (e.g. `slots.0`). Pre-existing secrets at those bare paths are orphaned until the
+      // connector is reconfigured; no runtime schema today triggers that shape, so we pin the
+      // behaviour with a test rather than adding a migration.
       if (/^\d+$/.test(segment)) return `#${segment}`;
       if (segment.startsWith("#")) return `#${segment}`;
       return escapePathSegment(segment);
@@ -85,7 +89,8 @@ function isSecretPath(path: JsonPath): boolean {
 
 /**
  * Recursively collect every `$secretRef` path in a stored config. These are the keychain paths
- * the service has tracked for this connector.
+ * the service has tracked for this connector. Forbidden segments are ignored on the read path
+ * so a legacy row can still be removed; depth violations throw instead of silently truncating.
  */
 function collectSecretRefs(value: unknown, path: JsonPath = [], depth = 0): string[] {
   const refs: string[] = [];
@@ -94,19 +99,24 @@ function collectSecretRefs(value: unknown, path: JsonPath = [], depth = 0): stri
     return refs;
   }
   if (Array.isArray(value)) {
+    if (depth >= MAX_CONFIG_DEPTH) {
+      throw new ApiError("invalid_input", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
+    }
     for (let i = 0; i < value.length; i++) {
       path.push(i);
-      if (depth < MAX_CONFIG_DEPTH) refs.push(...collectSecretRefs(value[i], path, depth + 1));
+      refs.push(...collectSecretRefs(value[i], path, depth + 1));
       path.pop();
     }
     return refs;
   }
   if (typeof value === "object" && value !== null) {
+    if (depth >= MAX_CONFIG_DEPTH) {
+      throw new ApiError("invalid_input", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
+    }
     for (const key of Object.keys(value)) {
-      assertSafeSegment(key, path);
+      if (FORBIDDEN_SEGMENTS.has(key)) continue;
       path.push(key);
-      if (depth < MAX_CONFIG_DEPTH)
-        refs.push(...collectSecretRefs((value as Record<string, unknown>)[key], path, depth + 1));
+      refs.push(...collectSecretRefs((value as Record<string, unknown>)[key], path, depth + 1));
       path.pop();
     }
     return refs;
@@ -119,7 +129,7 @@ function collectSecretRefs(value: unknown, path: JsonPath = [], depth = 0): stri
  * Markers are only valid in secret-named fields, and the reference must name that field.
  */
 function assertNoForgedMarkers(value: unknown, path: JsonPath = [], depth = 0): void {
-  if (depth > MAX_CONFIG_DEPTH) {
+  if (depth >= MAX_CONFIG_DEPTH) {
     throw new ApiError("invalid_input", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
   }
   if (isSecretMarker(value)) {
@@ -166,7 +176,7 @@ async function stripSecretsRecursive(
   strict: boolean,
   depth = 0,
 ): Promise<unknown> {
-  if (depth > MAX_CONFIG_DEPTH) {
+  if (depth >= MAX_CONFIG_DEPTH) {
     throw new ApiError("invalid_input", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
   }
   // A pre-existing marker is a sentinel, not a container; do not recurse into it.
@@ -249,7 +259,7 @@ async function restoreSecretsRecursive(
   path: JsonPath,
   depth = 0,
 ): Promise<unknown> {
-  if (depth > MAX_CONFIG_DEPTH) {
+  if (depth >= MAX_CONFIG_DEPTH) {
     throw new ConnectorError("config", `Config exceeds maximum depth of ${MAX_CONFIG_DEPTH}`);
   }
   if (isSecretMarker(value)) {
@@ -279,7 +289,7 @@ async function restoreSecretsRecursive(
   if (typeof value === "object" && value !== null) {
     const out = Object.create(null) as Record<string, unknown>;
     for (const key of Object.keys(value)) {
-      assertSafeSegment(key, path);
+      if (FORBIDDEN_SEGMENTS.has(key)) continue;
       path.push(key);
       out[key] = await restoreSecretsRecursive(
         secrets,
@@ -352,19 +362,25 @@ export async function writeConnectorConfig(
     const config = await stripSecrets(secrets, id, value.config);
     const currentRefs = collectSecretRefs(config);
 
-    // Delete stale keychain entries BEFORE persisting settings so a failing delete leaves
-    // the old reference intact instead of orphaning the secret.
-    for (const ref of previousRefs) {
-      if (!currentRefs.includes(ref)) {
-        try {
-          await secrets.delete(secretStoreKey(id, ref));
-        } catch (e) {
-          throw new ApiError(
-            "internal",
-            `Failed to delete stale secret ${ref}: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
+    const staleRefs = previousRefs.filter((ref) => !currentRefs.includes(ref));
+
+    // Delete stale keychain entries before persisting settings. If any delete fails, abort and
+    // leave the previous config untouched so the persisted settings never reference secrets that
+    // no longer exist. Note: secrets deleted before the failure are already gone; the caller must
+    // resolve the underlying keychain error and retry to reach a consistent state.
+    const failed: string[] = [];
+    for (const ref of staleRefs) {
+      try {
+        await secrets.delete(secretStoreKey(id, ref));
+      } catch (_e) {
+        failed.push(ref);
       }
+    }
+    if (failed.length > 0) {
+      throw new ApiError(
+        "internal",
+        `Failed to delete stale secret(s) ${failed.join(", ")}: keychain operation failed`,
+      );
     }
 
     configs[id] = { enabled: value.enabled, config };
@@ -374,6 +390,12 @@ export async function writeConnectorConfig(
   });
 }
 
+/**
+ * Serializes async operations. Non-reentrant: a function running inside the mutex must not call
+ * another operation that also acquires this mutex (e.g. a nested writeConnectorConfig or
+ * clearConnectorSecrets call would deadlock because the inner run waits for the outer run that is
+ * already holding the lock).
+ */
 class AsyncMutex {
   private current: Promise<unknown> = Promise.resolve();
   run<T>(fn: () => Promise<T>): Promise<T> {
