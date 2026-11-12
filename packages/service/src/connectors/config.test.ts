@@ -1,3 +1,4 @@
+import { ApiError } from "@emos/api-contract";
 import { ConnectorError } from "@emos/connectors";
 import { openDb } from "@emos/store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +7,7 @@ import {
   isSecretField,
   readConnectorConfigs,
   restoreSecrets,
+  sanitizeLegacyConnectorConfigs,
   stripSecrets,
   writeConnectorConfig,
 } from "./config.js";
@@ -399,5 +401,90 @@ describe("clearConnectorSecrets", () => {
     expect(secrets.values.has("connector:conn:apiKeys.1")).toBe(false);
     expect(readConnectorConfigs(db).conn).toBeUndefined();
     expect(secrets.log.filter((e) => e.op === "delete")).toHaveLength(3);
+  });
+});
+
+describe("pathString encoding", () => {
+  it("keeps keys with dots distinct from nested keys", async () => {
+    const secrets = createRecordingSecretStore();
+    await stripSecrets(secrets, "collide", { token: { "a.b": "ONE" } });
+    await stripSecrets(secrets, "collide", { token: { a: { b: "TWO" } } });
+    expect(secrets.values.get("connector:collide:token.a\\.b")).toBe("ONE");
+    expect(secrets.values.get("connector:collide:token.a.b")).toBe("TWO");
+  });
+});
+
+describe("stripSecrets strictness", () => {
+  it("rejects non-string scalar secret values at configure time", async () => {
+    const secrets = createRecordingSecretStore();
+    await expect(stripSecrets(secrets, "conn", { token: 987654 })).rejects.toThrow(ApiError);
+    await expect(stripSecrets(secrets, "conn", { token: 987654 })).rejects.toThrow(
+      "Secret field token at token must be a string",
+    );
+  });
+
+  it("rejects boolean secret values at configure time", async () => {
+    const secrets = createRecordingSecretStore();
+    await expect(stripSecrets(secrets, "conn", { token: true })).rejects.toThrow(ApiError);
+  });
+
+  it("allows existing markers and non-secret scalars", async () => {
+    const secrets = createRecordingSecretStore();
+    const out = await stripSecrets(secrets, "conn", { token: { $secretRef: "token" }, count: 7 });
+    expect(out).toEqual({ token: { $secretRef: "token" }, count: 7 });
+  });
+});
+
+describe("sanitizeLegacyConnectorConfigs", () => {
+  it("moves nested plaintext legacy secrets into the keychain and rewrites the settings row", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "connector_configs",
+      JSON.stringify({
+        legacy: { enabled: true, config: { auth: { token: "LEGACY-PLAINTEXT-TOKEN" } } },
+      }),
+    );
+
+    await sanitizeLegacyConnectorConfigs(db, secrets);
+
+    const row = db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing row");
+    expect(JSON.stringify(row)).not.toContain("LEGACY-PLAINTEXT-TOKEN");
+    const configs = JSON.parse(row.value) as Record<string, { enabled: boolean; config: unknown }>;
+    expect(configs.legacy?.config).toEqual({ auth: { token: { $secretRef: "token" } } });
+    expect(secrets.values.get("connector:legacy:auth.token")).toBe("LEGACY-PLAINTEXT-TOKEN");
+  });
+
+  it("runs only once per database", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "connector_configs",
+      JSON.stringify({
+        legacy: { enabled: true, config: { secretKey: "FIRST" } },
+      }),
+    );
+
+    await sanitizeLegacyConnectorConfigs(db, secrets);
+    secrets.log.length = 0;
+    secrets.values.clear();
+    db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(
+      JSON.stringify({
+        legacy: { enabled: true, config: { secretKey: "SECOND" } },
+      }),
+      "connector_configs",
+    );
+
+    await sanitizeLegacyConnectorConfigs(db, secrets);
+
+    expect(secrets.log).toHaveLength(0);
+    const row = db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(JSON.parse(row?.value ?? "{}").legacy.config.secretKey).toBe("SECOND");
   });
 });

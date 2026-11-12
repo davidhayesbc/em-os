@@ -1,6 +1,10 @@
 import { ApiError, type ConnectorRunState } from "@emos/api-contract";
-import { SchedulerConflict, SchedulerNotFound } from "@emos/connectors";
-import { readConnectorConfigs, writeConnectorConfig } from "../connectors/config.js";
+import { ConnectorError, SchedulerConflict, SchedulerNotFound } from "@emos/connectors";
+import {
+  clearConnectorSecrets,
+  readConnectorConfigs,
+  writeConnectorConfig,
+} from "../connectors/config.js";
 import type { Handler } from "../context.js";
 
 function findRegistryEntry(ctx: Parameters<Handler<"connectors.list">>[0], id: string) {
@@ -31,6 +35,19 @@ export const connectorsSync: Handler<"connectors.sync"> = async (ctx, { id }) =>
   } catch (e) {
     if (e instanceof SchedulerConflict) throw new ApiError("conflict", e.message);
     if (e instanceof SchedulerNotFound) throw new ApiError("not_found", e.message);
+    if (e instanceof ConnectorError) {
+      const initial = ctx.store.syncState.get(id);
+      ctx.store.syncState.set({
+        connectorId: id,
+        cursor: initial.cursor,
+        state: "error" as ConnectorRunState,
+        lastAttemptAt: new Date().toISOString(),
+        lastSuccessAt: initial.lastSuccessAt,
+        lastError: e.message,
+        itemCount: initial.itemCount,
+      });
+      return { pages: 0, items: 0 };
+    }
     throw e;
   }
 };
@@ -46,5 +63,12 @@ export const connectorsConfigure: Handler<"connectors.configure"> = async (
     throw new ApiError("invalid_input", `Invalid config for ${id}`);
   }
   await writeConnectorConfig(ctx.db, ctx.secrets, id, { enabled, config: parsed.data });
+  return {};
+};
+
+export const connectorsRemove: Handler<"connectors.remove"> = async (ctx, { id }) => {
+  const entry = findRegistryEntry(ctx, id);
+  if (!entry) throw new ApiError("not_found", `Connector ${id} not found`);
+  await clearConnectorSecrets(ctx.db, ctx.secrets, id);
   return {};
 };

@@ -11,7 +11,11 @@ import {
 } from "@emos/core";
 import { createStore, type Db, openDb } from "@emos/store-sqlite";
 import type { ServiceConfig } from "./config.js";
-import { readConnectorConfigs, restoreSecrets } from "./connectors/config.js";
+import {
+  readConnectorConfigs,
+  restoreSecrets,
+  sanitizeLegacyConnectorConfigs,
+} from "./connectors/config.js";
 import { connectorRegistry, type RegistryEntry } from "./connectors/registry.js";
 import type { EventBus } from "./events.js";
 
@@ -39,7 +43,7 @@ export type Handler<N extends OpName> = (
  * Opens the database (migrating it) and assembles the context. The caller has already checked
  * that `config.dataDir` is not inside a git checkout, and owns `ctx.db.close()`.
  */
-export function createContext(deps: {
+export async function createContext(deps: {
   config: ServiceConfig;
   clock: Clock;
   log: Logger;
@@ -47,10 +51,12 @@ export function createContext(deps: {
   events: EventBus;
   registry?: RegistryEntry[];
   requestShutdown(): void;
-}): ServiceContext {
+}): Promise<ServiceContext> {
   const db = openDb(deps.config.layout.dbFile, { backupsDir: deps.config.layout.backupsDir });
   const store = createStore(db);
   const registry = deps.registry ?? connectorRegistry;
+
+  await sanitizeLegacyConnectorConfigs(db, deps.secrets);
 
   function connectorConfig(id: string): { enabled: boolean; config: unknown } | undefined {
     return readConnectorConfigs(db)[id];
@@ -67,19 +73,15 @@ export function createContext(deps: {
       return entry.createInvoker(config as Record<string, unknown>);
     },
     getConfig: (id) => connectorConfig(id),
+    prepareConfig: async (id, config) => restoreSecrets(deps.secrets, id, config),
     runSync: async (def, ctx) => {
-      const stored = connectorConfig(def.id);
-      const prepareConfig = stored
-        ? async (config: unknown) => restoreSecrets(deps.secrets, def.id, config)
-        : undefined;
       return runSync({
         store,
         def,
-        ctx: stored ? { ...ctx, config: stored.config } : ctx,
+        ctx,
         appliers,
         events: deps.events,
         clock: deps.clock,
-        prepareConfig,
       });
     },
     clock: deps.clock,

@@ -317,4 +317,110 @@ describe("connectors API", () => {
     expect(b.status).toBe("rejected");
     expect((b as PromiseRejectedResult).reason).toMatchObject({ code: "conflict" });
   });
+
+  it("restores secrets before building a strict-schema invoker", async () => {
+    let invokerConfig: unknown;
+    let syncConfig: unknown;
+    const strictConnector: ConnectorDefinition<unknown> = {
+      id: "strict-secret",
+      kind: "calendar",
+      configSchema: z.object({ token: z.string() }),
+      requiredCapabilities: ["fixture.ping"],
+      defaultIntervalMinutes: 15,
+      async *sync(ctx) {
+        syncConfig = ctx.config;
+        await ctx.caps.call("fixture.ping", {}, z.object({ ok: z.boolean() }));
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        {
+          def: strictConnector,
+          createInvoker: (config) => {
+            invokerConfig = config;
+            return fixtureInvoker({ "fixture.ping": [{ ok: true }] });
+          },
+        },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "strict-secret",
+      enabled: true,
+      config: { token: "PRESENT-TOKEN" },
+    });
+    await client.call("connectors.sync", { id: "strict-secret" });
+
+    expect(invokerConfig).toEqual({ token: "PRESENT-TOKEN" });
+    expect(syncConfig).toEqual({ token: "PRESENT-TOKEN" });
+  });
+
+  it("sets sync state to error when a strict-schema invoker is missing a secret", async () => {
+    const strictConnector: ConnectorDefinition<unknown> = {
+      id: "strict-missing",
+      kind: "calendar",
+      configSchema: z.object({ token: z.string() }),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: strictConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "strict-missing",
+      enabled: true,
+      config: { token: "MISSING-SECRET" },
+    });
+    await svc.secrets.delete("connector:strict-missing:token");
+
+    const result = await client.call("connectors.sync", { id: "strict-missing" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      state: string;
+      lastSuccessAt: string | null;
+    }>;
+    const state = list.find((c) => c.id === "strict-missing");
+    expect(state).toBeDefined();
+    expect(state?.state).toBe("error");
+    expect(state?.lastSuccessAt).toBeNull();
+  });
+
+  it("removes a connector config and deletes its keychain secrets", async () => {
+    const svc = await startTestService();
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "synthetic-fixture",
+      enabled: true,
+      config: { secretKey: "to-remove" },
+    });
+    await expect(svc.secrets.get("connector:synthetic-fixture:secretKey")).resolves.toBe(
+      "to-remove",
+    );
+
+    await client.call("connectors.remove", { id: "synthetic-fixture" });
+
+    const row = svc.db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    const configs = JSON.parse(row?.value ?? "{}") as Record<
+      string,
+      { enabled: boolean; config: unknown }
+    >;
+    expect(configs["synthetic-fixture"]).toBeUndefined();
+    await expect(svc.secrets.get("connector:synthetic-fixture:secretKey")).resolves.toBeNull();
+  });
 });

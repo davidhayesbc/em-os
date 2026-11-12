@@ -50,3 +50,9 @@ export const connectorsConfigure = defineOp({
   }),
   output: z.object({}),
 });
+
+export const connectorsRemove = defineOp({
+  name: "connectors.remove",
+  input: z.object({ id: z.string() }),
+  output: z.object({}),
+});

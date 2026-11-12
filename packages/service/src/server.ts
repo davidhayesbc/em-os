@@ -362,7 +362,7 @@ export async function startService(opts: StartServiceOptions): Promise<RunningSe
     };
     let shutdown: (() => void) | undefined;
     let shutdownRequested = false;
-    const context = createContext({
+    const context = await createContext({
       config,
       clock,
       log,

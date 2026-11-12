@@ -52,6 +52,7 @@ describe("op registry", () => {
       | "connectors.list"
       | "connectors.sync"
       | "connectors.configure"
+      | "connectors.remove"
       | "service.shutdown"
       | "commitments.list"
       | "commitments.get"

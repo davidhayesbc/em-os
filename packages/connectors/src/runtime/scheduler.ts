@@ -8,6 +8,11 @@ export interface SchedulerDeps {
   createInvoker(def: ConnectorDefinition<unknown>, config: unknown): CapabilityInvoker;
   /** Read connector configs (enabled + validated config) from the service. */
   getConfig(id: string): { enabled: boolean; config: unknown } | undefined;
+  /**
+   * Optional async config preparation (e.g. restoring secrets). When provided it is awaited before
+   * the capability invoker is built, so the invoker receives a fully prepared config.
+   */
+  prepareConfig?(connectorId: string, config: unknown): Promise<unknown>;
   /** Run a sync for a connector; implemented by the service wiring. */
   runSync(
     def: ConnectorDefinition<unknown>,
@@ -30,15 +35,16 @@ export interface Scheduler {
  * layer can store a `intervalMinutes` override).
  */
 export function createScheduler(deps: SchedulerDeps): Scheduler {
-  const { registry, createInvoker, getConfig, runSync, clock, log } = deps;
+  const { registry, createInvoker, getConfig, prepareConfig, runSync, clock, log } = deps;
   const running = new Map<string, Promise<{ pages: number; items: number }>>();
   const timers = new Map<string, ReturnType<typeof setInterval>>();
   let started = false;
 
-  function contextFor(def: ConnectorDefinition<unknown>): ConnectorContext<unknown> {
+  async function contextFor(def: ConnectorDefinition<unknown>): Promise<ConnectorContext<unknown>> {
     const stored = getConfig(def.id);
     // Unconfigured connectors fall back to {} here; the invoker factory validates/defaults it.
-    const config = stored?.config ?? {};
+    const rawConfig = stored?.config ?? {};
+    const config = stored && prepareConfig ? await prepareConfig(def.id, rawConfig) : rawConfig;
     const caps = createInvoker(def, config);
     return {
       config,
@@ -91,7 +97,11 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       return { pages: 0, items: 0 };
     }
 
-    const ctx = contextFor(def);
+    const ctx = await contextFor(def);
+    const stillRunning = running.get(id);
+    if (stillRunning) {
+      throw new SchedulerConflict(id);
+    }
     const promise = runSync(def, ctx).finally(() => {
       running.delete(id);
     });
