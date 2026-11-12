@@ -1,6 +1,7 @@
 import { ApiError, type ConnectorRunState } from "@emos/api-contract";
 import {
   ConnectorError,
+  redactSecrets,
   SchedulerConflict,
   SchedulerNotFound,
   sanitizeLastError,
@@ -8,6 +9,7 @@ import {
 import {
   clearConnectorSecrets,
   readConnectorConfigs,
+  restoreSecrets,
   writeConnectorConfig,
 } from "../connectors/config.js";
 import type { Handler } from "../context.js";
@@ -44,13 +46,23 @@ export const connectorsSync: Handler<"connectors.sync"> = async (ctx, { id }) =>
     if (e instanceof ConnectorError) {
       const initial = ctx.store.syncState.get(id);
       const now = ctx.clock.now().toISOString();
+      const stored = readConnectorConfigs(ctx.db)[id];
+      let message = e.message;
+      if (stored?.config) {
+        try {
+          const restored = await restoreSecrets(ctx.secrets, id, stored.config);
+          message = redactSecrets(e.message, restored);
+        } catch {
+          message = redactSecrets(e.message, stored.config);
+        }
+      }
       ctx.store.syncState.set({
         connectorId: id,
         cursor: initial.cursor,
         state: "error" as ConnectorRunState,
         lastAttemptAt: now,
         lastSuccessAt: initial.lastSuccessAt,
-        lastError: sanitizeLastError(e.message) || null,
+        lastError: sanitizeLastError(message) || null,
         itemCount: initial.itemCount,
       });
       ctx.events.publish({ type: "sync.status", connectorId: id, state: "error" });
