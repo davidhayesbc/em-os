@@ -25,7 +25,7 @@ export interface BuildTodayInput {
   refresh: boolean;
 }
 
-export function buildToday(input: BuildTodayInput): Today {
+export function buildToday(input: BuildTodayInput): Today & { effectiveIds: string[] } {
   const {
     localDate,
     timeZone,
@@ -60,7 +60,9 @@ export function buildToday(input: BuildTodayInput): Today {
   });
 
   const effectiveIds =
-    dayPlanIds != null && !refresh ? dayPlanIds : selectedTop.map((item) => item.commitmentId);
+    dayPlanIds != null && !refresh
+      ? dayPlanIds.filter((id) => commitmentsById.has(id))
+      : selectedTop.map((item) => item.commitmentId);
 
   const top = effectiveIds.map((id) => {
     const commitment = commitmentsById.get(id);
@@ -162,5 +164,6 @@ export function buildToday(input: BuildTodayInput): Today {
     top,
     waitingOn,
     progress: { done: doneCount, total: top.length },
+    effectiveIds,
   };
 }

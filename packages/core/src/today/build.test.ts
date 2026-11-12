@@ -209,6 +209,28 @@ describe("buildToday", () => {
     expect(refreshed.top.map((t) => t.commitment.id)).toContain(c7.id);
   });
 
+  it("skips unknown day plan ids and counts progress over the surviving slots", () => {
+    const c1 = dueToday("one");
+    const result = buildToday({
+      localDate: date,
+      timeZone,
+      now,
+      onboarded: true,
+      profile: profile(),
+      commitments: [c1],
+      meetings: [],
+      goals: [],
+      sourceItems: [],
+      syncStates: [],
+      dayPlanIds: [c1.id, "deleted_unknown_id"],
+      refresh: false,
+    });
+
+    expect(result.top.map((t) => t.commitment.id)).toEqual([c1.id]);
+    expect(result.progress).toEqual({ done: 0, total: 1 });
+    expect(result.effectiveIds).toEqual([c1.id]);
+  });
+
   it("sorts waitingOn by due date with nulls last", () => {
     const w1 = baseCommitment({
       title: "w1",

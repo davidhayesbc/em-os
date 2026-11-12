@@ -200,4 +200,74 @@ describe("today API", () => {
     const refreshedIds = refreshed.top.map((t: { commitment: { id: string } }) => t.commitment.id);
     expect(refreshedIds).not.toEqual(firstIds);
   });
+
+  it("does not expose pinProvenance, ticketId or confidence on the today.get wire", async () => {
+    const dataDir = tmpDir();
+    const seedDb = openDb(dataLayout(dataDir).dbFile);
+    let selfId: string;
+    let seedCount = 0;
+    try {
+      const people = createPeopleRepo(seedDb, {
+        now: () => new Date(at),
+        id: (prefix) => `${prefix}_self_${++seedCount}`,
+      });
+      selfId = people.create(personInput("Self")).id;
+
+      const commitments = createCommitmentsRepo(seedDb, {
+        now: () => new Date(at),
+        id: (prefix) => `${prefix}_cmt_${++seedCount}`,
+      });
+      commitments.create(
+        commitmentInput({
+          title: "internal",
+          ownerId: selfId,
+          due: { date: localDate, time: null, timeZone: "UTC" },
+          pinned: true,
+          pinProvenance: "system",
+          ticketId: "tkt_internal_2",
+          confidence: 0.66,
+        }),
+      );
+      commitments.create(
+        commitmentInput({
+          title: "waiting",
+          ownerId: selfId,
+          direction: "owed_to_me",
+          due: { date: localDate, time: null, timeZone: "UTC" },
+          pinned: true,
+          pinProvenance: "system",
+          ticketId: "tkt_internal_3",
+          confidence: 0.75,
+        }),
+      );
+    } finally {
+      seedDb.close();
+    }
+
+    const svc = await startTestService({ dataDir });
+    const client = createClient({
+      transport: httpTransport(`http://127.0.0.1:${svc.port}`),
+      token: svc.token,
+    });
+
+    const result = await client.call("today.get", { localDate });
+    expect(result.top).toHaveLength(1);
+    expect(result.waitingOn).toHaveLength(1);
+
+    const topCommitment = result.top[0]?.commitment;
+    const waitingCommitment = result.waitingOn[0];
+    expect(topCommitment).toBeDefined();
+    expect(waitingCommitment).toBeDefined();
+    expect(topCommitment).not.toHaveProperty("pinProvenance");
+    expect(topCommitment).not.toHaveProperty("ticketId");
+    expect(topCommitment).not.toHaveProperty("confidence");
+    expect(waitingCommitment).not.toHaveProperty("pinProvenance");
+    expect(waitingCommitment).not.toHaveProperty("ticketId");
+    expect(waitingCommitment).not.toHaveProperty("confidence");
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('"pinProvenance"');
+    expect(serialized).not.toContain('"ticketId"');
+    expect(serialized).not.toContain('"confidence"');
+  });
 });

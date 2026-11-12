@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Commitment, IsoDateTime, LocalDate } from "../entities/index.js";
+import { CommitmentView, IsoDateTime, LocalDate } from "../entities/index.js";
 import { Classification } from "../entities/meeting.js";
 import { defineOp } from "../op.js";
 import { MeetingPrep } from "./prep.js";
@@ -68,11 +68,11 @@ export const Today = z.object({
   top: z.array(
     z.object({
       item: RankedItem.nullable(),
-      commitment: Commitment,
+      commitment: CommitmentView,
       done: z.boolean(),
     }),
   ),
-  waitingOn: z.array(Commitment),
+  waitingOn: z.array(CommitmentView),
   progress: z.object({
     done: z.number().int(),
     total: z.number().int(),

@@ -638,8 +638,8 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
     header: { meetingCount: number; freeMinutes: number; toTriage: number; lastSyncAt: IsoDateTime | null; failingConnectors: string[] };
     weekLoad: DayLoad[];
     timeline: { meetings: { id: string; title: string; start: IsoDateTime; end: IsoDateTime; classification: Classification; prepStatus: MeetingPrep["status"] }[]; plan: DayPlan };
-    top: { item: RankedItem | null; commitment: Commitment; done: boolean }[];   // done items keep their slot; item null when no longer ranked (done)
-    waitingOn: Commitment[];                                                   // owed_to_me active, due asc (null last)
+    top: { item: RankedItem | null; commitment: CommitmentView; done: boolean }[];   // wire view omits confidence/pinProvenance/ticketId
+    waitingOn: CommitmentView[];                                                   // owed_to_me active, due asc (null last); wire view omits internal fields above
     progress: { done: number; total: number };
   }
   interface DayPlansRepo { get(localDate: LocalDate): string[] | null; set(localDate: LocalDate, ids: string[]): void }

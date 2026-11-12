@@ -54,7 +54,7 @@ function gatherToday(
     ctx.store.dayPlans.set(localDate, dayPlanIds);
   }
 
-  return buildToday({
+  const result = buildToday({
     localDate,
     timeZone,
     now,
@@ -74,6 +74,12 @@ function gatherToday(
     dayPlanIds,
     refresh,
   });
+
+  if (!refresh && dayPlanIds != null && dayPlanIds.length !== result.effectiveIds.length) {
+    ctx.store.dayPlans.set(localDate, result.effectiveIds);
+  }
+
+  return result;
 }
 
 export const todayGet: Handler<"today.get"> = (ctx, input) => gatherToday(ctx, input, false);
