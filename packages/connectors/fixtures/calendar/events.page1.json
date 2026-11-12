@@ -1,0 +1,70 @@
+{
+  "items": [
+    {
+      "externalId": "evt-1",
+      "title": "Sprint planning",
+      "start": "2026-10-20T13:00:00.000Z",
+      "end": "2026-10-20T14:00:00.000Z",
+      "allDay": false,
+      "status": "confirmed",
+      "attendees": [],
+      "url": "https://cal.example.com/e/1",
+      "recurringEventId": null
+    },
+    {
+      "externalId": "evt-2",
+      "title": "Cancelled 1:1",
+      "start": "2026-10-21T15:00:00.000Z",
+      "end": "2026-10-21T16:00:00.000Z",
+      "allDay": false,
+      "status": "cancelled",
+      "attendees": [
+        {
+          "email": "alex@example.com",
+          "displayName": "Alex Rivera",
+          "self": true,
+          "responseStatus": "accepted"
+        },
+        {
+          "email": "sam@example.com",
+          "displayName": "Sam Chen",
+          "self": false,
+          "responseStatus": "needsAction"
+        }
+      ],
+      "url": "https://cal.example.com/e/2",
+      "recurringEventId": null
+    },
+    {
+      "externalId": "evt-3",
+      "title": "Team standup",
+      "start": "2026-10-22T09:00:00.000Z",
+      "end": "2026-10-22T09:30:00.000Z",
+      "allDay": false,
+      "status": "confirmed",
+      "attendees": [
+        {
+          "email": "alex@example.com",
+          "displayName": "Alex Rivera",
+          "self": true,
+          "responseStatus": "accepted"
+        },
+        {
+          "email": "jordan@example.com",
+          "displayName": "Jordan Patel",
+          "self": false,
+          "responseStatus": "tentative"
+        },
+        {
+          "email": "priya@example.com",
+          "displayName": "Priya Nair",
+          "self": false,
+          "responseStatus": "declined"
+        }
+      ],
+      "url": "https://cal.example.com/e/3",
+      "recurringEventId": null
+    }
+  ],
+  "nextCursor": "page2"
+}

@@ -1,3 +1,4 @@
+export * from "./calendar/index.js";
 export * from "./mcp/index.js";
 export * from "./runtime/appliers.js";
 export * from "./runtime/errors.js";
