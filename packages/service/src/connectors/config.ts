@@ -6,7 +6,11 @@ import type { Db } from "@emos/store-sqlite";
 const KEY = "connector_configs";
 const SANITIZED_KEY = "connector_configs_sanitized_v1";
 
-/** Maximum nesting depth allowed for connector config containers. Nodes at or beyond this depth are rejected. */
+/**
+ * Maximum nesting depth allowed for connector config containers. Nodes at or beyond this depth are
+ * rejected on the write path; restoreSecretsRecursive still accepts depth-64 legacy rows so they
+ * keep resolving after the cap is tightened.
+ */
 const MAX_CONFIG_DEPTH = 64;
 
 /** Field names that signal a secret value (case-insensitive). */
@@ -362,10 +366,11 @@ export async function writeConnectorConfig(
     const config = await stripSecrets(secrets, id, value.config);
     const currentRefs = collectSecretRefs(config);
 
-    // Persist the new config before deleting stale secrets. If a delete fails, the persisted
-    // config still only references secrets that were just written successfully; the stale
-    // secrets that could not be deleted become orphans rather than dangling refs. A retry will
-    // no-op on the already-deleted entries and re-attempt the failed one.
+    // Persist the new config before deleting stale secrets. Every remaining `$secretRef` was just
+    // written successfully, so the persisted config resolves even if deleting a stale secret fails.
+    // A stale secret whose delete fails is orphaned (accepted, same class as numeric-path orphaning
+    // in N1) and a retry will not re-attempt it because `previousRefs` is recomputed from the
+    // persisted row. The caller sees an error, but the config change is already committed.
     configs[id] = { enabled: value.enabled, config };
     db.prepare(
       "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",

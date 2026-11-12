@@ -864,6 +864,11 @@ describe("legacy over-deep config recovery", () => {
       }),
     );
 
+    // Mirror a legacy keychain entry at the 65-deep path. Over-deep subtrees are skipped when
+    // collecting refs, so this entry is orphaned rather than deleted when the row is rewritten.
+    const deepPath = Array.from({ length: 65 }, (_, i) => `k${i}`).join(".");
+    await secrets.set(`connector:deep:${deepPath}`, "LEGACY-DEEP-SECRET");
+
     // Caller-input validation still rejects a new config that exceeds the depth cap, but the
     // stored over-deep row itself can be rewritten and removed without DB surgery.
     await expect(
@@ -872,6 +877,7 @@ describe("legacy over-deep config recovery", () => {
 
     await expect(clearConnectorSecrets(db, secrets, "deep")).resolves.toBeUndefined();
     expect(readConnectorConfigs(db).deep).toBeUndefined();
+    expect(secrets.values.has(`connector:deep:${deepPath}`)).toBe(true);
   });
 });
 
