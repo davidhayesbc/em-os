@@ -1,10 +1,10 @@
 import { createClient, httpTransport } from "@emos/api-contract";
-import { type ConnectorDefinition, fixtureInvoker } from "@emos/connectors";
+import { type ConnectorDefinition, ConnectorError, fixtureInvoker } from "@emos/connectors";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { connectorRegistry } from "../connectors/registry.js";
 import { createEventBus } from "../events.js";
-import { cleanup, startTestService } from "../test-helpers.js";
+import { cleanup, spyLogger, startTestService } from "../test-helpers.js";
 
 afterEach(cleanup);
 
@@ -586,6 +586,114 @@ describe("connectors API", () => {
     expect(state?.lastError).toBe(row?.last_error);
   });
 
+  it("normalizes an all-control sync error to null in sync_state and connectors.list", async () => {
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z");
+    const clock: import("@emos/core").Clock = { now: () => fixedNow };
+    const { ConnectorError } = await import("@emos/connectors");
+    const throwingConnector: ConnectorDefinition<unknown> = {
+      id: "all-control-error",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      sync(): AsyncIterable<import("@emos/connectors").SyncPage> {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next: () => Promise.reject(new ConnectorError("schema", "\n\u001b\u0000")),
+              return: () => Promise.resolve({ done: true, value: undefined }),
+            };
+          },
+        } as AsyncIterable<import("@emos/connectors").SyncPage>;
+      },
+    };
+    const svc = await startTestService({
+      clock,
+      registry: [
+        ...connectorRegistry,
+        { def: throwingConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "all-control-error",
+      enabled: true,
+      config: {},
+    });
+
+    const result = await client.call("connectors.sync", { id: "all-control-error" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const row = svc.db
+      .prepare("SELECT last_error FROM sync_state WHERE connector_id = ?")
+      .get<{ last_error: string | null }>("all-control-error");
+    expect(row).toBeDefined();
+    expect(row?.last_error).toBeNull();
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "all-control-error");
+    expect(state?.lastError).toBeNull();
+  });
+
+  it("normalizes an all-control last_error to null on connectors.list", async () => {
+    const svc = await startTestService();
+    const client = clientFor(svc);
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z").toISOString();
+
+    svc.db
+      .prepare(
+        "INSERT INTO sync_state (connector_id, state, cursor, last_attempt_at, last_success_at, last_error, item_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("synthetic-fixture", "error", null, fixedNow, null, "\n\u001b\u0000", 0);
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "synthetic-fixture");
+    expect(state?.lastError).toBeNull();
+  });
+
+  it("sanitizes a legacy last_error row directly from sync_state on connectors.list", async () => {
+    const svc = await startTestService();
+    const client = clientFor(svc);
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z").toISOString();
+
+    // Build a 3000-character legacy last_error containing control characters.
+    let raw = "legacy\n\u001b[31m";
+    raw = raw.padEnd(3000, "x");
+    expect(raw).toHaveLength(3000);
+    expect(raw).toContain("\n");
+    expect(raw).toContain("\u001b");
+
+    svc.db
+      .prepare(
+        "INSERT INTO sync_state (connector_id, state, cursor, last_attempt_at, last_success_at, last_error, item_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("synthetic-fixture", "error", null, fixedNow, null, raw, 0);
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "synthetic-fixture");
+    expect(state).toBeDefined();
+    expect(state?.lastError).not.toBeNull();
+    const returned = state?.lastError ?? "";
+    expect(Array.from(returned)).toHaveLength(500);
+    expect(returned).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+
+    // The stored row is left untouched.
+    const row = svc.db
+      .prepare("SELECT last_error FROM sync_state WHERE connector_id = ?")
+      .get<{ last_error: string }>("synthetic-fixture");
+    expect(row?.last_error).toBe(raw);
+  });
+
   it("removes a connector config and deletes its keychain secrets", async () => {
     const svc = await startTestService();
     const client = clientFor(svc);
@@ -610,5 +718,205 @@ describe("connectors API", () => {
     >;
     expect(configs["synthetic-fixture"]).toBeUndefined();
     await expect(svc.secrets.get("connector:synthetic-fixture:secretKey")).resolves.toBeNull();
+  });
+
+  it("redacts resolved secret values from sync_state and connectors.list when sync() throws", async () => {
+    const sentinel = "S1-SYNC-SENTINEL-12345";
+    const log = spyLogger();
+    const leakingConnector: ConnectorDefinition<unknown> = {
+      id: "leaks-in-sync",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      // biome-ignore lint/correctness/useYield: test throws before the first page on purpose.
+      async *sync(ctx) {
+        throw new ConnectorError("schema", `boom ${JSON.stringify(ctx.config)}`);
+      },
+    };
+    const svc = await startTestService({
+      log,
+      registry: [
+        ...connectorRegistry,
+        { def: leakingConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "leaks-in-sync",
+      enabled: true,
+      config: { apiKey: sentinel, baseUrl: "https://example.com" },
+    });
+
+    const result = await client.call("connectors.sync", { id: "leaks-in-sync" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const row = svc.db
+      .prepare("SELECT * FROM sync_state WHERE connector_id = ?")
+      .get<Record<string, unknown>>("leaks-in-sync");
+    expect(row).toBeDefined();
+    const rowText = JSON.stringify(row);
+    expect(rowText).not.toContain(sentinel);
+    expect(row?.state).toBe("error");
+    expect(typeof row?.last_error).toBe("string");
+    const lastError = row?.last_error as string;
+    expect(lastError.length).toBeLessThanOrEqual(500);
+    expect(lastError).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    expect(lastError).toContain("baseUrl");
+    expect(lastError).toContain("https://example.com");
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      state: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "leaks-in-sync");
+    expect(state?.state).toBe("error");
+    expect(state?.lastError).not.toContain(sentinel);
+    expect(state?.lastError).toContain("https://example.com");
+
+    const logText = JSON.stringify(log.calls);
+    expect(logText).not.toContain(sentinel);
+  });
+
+  it("redacts resolved secret values from the createInvoker / prepare-config error path", async () => {
+    const sentinel = "S1-INVOKER-SENTINEL-99999";
+    const log = spyLogger();
+    const strictConnector: ConnectorDefinition<unknown> = {
+      id: "leaks-in-invoker",
+      kind: "calendar",
+      configSchema: z.object({ apiKey: z.string(), baseUrl: z.string() }),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      log,
+      registry: [
+        ...connectorRegistry,
+        {
+          def: strictConnector,
+          createInvoker: (config) => {
+            throw new Error(`invoker boom ${JSON.stringify(config)}`);
+          },
+        },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "leaks-in-invoker",
+      enabled: true,
+      config: { apiKey: sentinel, baseUrl: "https://example.com" },
+    });
+
+    const result = await client.call("connectors.sync", { id: "leaks-in-invoker" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const row = svc.db
+      .prepare("SELECT * FROM sync_state WHERE connector_id = ?")
+      .get<Record<string, unknown>>("leaks-in-invoker");
+    expect(row).toBeDefined();
+    const rowText = JSON.stringify(row);
+    expect(rowText).not.toContain(sentinel);
+    expect(row?.state).toBe("error");
+    const lastError = row?.last_error as string;
+    expect(lastError).not.toContain(sentinel);
+    expect(lastError).toContain("https://example.com");
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "leaks-in-invoker");
+    expect(state?.lastError).not.toContain(sentinel);
+    expect(state?.lastError).toContain("https://example.com");
+
+    const logText = JSON.stringify(log.calls);
+    expect(logText).not.toContain(sentinel);
+  });
+
+  it("keeps non-secret config values visible in last_error", async () => {
+    const endpoint = "https://api.example.org";
+    const leakingConnector: ConnectorDefinition<unknown> = {
+      id: "no-secrets",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      // biome-ignore lint/correctness/useYield: test throws before the first page on purpose.
+      async *sync(ctx) {
+        throw new ConnectorError("schema", `boom ${JSON.stringify(ctx.config)}`);
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: leakingConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "no-secrets",
+      enabled: true,
+      config: { endpoint },
+    });
+
+    await client.call("connectors.sync", { id: "no-secrets" });
+
+    const row = svc.db
+      .prepare("SELECT last_error FROM sync_state WHERE connector_id = ?")
+      .get<{ last_error: string }>("no-secrets");
+    expect(row?.last_error).toBe(`boom {"endpoint":"${endpoint}"}`);
+  });
+
+  it("redacts raw and JSON-escaped secret occurrences in last_error", async () => {
+    const sentinel = 'sec"ret\\!';
+    const leakingConnector: ConnectorDefinition<unknown> = {
+      id: "escaped-secret",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      // biome-ignore lint/correctness/useYield: test throws before the first page on purpose.
+      async *sync(ctx) {
+        const cfg = ctx.config as { apiKey: string };
+        throw new ConnectorError(
+          "schema",
+          `raw: ${cfg.apiKey} json: ${JSON.stringify({ apiKey: cfg.apiKey })}`,
+        );
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: leakingConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "escaped-secret",
+      enabled: true,
+      config: { apiKey: sentinel },
+    });
+
+    await client.call("connectors.sync", { id: "escaped-secret" });
+
+    const row = svc.db
+      .prepare("SELECT last_error FROM sync_state WHERE connector_id = ?")
+      .get<{ last_error: string }>("escaped-secret");
+    expect(row?.last_error).toBe('raw: [redacted] json: {"apiKey":[redacted]}');
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "escaped-secret");
+    expect(state?.lastError).toBe('raw: [redacted] json: {"apiKey":[redacted]}');
   });
 });

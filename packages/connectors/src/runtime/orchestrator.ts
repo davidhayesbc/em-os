@@ -1,7 +1,7 @@
 import type { Clock, Store, SyncState } from "@emos/core";
 import { ConnectorError } from "./errors.js";
 import { classifyError, extractServerName } from "./network.js";
-import { sanitizeLastError } from "./sanitize.js";
+import { redactSecrets, sanitizeLastError } from "./sanitize.js";
 import type {
   Appliers,
   ConnectorContext,
@@ -186,7 +186,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
           state: "error",
           lastAttemptAt: at,
           lastSuccessAt: initial.lastSuccessAt,
-          lastError: sanitizeLastError(message),
+          lastError: sanitizeLastError(redactSecrets(message, deps.ctx.config)) || null,
           itemCount: initial.itemCount + state.items,
         });
         return { pages: state.pages, items: state.items };
@@ -200,7 +200,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
           state: "offline",
           lastAttemptAt: at,
           lastSuccessAt: initial.lastSuccessAt,
-          lastError: sanitizeLastError(message),
+          lastError: sanitizeLastError(redactSecrets(message, deps.ctx.config)) || null,
           itemCount: initial.itemCount + state.items,
         });
         return { pages: state.pages, items: state.items };
@@ -221,7 +221,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
     state: "error",
     lastAttemptAt: at,
     lastSuccessAt: initial.lastSuccessAt,
-    lastError: sanitizeLastError(exhausted),
+    lastError: sanitizeLastError(redactSecrets(exhausted, deps.ctx.config)) || null,
     itemCount: initial.itemCount + state.items,
   });
   return { pages: state.pages, items: state.items };
