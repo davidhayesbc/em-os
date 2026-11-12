@@ -3,6 +3,7 @@ import { type ConnectorDefinition, fixtureInvoker } from "@emos/connectors";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { connectorRegistry } from "../connectors/registry.js";
+import { createEventBus } from "../events.js";
 import { cleanup, startTestService } from "../test-helpers.js";
 
 afterEach(cleanup);
@@ -288,6 +289,83 @@ describe("connectors API", () => {
     expect(state?.lastSuccessAt).toBeNull();
   });
 
+  it("sets sync state to error and publishes status when a null secret reaches the invoker", async () => {
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z");
+    const clock: import("@emos/core").Clock = { now: () => fixedNow };
+    const events = createEventBus();
+    const published: Array<{ type: string; connectorId: string; state: string }> = [];
+    events.subscribe((e) => {
+      if (e.type === "sync.status") {
+        published.push(e as { type: string; connectorId: string; state: string });
+      }
+    });
+
+    const nullConnector: ConnectorDefinition<unknown> = {
+      id: "null-secret",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      clock,
+      events,
+      registry: [
+        ...connectorRegistry,
+        {
+          def: nullConnector,
+          createInvoker: (config) => {
+            if ((config as { token?: unknown }).token === null) {
+              throw new Error("token must not be null");
+            }
+            return fixtureInvoker({});
+          },
+        },
+      ],
+    });
+    const client = clientFor(svc);
+
+    // Seed a legacy row with a null secret value (the API's strict mode now rejects null, but
+    // legacy rows and third-party edits can still produce it).
+    svc.db
+      .prepare(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      )
+      .run(
+        "connector_configs",
+        JSON.stringify({
+          "null-secret": { enabled: true, config: { token: null } },
+        }),
+      );
+
+    const result = await client.call("connectors.sync", { id: "null-secret" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      state: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "null-secret");
+    expect(state).toBeDefined();
+    expect(state?.state).toBe("error");
+    expect(state?.lastError).toContain("token must not be null");
+
+    const row = svc.db
+      .prepare("SELECT last_attempt_at FROM sync_state WHERE connector_id = ?")
+      .get<{ last_attempt_at: string }>("null-secret");
+    expect(row?.last_attempt_at).toBe(fixedNow.toISOString());
+
+    expect(published).toContainEqual({
+      type: "sync.status",
+      connectorId: "null-secret",
+      state: "error",
+    });
+  });
+
   it("returns conflict when a second connectors.sync runs for the same id", async () => {
     const slowConnector: ConnectorDefinition<unknown> = {
       id: "slow",
@@ -316,5 +394,111 @@ describe("connectors API", () => {
     expect(a.status).toBe("fulfilled");
     expect(b.status).toBe("rejected");
     expect((b as PromiseRejectedResult).reason).toMatchObject({ code: "conflict" });
+  });
+
+  it("restores secrets before building a strict-schema invoker", async () => {
+    let invokerConfig: unknown;
+    let syncConfig: unknown;
+    const strictConnector: ConnectorDefinition<unknown> = {
+      id: "strict-secret",
+      kind: "calendar",
+      configSchema: z.object({ token: z.string() }),
+      requiredCapabilities: ["fixture.ping"],
+      defaultIntervalMinutes: 15,
+      async *sync(ctx) {
+        syncConfig = ctx.config;
+        await ctx.caps.call("fixture.ping", {}, z.object({ ok: z.boolean() }));
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        {
+          def: strictConnector,
+          createInvoker: (config) => {
+            invokerConfig = config;
+            return fixtureInvoker({ "fixture.ping": [{ ok: true }] });
+          },
+        },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "strict-secret",
+      enabled: true,
+      config: { token: "PRESENT-TOKEN" },
+    });
+    await client.call("connectors.sync", { id: "strict-secret" });
+
+    expect(invokerConfig).toEqual({ token: "PRESENT-TOKEN" });
+    expect(syncConfig).toEqual({ token: "PRESENT-TOKEN" });
+  });
+
+  it("sets sync state to error when a strict-schema invoker is missing a secret", async () => {
+    const strictConnector: ConnectorDefinition<unknown> = {
+      id: "strict-missing",
+      kind: "calendar",
+      configSchema: z.object({ token: z.string() }),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: strictConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "strict-missing",
+      enabled: true,
+      config: { token: "MISSING-SECRET" },
+    });
+    await svc.secrets.delete("connector:strict-missing:token");
+
+    const result = await client.call("connectors.sync", { id: "strict-missing" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      state: string;
+      lastSuccessAt: string | null;
+    }>;
+    const state = list.find((c) => c.id === "strict-missing");
+    expect(state).toBeDefined();
+    expect(state?.state).toBe("error");
+    expect(state?.lastSuccessAt).toBeNull();
+  });
+
+  it("removes a connector config and deletes its keychain secrets", async () => {
+    const svc = await startTestService();
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "synthetic-fixture",
+      enabled: true,
+      config: { secretKey: "to-remove" },
+    });
+    await expect(svc.secrets.get("connector:synthetic-fixture:secretKey")).resolves.toBe(
+      "to-remove",
+    );
+
+    await client.call("connectors.remove", { id: "synthetic-fixture" });
+
+    const row = svc.db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    const configs = JSON.parse(row?.value ?? "{}") as Record<
+      string,
+      { enabled: boolean; config: unknown }
+    >;
+    expect(configs["synthetic-fixture"]).toBeUndefined();
+    await expect(svc.secrets.get("connector:synthetic-fixture:secretKey")).resolves.toBeNull();
   });
 });

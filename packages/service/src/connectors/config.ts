@@ -1,9 +1,10 @@
 import { ApiError } from "@emos/api-contract";
 import { ConnectorError } from "@emos/connectors";
-import type { SecretStore } from "@emos/core";
+import type { Logger, SecretStore } from "@emos/core";
 import type { Db } from "@emos/store-sqlite";
 
 const KEY = "connector_configs";
+const SANITIZED_KEY = "connector_configs_sanitized_v1";
 
 /** Field names that signal a secret value (case-insensitive). */
 const SECRET_FIELD_RE = /secret|token|password|api[_-]?key|private/i;
@@ -23,8 +24,18 @@ function secretStoreKey(connectorId: string, path: string): string {
 
 type JsonPath = Array<string | number>;
 
+/** Escape dots/backslashes in a path segment so `a.b` and `a\.b` cannot collide. */
+function escapePathSegment(segment: string): string {
+  return segment.replace(/\\/g, "\\\\").replace(/\./g, "\\.");
+}
+
 function pathString(path: JsonPath): string {
-  return path.join(".");
+  // NOTE: numeric array indices and numeric-looking object keys collide (e.g. token.0 vs
+  // token.{"0":"x"}). Future callers should escape numeric string segments if they need to
+  // distinguish arrays from objects with numeric-looking keys.
+  return path
+    .map((segment) => (typeof segment === "number" ? String(segment) : escapePathSegment(segment)))
+    .join(".");
 }
 
 function isSecretMarker(value: unknown): value is { $secretRef: string } {
@@ -120,6 +131,7 @@ async function stripSecretsRecursive(
   connectorId: string,
   value: unknown,
   path: JsonPath,
+  strict: boolean,
 ): Promise<unknown> {
   // A pre-existing marker is a sentinel, not a container; do not recurse into it.
   if (isSecretMarker(value)) return value;
@@ -131,10 +143,21 @@ async function stripSecretsRecursive(
     return { $secretRef: field };
   }
 
+  if (isSecretPath(path) && (value === null || typeof value !== "object")) {
+    if (strict) {
+      const field = secretFieldForPath(path) as string;
+      throw new ApiError(
+        "invalid_input",
+        `Secret field ${field} at ${pathString(path)} must be a string`,
+      );
+    }
+    return value;
+  }
+
   if (Array.isArray(value)) {
     const out: unknown[] = [];
     for (let i = 0; i < value.length; i++) {
-      out.push(await stripSecretsRecursive(secrets, connectorId, value[i], [...path, i]));
+      out.push(await stripSecretsRecursive(secrets, connectorId, value[i], [...path, i], strict));
     }
     return out;
   }
@@ -142,7 +165,7 @@ async function stripSecretsRecursive(
   if (typeof value === "object" && value !== null) {
     const out: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value)) {
-      out[key] = await stripSecretsRecursive(secrets, connectorId, val, [...path, key]);
+      out[key] = await stripSecretsRecursive(secrets, connectorId, val, [...path, key], strict);
     }
     return out;
   }
@@ -158,8 +181,10 @@ export async function stripSecrets(
   secrets: SecretStore,
   connectorId: string,
   config: unknown,
+  opts?: { strict?: boolean },
 ): Promise<unknown> {
-  return stripSecretsRecursive(secrets, connectorId, config, []);
+  const strict = opts?.strict ?? true;
+  return stripSecretsRecursive(secrets, connectorId, config, [], strict);
 }
 
 /**
@@ -271,6 +296,85 @@ export async function writeConnectorConfig(
     if (!currentRefs.includes(ref)) {
       await secrets.delete(secretStoreKey(id, ref));
     }
+  }
+}
+
+/**
+ * One-time re-sanitisation of connector configs that were written before secret hardening.
+ * Any plaintext secret string still nested in `settings.connector_configs` is moved into the
+ * keychain and replaced by a marker. Guarded by a flag in `settings` so it normally runs at most
+ * once per database. If any individual connector fails (e.g. the keychain is unavailable), the flag
+ * is left unset so the next start retries only the connectors that still need sanitising.
+ */
+export async function sanitizeLegacyConnectorConfigs(
+  db: Db,
+  secrets: SecretStore,
+  log?: Logger,
+): Promise<void> {
+  const flagRow = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get<{ value: string }>(SANITIZED_KEY);
+  if (flagRow?.value === "1") return;
+
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get<{ value: string }>(KEY);
+  if (!row) {
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(SANITIZED_KEY, "1");
+    return;
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(row.value) as Record<string, unknown>;
+  } catch (e) {
+    log?.warn("connector_configs_sanitizer.parse_failed", {
+      errorName: e instanceof Error ? e.name : typeof e,
+    });
+    // Leave the corrupt row untouched; it will be retried on the next start.
+    return;
+  }
+
+  const configs: Record<string, StoredConnectorConfig> = {};
+  // NOTE: this rewrite rebuilds each entry from `enabled` + `config` only; any future sibling
+  // fields added to StoredConnectorConfig are silently dropped.
+  let allSucceeded = true;
+  for (const [id, value] of Object.entries(parsed)) {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "enabled" in value &&
+      typeof (value as { enabled: unknown }).enabled === "boolean"
+    ) {
+      const enabled = (value as { enabled: boolean }).enabled;
+      const rawConfig = (value as { config?: unknown }).config ?? {};
+      try {
+        const config = await stripSecrets(secrets, id, rawConfig, { strict: false });
+        configs[id] = { enabled, config };
+      } catch (e) {
+        allSucceeded = false;
+        log?.warn("connector_configs_sanitizer.connector_failed", {
+          connectorId: id,
+          errorName: e instanceof Error ? e.name : typeof e,
+        });
+        // Keep the original config for this connector so the next start retries it.
+        configs[id] = { enabled, config: rawConfig };
+      }
+    }
+  }
+
+  db.prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(KEY, JSON.stringify(configs));
+
+  if (allSucceeded) {
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(SANITIZED_KEY, "1");
+  } else {
+    log?.warn("connector_configs_sanitizer.incomplete", {
+      retryCount: Object.keys(configs).length,
+    });
   }
 }
 

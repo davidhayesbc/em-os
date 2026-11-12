@@ -1,11 +1,14 @@
+import { ApiError } from "@emos/api-contract";
 import { ConnectorError } from "@emos/connectors";
 import { openDb } from "@emos/store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { spyLogger } from "../test-helpers.js";
 import {
   clearConnectorSecrets,
   isSecretField,
   readConnectorConfigs,
   restoreSecrets,
+  sanitizeLegacyConnectorConfigs,
   stripSecrets,
   writeConnectorConfig,
 } from "./config.js";
@@ -399,5 +402,158 @@ describe("clearConnectorSecrets", () => {
     expect(secrets.values.has("connector:conn:apiKeys.1")).toBe(false);
     expect(readConnectorConfigs(db).conn).toBeUndefined();
     expect(secrets.log.filter((e) => e.op === "delete")).toHaveLength(3);
+  });
+});
+
+describe("pathString encoding", () => {
+  it("keeps keys with dots distinct from nested keys", async () => {
+    const secrets = createRecordingSecretStore();
+    await stripSecrets(secrets, "collide", { token: { "a.b": "ONE" } });
+    await stripSecrets(secrets, "collide", { token: { a: { b: "TWO" } } });
+    expect(secrets.values.get("connector:collide:token.a\\.b")).toBe("ONE");
+    expect(secrets.values.get("connector:collide:token.a.b")).toBe("TWO");
+  });
+});
+
+describe("stripSecrets strictness", () => {
+  it("rejects non-string scalar secret values at configure time", async () => {
+    const secrets = createRecordingSecretStore();
+    await expect(stripSecrets(secrets, "conn", { token: 987654 })).rejects.toThrow(ApiError);
+    await expect(stripSecrets(secrets, "conn", { token: 987654 })).rejects.toThrow(
+      "Secret field token at token must be a string",
+    );
+  });
+
+  it("rejects boolean secret values at configure time", async () => {
+    const secrets = createRecordingSecretStore();
+    await expect(stripSecrets(secrets, "conn", { token: true })).rejects.toThrow(ApiError);
+  });
+
+  it("rejects null secret values at configure time", async () => {
+    const secrets = createRecordingSecretStore();
+    await expect(stripSecrets(secrets, "conn", { token: null })).rejects.toThrow(ApiError);
+    await expect(stripSecrets(secrets, "conn", { token: null })).rejects.toThrow(
+      "Secret field token at token must be a string",
+    );
+  });
+
+  it("allows existing markers and non-secret scalars", async () => {
+    const secrets = createRecordingSecretStore();
+    const out = await stripSecrets(secrets, "conn", { token: { $secretRef: "token" }, count: 7 });
+    expect(out).toEqual({ token: { $secretRef: "token" }, count: 7 });
+  });
+});
+
+describe("sanitizeLegacyConnectorConfigs", () => {
+  it("moves nested plaintext legacy secrets into the keychain and rewrites the settings row", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "connector_configs",
+      JSON.stringify({
+        legacy: { enabled: true, config: { auth: { token: "LEGACY-PLAINTEXT-TOKEN" } } },
+      }),
+    );
+
+    await sanitizeLegacyConnectorConfigs(db, secrets);
+
+    const row = db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing row");
+    expect(JSON.stringify(row)).not.toContain("LEGACY-PLAINTEXT-TOKEN");
+    const configs = JSON.parse(row.value) as Record<string, { enabled: boolean; config: unknown }>;
+    expect(configs.legacy?.config).toEqual({ auth: { token: { $secretRef: "token" } } });
+    expect(secrets.values.get("connector:legacy:auth.token")).toBe("LEGACY-PLAINTEXT-TOKEN");
+  });
+
+  it("runs only once per database", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "connector_configs",
+      JSON.stringify({
+        legacy: { enabled: true, config: { secretKey: "FIRST" } },
+      }),
+    );
+
+    await sanitizeLegacyConnectorConfigs(db, secrets);
+    secrets.log.length = 0;
+    secrets.values.clear();
+    db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(
+      JSON.stringify({
+        legacy: { enabled: true, config: { secretKey: "SECOND" } },
+      }),
+      "connector_configs",
+    );
+
+    await sanitizeLegacyConnectorConfigs(db, secrets);
+
+    expect(secrets.log).toHaveLength(0);
+    const row = db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(JSON.parse(row?.value ?? "{}").legacy.config.secretKey).toBe("SECOND");
+  });
+
+  it("retries a connector whose secret store set failed and scrubs plaintext once the store recovers", async () => {
+    const db = openDb(":memory:");
+    const secrets = createRecordingSecretStore();
+    let shouldThrow = true;
+    secrets.set = async (key, value) => {
+      secrets.log.push({ op: "set", key, value });
+      if (shouldThrow) throw new Error("keychain locked");
+      secrets.values.set(key, value);
+    };
+
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(
+      "connector_configs",
+      JSON.stringify({
+        legacy: { enabled: true, config: { secretKey: "LEGACY-PLAINTEXT" } },
+      }),
+    );
+
+    const spy = spyLogger();
+    await sanitizeLegacyConnectorConfigs(db, secrets, spy);
+
+    // The one-shot flag is left unset so the next start retries.
+    const flagRow1 = db
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get<{ value: string }>("connector_configs_sanitized_v1");
+    expect(flagRow1?.value).not.toBe("1");
+
+    // The failing connector's plaintext is left in place until retry succeeds.
+    const row1 = db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(JSON.parse(row1?.value ?? "{}").legacy.config.secretKey).toBe("LEGACY-PLAINTEXT");
+
+    // The sanitizer attempted the failing connector once and logged the failure.
+    expect(secrets.log.filter((e) => e.op === "set")).toHaveLength(1);
+    expect(
+      spy.calls.some(
+        (c) => c.level === "warn" && c.event === "connector_configs_sanitizer.connector_failed",
+      ),
+    ).toBe(true);
+
+    // Simulate the keychain becoming available again.
+    shouldThrow = false;
+    secrets.log.length = 0;
+    await sanitizeLegacyConnectorConfigs(db, secrets, spy);
+
+    const flagRow2 = db
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get<{ value: string }>("connector_configs_sanitized_v1");
+    expect(flagRow2?.value).toBe("1");
+
+    const row2 = db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(JSON.stringify(row2)).not.toContain("LEGACY-PLAINTEXT");
+    expect(JSON.parse(row2?.value ?? "{}").legacy.config.secretKey).toEqual({
+      $secretRef: "secretKey",
+    });
+    expect(secrets.values.get("connector:legacy:secretKey")).toBe("LEGACY-PLAINTEXT");
   });
 });
