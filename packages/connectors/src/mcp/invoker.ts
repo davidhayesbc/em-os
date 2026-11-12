@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { z } from "zod";
 import { ConnectorError } from "../runtime/errors.js";
+import { classifyNetworkError } from "../runtime/network.js";
 import type { CapabilityInvoker } from "../runtime/types.js";
 import { applyResultMapping, type ResultMapping } from "./map.js";
 import type { PresetDef } from "./preset.js";
@@ -18,13 +19,68 @@ export interface McpInvokerDeps {
   createTransport?(server: McpServerDef, secrets: SecretStore): Promise<Transport>;
 }
 
+function validateMcpSecretKey(server: McpServerDef, secretKey: string): void {
+  const expectedPrefix = `mcp:${server.name}:`;
+  if (!secretKey.startsWith(expectedPrefix)) {
+    throw new ConnectorError(
+      "config",
+      `Bearer secret key "${secretKey}" must be a namespaced MCP secret for server "${server.name}"`,
+    );
+  }
+  const secretName = secretKey.slice(expectedPrefix.length);
+  if (secretName.length === 0 || secretName.includes(":")) {
+    throw new ConnectorError(
+      "config",
+      `Bearer secret key "${secretKey}" is not a valid namespaced MCP secret`,
+    );
+  }
+}
+
 async function readBearerToken(server: McpServerDef, secrets: SecretStore): Promise<string | null> {
   if (server.auth?.kind !== "bearer") return null;
-  const token = await secrets.get(server.auth.secretKey);
+  const secretKey = server.auth.secretKey;
+  validateMcpSecretKey(server, secretKey);
+  const token = await secrets.get(secretKey);
   if (token === null) {
-    throw new ConnectorError("config", `Bearer secret "${server.auth.secretKey}" is not set`);
+    throw new ConnectorError("config", `Bearer secret "${secretKey}" is not set`);
   }
   return token;
+}
+
+function extractHttpStatus(e: unknown): number | undefined {
+  if (typeof e === "object" && e !== null) {
+    if ("code" in e && typeof (e as { code?: unknown }).code === "number") {
+      return (e as { code: number }).code;
+    }
+    if ("status" in e && typeof (e as { status?: unknown }).status === "number") {
+      return (e as { status: number }).status;
+    }
+  }
+  return undefined;
+}
+
+function statusToKind(status: number): "auth" | "transient" | "offline" | "config" {
+  if (status === 401 || status === 403) return "auth";
+  if (status === 429 || status >= 500) return "transient";
+  return "config";
+}
+
+function wrapTransportError(server: McpServerDef, e: unknown): never {
+  if (e instanceof ConnectorError) {
+    throw e;
+  }
+  const status = extractHttpStatus(e);
+  if (status !== undefined && status > 0) {
+    throw new ConnectorError(
+      statusToKind(status),
+      `MCP transport error for "${server.name}" (status ${status})`,
+    );
+  }
+  const network = classifyNetworkError(e);
+  if (network === "offline") {
+    throw new ConnectorError("offline", `MCP transport error for "${server.name}" (offline)`);
+  }
+  throw new ConnectorError("transient", `MCP transport error for "${server.name}"`);
 }
 
 async function defaultCreateTransport(
@@ -115,7 +171,7 @@ function makeMcpInvoker(
       const createTransport = deps.createTransport ?? defaultCreateTransport;
       const transport = await createTransport(server, secrets);
       const client = new Client({ name: "em-os-connectors", version: "0.0.0" });
-      await client.connect(transport);
+      await client.connect(transport).catch((e) => wrapTransportError(server, e));
       return client;
     })().catch((e) => {
       clientPromise = undefined;
@@ -130,7 +186,9 @@ function makeMcpInvoker(
       args: Record<string, unknown>,
       schema: z.ZodType<T>,
     ): Promise<T> {
-      const mapping = preset.capabilities[capability];
+      const mapping = Object.hasOwn(preset.capabilities, capability)
+        ? preset.capabilities[capability]
+        : undefined;
       if (!mapping) {
         throw new ConnectorError(
           "config",
@@ -140,7 +198,9 @@ function makeMcpInvoker(
 
       const client = await ensureClient();
       const toolArgs = substituteArgs(mapping.args, args);
-      const rawResult = await client.callTool({ name: mapping.tool, arguments: toolArgs });
+      const rawResult = await client
+        .callTool({ name: mapping.tool, arguments: toolArgs })
+        .catch((e) => wrapTransportError(server, e));
       const parsed = extractJsonText(rawResult);
       const mapped = applyResultMapping(parsed, mapping.result as ResultMapping);
       const validated = schema.safeParse(mapped);

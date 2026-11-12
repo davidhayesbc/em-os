@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConnectorError } from "../runtime/errors.js";
-import { applyResultMapping } from "./map.js";
+import { applyResultMapping, type ResultMapping } from "./map.js";
 
 describe("applyResultMapping", () => {
   it("resolves start.dateTime|start.date to the date for all-day events", () => {
@@ -206,5 +206,24 @@ describe("applyResultMapping", () => {
 
     const result = applyResultMapping(raw, mapping);
     expect(result.items).toEqual([{ evil: null }]);
+  });
+
+  it("ignores prototype-polluting field names", () => {
+    const raw = { events: [{ id: "a" }] };
+    const mapping = JSON.parse(
+      '{"items":"$.events[*]","fields":{"__proto__":"$.events[*]","constructor":"id","id":"id"}}',
+    ) as ResultMapping;
+
+    const result = applyResultMapping(raw, mapping);
+    const item = result.items[0];
+    if (!item) {
+      throw new Error("expected at least one mapped item");
+    }
+    expect(item).toEqual({ id: "a" });
+    expect(Object.keys(item)).toEqual(["id"]);
+    expect(Object.getPrototypeOf(item)).toBe(Object.prototype);
+    expect(Object.hasOwn(item, "constructor")).toBe(false);
+    expect(Object.hasOwn(item, "prototype")).toBe(false);
+    expect(Object.hasOwn(item, "__proto__")).toBe(false);
   });
 });
