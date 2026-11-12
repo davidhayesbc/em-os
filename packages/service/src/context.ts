@@ -69,16 +69,17 @@ export function createContext(deps: {
     getConfig: (id) => connectorConfig(id),
     runSync: async (def, ctx) => {
       const stored = connectorConfig(def.id);
-      const config = stored
-        ? await restoreSecrets(deps.secrets, def.id, stored.config as Record<string, unknown>)
-        : ctx.config;
+      const prepareConfig = stored
+        ? async (config: unknown) => restoreSecrets(deps.secrets, def.id, config)
+        : undefined;
       return runSync({
         store,
         def,
-        ctx: { ...ctx, config },
+        ctx: stored ? { ...ctx, config: stored.config } : ctx,
         appliers,
         events: deps.events,
         clock: deps.clock,
+        prepareConfig,
       });
     },
     clock: deps.clock,

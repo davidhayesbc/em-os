@@ -1,6 +1,7 @@
 import { createClient, httpTransport } from "@emos/api-contract";
 import { type ConnectorDefinition, fixtureInvoker } from "@emos/connectors";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { connectorRegistry } from "../connectors/registry.js";
 import { cleanup, startTestService } from "../test-helpers.js";
 
@@ -98,11 +99,200 @@ describe("connectors API", () => {
     expect(row.state).toBe("ok");
   });
 
+  it("configures a connector with a nested secret object and restores it at sync", async () => {
+    let captured: unknown;
+    const nestedConnector: ConnectorDefinition<unknown> = {
+      id: "nested-auth",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync(ctx) {
+        captured = ctx.config;
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: nestedConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "nested-auth",
+      enabled: true,
+      config: { auth: { token: "NESTED-SUPER-SECRET-42" } },
+    });
+
+    const row = svc.db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing row");
+    expect(JSON.stringify(row)).not.toContain("NESTED-SUPER-SECRET-42");
+    await expect(svc.secrets.get("connector:nested-auth:auth.token")).resolves.toBe(
+      "NESTED-SUPER-SECRET-42",
+    );
+
+    await client.call("connectors.sync", { id: "nested-auth" });
+    expect(captured).toEqual({ auth: { token: "NESTED-SUPER-SECRET-42" } });
+  });
+
+  it("configures a connector with an array of secrets and restores them at sync", async () => {
+    let captured: unknown;
+    const arrayConnector: ConnectorDefinition<unknown> = {
+      id: "array-keys",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync(ctx) {
+        captured = ctx.config;
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: arrayConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "array-keys",
+      enabled: true,
+      config: { apiKeys: ["ARRAY-KEY-ONE", "ARRAY-KEY-TWO"] },
+    });
+
+    const row = svc.db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing row");
+    expect(JSON.stringify(row)).not.toContain("ARRAY-KEY-ONE");
+    expect(JSON.stringify(row)).not.toContain("ARRAY-KEY-TWO");
+
+    await client.call("connectors.sync", { id: "array-keys" });
+    expect(captured).toEqual({ apiKeys: ["ARRAY-KEY-ONE", "ARRAY-KEY-TWO"] });
+  });
+
+  it("configures a connector with a deeply nested secret and restores it at sync", async () => {
+    let captured: unknown;
+    const deepConnector: ConnectorDefinition<unknown> = {
+      id: "deep-auth",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync(ctx) {
+        captured = ctx.config;
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: deepConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "deep-auth",
+      enabled: true,
+      config: { apiKey: { wrapper: { raw: "PERSISTED-DEEP-SECRET" } } },
+    });
+
+    const row = svc.db
+      .prepare("SELECT value FROM settings WHERE key = 'connector_configs'")
+      .get<{ value: string }>();
+    expect(row).toBeDefined();
+    if (!row) throw new Error("missing row");
+    expect(JSON.stringify(row)).not.toContain("PERSISTED-DEEP-SECRET");
+
+    await expect(svc.secrets.get("connector:deep-auth:apiKey.wrapper.raw")).resolves.toBe(
+      "PERSISTED-DEEP-SECRET",
+    );
+
+    await client.call("connectors.sync", { id: "deep-auth" });
+    expect(captured).toEqual({ apiKey: { wrapper: { raw: "PERSISTED-DEEP-SECRET" } } });
+  });
+
+  it("rejects a forged secret marker in a non-secret field", async () => {
+    const passthroughConnector: ConnectorDefinition<unknown> = {
+      id: "wide",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: passthroughConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await expect(
+      client.call("connectors.configure", {
+        id: "wide",
+        enabled: true,
+        config: { endpoint: { $secretRef: "token" } },
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+
+  it("sets sync state to error when a referenced secret is missing", async () => {
+    const passthroughConnector: ConnectorDefinition<unknown> = {
+      id: "missing-secret",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      registry: [
+        ...connectorRegistry,
+        { def: passthroughConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "missing-secret",
+      enabled: true,
+      config: { token: { $secretRef: "token" } },
+    });
+
+    const result = await client.call("connectors.sync", { id: "missing-secret" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      state: string;
+      lastSuccessAt: string | null;
+    }>;
+    const state = list.find((c) => c.id === "missing-secret");
+    expect(state).toBeDefined();
+    expect(state?.state).toBe("error");
+    expect(state?.lastSuccessAt).toBeNull();
+  });
+
   it("returns conflict when a second connectors.sync runs for the same id", async () => {
     const slowConnector: ConnectorDefinition<unknown> = {
       id: "slow",
       kind: "calendar",
-      configSchema: (await import("zod")).z.object({}),
+      configSchema: z.object({}),
       requiredCapabilities: [],
       defaultIntervalMinutes: 15,
       async *sync() {
