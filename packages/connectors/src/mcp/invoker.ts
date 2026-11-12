@@ -40,9 +40,18 @@ async function readBearerToken(server: McpServerDef, secrets: SecretStore): Prom
   if (server.auth?.kind !== "bearer") return null;
   const secretKey = server.auth.secretKey;
   validateMcpSecretKey(server, secretKey);
-  const token = await secrets.get(secretKey);
-  if (token === null) {
-    throw new ConnectorError("config", `Bearer secret "${secretKey}" is not set`);
+  let token: string;
+  try {
+    const stored = await secrets.get(secretKey);
+    if (stored === null) {
+      throw new ConnectorError("config", `Bearer secret "${secretKey}" is not set`);
+    }
+    token = stored;
+  } catch (e) {
+    if (e instanceof ConnectorError) {
+      throw e;
+    }
+    throw new ConnectorError("config", `Failed to read bearer secret for "${server.name}"`);
   }
   return token;
 }
@@ -112,7 +121,13 @@ async function defaultCreateTransport(
     if (token !== null) {
       headers.Authorization = `Bearer ${token}`;
     }
-    return new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers } });
+    let url: URL;
+    try {
+      url = new URL(server.url);
+    } catch {
+      throw new ConnectorError("config", `Malformed URL for http server "${server.name}"`);
+    }
+    return new StreamableHTTPClientTransport(url, { requestInit: { headers } });
   }
 
   throw new ConnectorError("config", `Unsupported MCP server type for "${server.name}"`);

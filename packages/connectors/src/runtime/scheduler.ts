@@ -1,4 +1,4 @@
-import type { Clock, Logger } from "@emos/core";
+import type { Clock, Logger, Store } from "@emos/core";
 import { ConnectorError } from "./errors.js";
 import type { CapabilityInvoker, ConnectorContext, ConnectorDefinition } from "./types.js";
 
@@ -19,6 +19,8 @@ export interface SchedulerDeps {
     def: ConnectorDefinition<unknown>,
     ctx: ConnectorContext<unknown>,
   ): Promise<{ pages: number; items: number }>;
+  /** Store reference forwarded to connectors that need it (e.g. calendar). */
+  store?: Store;
   clock: Clock;
   log: Logger;
 }
@@ -36,7 +38,7 @@ export interface Scheduler {
  * layer can store a `intervalMinutes` override).
  */
 export function createScheduler(deps: SchedulerDeps): Scheduler {
-  const { registry, createInvoker, getConfig, prepareConfig, runSync, clock, log } = deps;
+  const { registry, createInvoker, getConfig, prepareConfig, runSync, store, clock, log } = deps;
   const running = new Map<string, Promise<{ pages: number; items: number }>>();
   const timers = new Map<string, ReturnType<typeof setInterval>>();
   let started = false;
@@ -53,6 +55,7 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
         caps,
         log,
         now: () => clock.now(),
+        store,
       };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

@@ -4,13 +4,15 @@ import {
   type ConnectorDefinition,
   type ConnectorItem,
   type ConnectorKind,
+  calendarConnector,
   fixtureInvoker,
 } from "@emos/connectors";
+import type { SecretStore } from "@emos/core";
 import { z } from "zod";
 
 export interface RegistryEntry {
   def: ConnectorDefinition<unknown>;
-  createInvoker(config: unknown): CapabilityInvoker;
+  createInvoker(config: unknown, secrets: SecretStore): CapabilityInvoker;
 }
 
 const SyntheticAttendee = z.object({
@@ -100,11 +102,15 @@ export const syntheticFixtureConnector = {
 export const connectorRegistry: RegistryEntry[] = [
   {
     def: syntheticFixtureConnector,
-    createInvoker: (config) => {
+    createInvoker: (config, _secrets) => {
       const cfg = SyntheticConfig.parse(config);
       return fixtureInvoker({
         "fixture.page": cfg.pages.map(() => ({ ok: true })),
       });
     },
+  },
+  {
+    def: calendarConnector,
+    createInvoker: (_config, _secrets) => fixtureInvoker({}),
   },
 ];

@@ -70,7 +70,7 @@ export async function createContext(deps: {
       if (!entry) {
         throw new Error(`No invoker registered for ${def.id}`);
       }
-      return entry.createInvoker(config as Record<string, unknown>);
+      return entry.createInvoker(config as Record<string, unknown>, deps.secrets);
     },
     getConfig: (id) => connectorConfig(id),
     prepareConfig: async (id, config) => restoreSecrets(deps.secrets, id, config),
@@ -86,6 +86,7 @@ export async function createContext(deps: {
     },
     clock: deps.clock,
     log: deps.log,
+    store,
   });
 
   return {
