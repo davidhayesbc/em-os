@@ -16,6 +16,11 @@ export interface RunSyncDeps {
   appliers: Appliers;
   events: SyncEventBus;
   clock: Clock;
+  /**
+   * Optional async config preparation (e.g. restoring secrets) that runs inside the sync attempt
+   * so failures are classified and update sync_state, not returned as RPC internal errors.
+   */
+  prepareConfig?(config: unknown): Promise<unknown>;
 }
 
 const MAX_RETRIES = 2; // 1 initial attempt + 2 retries = 3 attempts max.
@@ -55,7 +60,9 @@ async function runOnce(
   const controller = new AbortController();
 
   try {
-    for await (const page of def.sync(ctx, state.cursor, controller.signal)) {
+    const prepared = deps.prepareConfig ? await deps.prepareConfig(ctx.config) : ctx.config;
+    const ctxWithConfig = { ...ctx, config: prepared };
+    for await (const page of def.sync(ctxWithConfig, state.cursor, controller.signal)) {
       const safePage = normalizePage(page);
       store.transaction(() => {
         for (const item of safePage.items) {
