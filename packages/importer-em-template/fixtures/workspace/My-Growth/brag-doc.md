@@ -2,8 +2,8 @@
 
 ## 2026
 
-- Shipped the local-first sync architecture.
-- Mentored two interns to full-time offers.
+- 2026-08-20 — Shipped the local-first sync architecture.
+- 2026-09-10 — Mentored two interns to full-time offers.
 
 ## Growth goals
 

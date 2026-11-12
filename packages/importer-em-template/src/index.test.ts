@@ -148,10 +148,22 @@ function countFilesRecursive(
   return count;
 }
 
-function deriveMeetings(): number {
+function countDailyLogMeetingSections(files: string[]): number {
+  let count = 0;
+  const headingRe = /^## Meeting — .+ \(\d{4}-\d{2}-\d{2}\)$/gm;
+  for (const file of files) {
+    const rel = relative(workspaceDir, file).split("\\").join("/");
+    if (!/^Daily-Logs\/\d{4}-\d{2}-\d{2}\.md$/.test(rel)) continue;
+    const text = readText(file);
+    count += [...text.matchAll(headingRe)].length;
+  }
+  return count;
+}
+
+function deriveMeetings(files: string[]): number {
   const oneOnOnes = countFilesRecursive(join(workspaceDir, "1-1s"));
   const standups = countFilesInDir(join(workspaceDir, "Daily-Logs/Standups"));
-  return oneOnOnes + standups;
+  return oneOnOnes + standups + countDailyLogMeetingSections(files);
 }
 
 function deriveSourceItems(files: string[]): number {
@@ -164,16 +176,14 @@ function deriveSourceItems(files: string[]): number {
   const reports = countFilesInDir(join(workspaceDir, "Reports"));
   const decisions = countFilesInDir(join(workspaceDir, "Decisions"));
 
-  let dailyLogMeetings = 0;
-  for (const file of files) {
-    const rel = relative(workspaceDir, file).split("\\").join("/");
-    if (!/^Daily-Logs\/\d{4}-\d{2}-\d{2}\.md$/.test(rel)) continue;
-    const text = readText(file);
-    if (/## Meeting — .+ \(\d{4}-\d{2}-\d{2}\)/.test(text)) dailyLogMeetings++;
-  }
-
   return (
-    oneOnOnes + standups + dailyLogs + weeklySummaries + reports + decisions + dailyLogMeetings
+    oneOnOnes +
+    standups +
+    dailyLogs +
+    weeklySummaries +
+    reports +
+    decisions +
+    countDailyLogMeetingSections(files)
   );
 }
 
@@ -207,6 +217,107 @@ function deriveDrafts(): number {
   );
 }
 
+function countBulletsUnderSections(text: string, sectionTitles: Set<string>): number {
+  let count = 0;
+  let active = false;
+  for (const line of text.split(/\r?\n/)) {
+    const heading = line.match(/^##\s+(.+)$/);
+    if (heading) {
+      active = sectionTitles.has(heading[1]?.trim() ?? "");
+      continue;
+    }
+    if (active && /^\s*-\s+/.test(line)) count++;
+  }
+  return count;
+}
+
+function derivePersonNotes(): number {
+  const personNoteSections = new Set([
+    "Running contribution notes",
+    "Context on them",
+    "Six-month rollup",
+    "Comms preferences",
+    "How they like feedback",
+  ]);
+  let count = 0;
+  const peopleDir = join(workspaceDir, "People");
+  const stakeholdersDir = join(workspaceDir, "Stakeholders");
+  for (const dir of [peopleDir, stakeholdersDir]) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".md")) continue;
+      const text = readText(join(dir, name));
+      count += countBulletsUnderSections(text, personNoteSections);
+    }
+  }
+  const teamHealthDir = join(workspaceDir, "Team-Health");
+  if (existsSync(teamHealthDir)) {
+    const knownPerson = /(?<![A-Za-z0-9])(Alex|Sam|Zoë|Zoe|Jordan|Priya)(?![A-Za-z0-9])/;
+    for (const name of readdirSync(teamHealthDir)) {
+      if (!name.endsWith(".md")) continue;
+      const lines = readText(join(teamHealthDir, name)).split(/\r?\n/);
+      for (const line of lines) {
+        if (/^\s*-\s+/.test(line) && !/^\s*-\s*\[/.test(line) && knownPerson.test(line)) count++;
+      }
+    }
+  }
+  return count;
+}
+
+function derivePeopleGrowthGoals(): number {
+  let count = 0;
+  const peopleDir = join(workspaceDir, "People");
+  if (!existsSync(peopleDir)) return 0;
+  for (const name of readdirSync(peopleDir)) {
+    if (!name.endsWith(".md")) continue;
+    const text = readText(join(peopleDir, name));
+    count += countBulletsUnderSections(text, new Set(["Growth goals"]));
+  }
+  return count;
+}
+
+function deriveMyGrowthGoals(): number {
+  const path = join(workspaceDir, "My-Growth/brag-doc.md");
+  if (!existsSync(path)) return 0;
+  const text = readText(path);
+  return countBulletsUnderSections(text, new Set(["Growth goals", "Development plan"]));
+}
+
+function deriveRiskLinkedNotes(): number {
+  const path = join(workspaceDir, "Risks/risk-register.md");
+  if (!existsSync(path)) return 0;
+  const text = readText(path);
+  return [...text.matchAll(/\*\*\d{4}-\d{2}-\d{2}\*\*/g)].length;
+}
+
+function deriveAccomplishments(): number {
+  const path = join(workspaceDir, "My-Growth/brag-doc.md");
+  if (!existsSync(path)) return 0;
+  const lines = readText(path).split(/\r?\n/);
+  let count = 0;
+  for (const line of lines) {
+    if (/^\s*-\s+\d{4}-\d{2}-\d{2}\s*[—-]\s+/.test(line)) count++;
+  }
+  return count;
+}
+
+function deriveReferences(): number {
+  return (
+    countFilesInDir(join(workspaceDir, "Systems")) +
+    (existsSync(join(workspaceDir, "Acronyms.md")) ? 1 : 0)
+  );
+}
+
+function deriveGeneratedSkips(): number {
+  const path = join(workspaceDir, "TODO.md");
+  if (!existsSync(path)) return 0;
+  let count = 0;
+  for (const line of readText(path).split(/\r?\n/)) {
+    if (/^-\s*\[(x| )\]\s*(.*)$/.test(line)) count++;
+  }
+  return count;
+}
+
 function fileMtimeMs(relPath: string, mtimes: Record<string, string>): number {
   const key = relativeToFixture(join(workspaceDir, relPath));
   const value = mtimes[key];
@@ -220,32 +331,56 @@ function isFileRecent(relPath: string, mtimes: Record<string, string>): boolean 
 
 function isUserOwned(line: string, fileRel: string): boolean {
   const beforeTags = line.split("<!--")[0] ?? line;
-  // Any explicit non-self person (wiki-link or bare name) makes it other-owned.
-  if (/\[\[People\/[^\]|]+\|[^\]]+\]\]\s*:/.test(beforeTags)) return false;
-  if (/\b(Alex|Sam|Zoë|Zoe|Jordan|Priya)\s*:/.test(beforeTags)) return false;
-  // me: or absent owner resolves to the fixture user.
+  const explicitOther =
+    /\[\[People\/[^\]|]+\|[^\]]+\]\]\s*:/.test(beforeTags) ||
+    /(?<![A-Za-z0-9])(Alex|Sam|Zoë|Zoe|Jordan|Priya)\s*:/.test(beforeTags);
+  // Other-owned items in the self file (Todos.md) are owed to the user.
+  if (explicitOther) return fileRel === "Todos.md";
   if (/\bme\s*:/.test(beforeTags)) return true;
-  // Placeholder "them:" resolves from the file's subject. In Todos.md the subject is the self person.
-  if (/\bthem\s*:/.test(beforeTags) && fileRel === "Todos.md") return true;
-  // Owed-to-me markers are treated as user-owned for activation.
+  if (/\bthem\s*:/.test(beforeTags)) return fileRel === "Todos.md";
+  // Waiting/blocked markers are owed to the user even when the owner syntax is bare.
   if (/!(blocked|waiting-)/.test(line)) return true;
-  return true;
+  // Bare (absent) owners resolve to self only in the self file; in files about others they
+  // stay with the file's subject and are reported as skipped_not_mine.
+  return fileRel === "Todos.md";
 }
 
 function hasActivationTag(line: string): boolean {
-  return /!(\d{4}-\d{2}-\d{2}|p[0-3]|now|next|soon|later|someday|blocked|waiting-)/.test(line);
+  // Match tag syntax: a `!` token preceded by start/whitespace and followed by whitespace,
+  // end-of-line, or another tag. Do not match bare substrings like "now" in prose.
+  return /(^|\s)!(?:\d{4}-\d{2}-\d{2}|p[0-3]|now|next|soon|later|someday|blocked|waiting-[^\s#]+)(?=\s|$|#)/.test(
+    line,
+  );
 }
 
 function deriveCommitments(
   files: string[],
   mtimes: Record<string, string>,
-): { active: number; dropped: number; done: number; unparseable: number } {
-  const result = { active: 0, dropped: 0, done: 0, unparseable: 0 };
+): {
+  proposed: number;
+  archived: number;
+  done: number;
+  skippedNotMine: number;
+  unparseable: number;
+  generatedSkips: number;
+} {
+  const result = {
+    proposed: 0,
+    archived: 0,
+    done: 0,
+    skippedNotMine: 0,
+    unparseable: 0,
+    generatedSkips: 0,
+  };
   for (const file of files) {
     const rel = relative(workspaceDir, file).split("\\").join("/");
-    // Generated TODO.md is skipped as a whole; real commitments live in Todos.md.
-    if (rel === "TODO.md") continue;
     const lines = readText(file).split(/\r?\n/);
+    if (rel === "TODO.md") {
+      for (const line of lines) {
+        if (/^-\s*\[(x| )\]\s*(.*)$/.test(line)) result.generatedSkips++;
+      }
+      continue;
+    }
     const recent = isFileRecent(rel, mtimes);
     for (const line of lines) {
       const checkbox = line.match(/^-\s*\[(x| )\]\s*(.*)$/);
@@ -264,9 +399,11 @@ function deriveCommitments(
       }
       const userOwned = isUserOwned(rest, rel);
       if (userOwned && (hasActivationTag(rest) || recent)) {
-        result.active++;
+        result.proposed++;
+      } else if (userOwned) {
+        result.archived++;
       } else {
-        result.dropped++;
+        result.skippedNotMine++;
       }
     }
   }
@@ -364,7 +501,7 @@ describe("importer-em-template fixture workspace", () => {
       "!later",
       "!someday",
       "!blocked",
-      "!waiting-Alex",
+      "!waiting-Jordan",
       "!2026-10-25",
       "#ws:api-cleanup",
       "#supersedes:c3d4e5",
@@ -434,18 +571,26 @@ describe("importer-em-template fixture workspace", () => {
     expect(persons).toBe(expected.get("persons"));
     expect(identities).toBe(expected.get("identities"));
 
-    expect(deriveMeetings()).toBe(expected.get("meetings"));
+    expect(derivePersonNotes()).toBe(expected.get("person_notes"));
+    expect(derivePeopleGrowthGoals()).toBe(expected.get("growth_goals (People)"));
+    expect(deriveMyGrowthGoals()).toBe(expected.get("growth_goals (My-Growth)"));
+    expect(deriveMeetings(workspaceFiles)).toBe(expected.get("meetings"));
     expect(deriveSourceItems(workspaceFiles)).toBe(expected.get("source_items"));
     expect(deriveGoals()).toBe(expected.get("goals"));
     expect(deriveDecisions()).toBe(expected.get("decisions"));
     expect(deriveRisks()).toBe(expected.get("risks"));
+    expect(deriveRiskLinkedNotes()).toBe(expected.get("risk_linked_notes"));
     expect(deriveDocuments()).toBe(expected.get("documents"));
     expect(deriveDrafts()).toBe(expected.get("drafts"));
+    expect(deriveAccomplishments()).toBe(expected.get("accomplishments"));
+    expect(deriveReferences()).toBe(expected.get("references / glossary"));
+    expect(deriveGeneratedSkips()).toBe(expected.get("generated skipped lines"));
 
     const commitments = deriveCommitments(workspaceFiles, mtimes);
-    expect(commitments.active).toBe(expected.get("commitments (active)"));
-    expect(commitments.dropped).toBe(expected.get("commitments (dropped)"));
+    expect(commitments.proposed).toBe(expected.get("commitments (proposed)"));
+    expect(commitments.archived).toBe(expected.get("commitments (archived)"));
     expect(commitments.done).toBe(expected.get("commitments (done)"));
-    expect(commitments.unparseable).toBe(expected.get("Unparseable todo line"));
+    expect(commitments.skippedNotMine).toBe(expected.get("commitments (skipped_not_mine)"));
+    expect(commitments.unparseable).toBe(expected.get("unparseable todo line"));
   });
 });

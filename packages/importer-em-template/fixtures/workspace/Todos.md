@@ -9,7 +9,7 @@
 - [ ] 2026-11-01 — me: archive old standup notes !later #tag:cleanup <!-- id:a1b2c4 -->
 - [x] 2026-09-01 — me: explore AI tooling !someday #tag:research <!-- id:b2c3d5 -->
 - [ ] 2026-10-23 — me: unblock API rollout !blocked #tag:release <!-- id:c3d4e6 -->
-- [ ] 2026-10-24 — me: close the loop on hiring !waiting-Alex #tag:hiring <!-- id:d4e5f7 -->
+- [ ] 2026-10-24 — me: close the loop on hiring !waiting-Jordan #tag:hiring <!-- id:d4e5f7 -->
 - [ ] 2026-10-26 — me: finalize onboarding checklist !p1 #supersedes:c3d4e5 #tag:hr <!-- id:onboarding-2026 id:e5f6a2 -->
 - [ ] 2026-10-25 — me: update acronyms doc !p3 #tag:docs <!-- id:f6a1b3 -->
 - [ ] them: 2026-10-27 — prep 1:1 agenda !p2 #tag:planning <!-- id:a1b2c5 -->
