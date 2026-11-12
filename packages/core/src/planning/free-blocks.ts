@@ -159,6 +159,12 @@ export function freeBlocks(i: {
 
     const startInstant = new Date(meeting.start);
     const endInstant = new Date(meeting.end);
+    if (Number.isNaN(startInstant.getTime()) || Number.isNaN(endInstant.getTime())) {
+      throw new RangeError("Invalid meeting start/end");
+    }
+    if (endInstant.getTime() < startInstant.getTime()) {
+      throw new RangeError("Meeting end before start");
+    }
 
     // Clip the meeting to the physical local day and the working window.
     const startMs = Math.max(dayStart.getTime(), startInstant.getTime());

@@ -217,6 +217,11 @@ describe("freeBlocks", () => {
       end: "2026-03-08T12:00:00.000Z",
       minutes: 180,
     });
+    const block = blocks[0];
+    if (!block) throw new Error("expected a block");
+    expect(block.minutes).toBe(
+      Math.round((Date.parse(block.end) - Date.parse(block.start)) / 60000),
+    );
 
     // A 240-minute commitment cannot fit; a 180-minute commitment fits exactly.
     const oversized = plan({
@@ -262,6 +267,56 @@ describe("freeBlocks", () => {
       start: "2026-11-01T09:15:00.000Z",
       end: "2026-11-02T07:59:00.000Z",
       minutes: 1364,
+    });
+  });
+
+  it("throws on an unparseable meeting start instead of reporting its time free", () => {
+    const base = {
+      localDate: "2026-10-20" as const,
+      timeZone: LA,
+      workingHours: { start: "09:00" as const, end: "17:00" as const },
+      now: new Date("2026-10-19T12:00:00Z"),
+      minMinutes: 15,
+    };
+    const template = meeting({ start: "2026-10-20T18:00:00Z", end: "2026-10-20T19:00:00Z" });
+    const badMeetings: Meeting[] = [
+      { ...template, start: "" },
+      { ...template, start: "not-a-date" },
+      { ...template, end: undefined },
+    ] as unknown as Meeting[];
+    for (const bad of badMeetings) {
+      expect(() => freeBlocks({ ...base, meetings: [bad] })).toThrow(RangeError);
+    }
+  });
+
+  it("throws on an inverted meeting interval", () => {
+    expect(() =>
+      freeBlocks({
+        localDate: "2026-10-20",
+        timeZone: LA,
+        workingHours: { start: "09:00", end: "17:00" },
+        meetings: [meeting({ start: "2026-10-20T17:00:00Z", end: "2026-10-20T16:00:00Z" })],
+        now: new Date("2026-10-19T12:00:00Z"),
+        minMinutes: 15,
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it("treats a zero-length meeting as not busy", () => {
+    const blocks = freeBlocks({
+      localDate: "2026-10-20",
+      timeZone: LA,
+      workingHours: { start: "09:00", end: "17:00" },
+      meetings: [meeting({ start: "2026-10-20T12:00:00Z", end: "2026-10-20T12:00:00Z" })],
+      now: new Date("2026-10-19T12:00:00Z"),
+      minMinutes: 15,
+    });
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toEqual({
+      start: "2026-10-20T16:00:00.000Z",
+      end: "2026-10-21T00:00:00.000Z",
+      minutes: 480,
     });
   });
 });
