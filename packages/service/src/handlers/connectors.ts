@@ -1,5 +1,10 @@
 import { ApiError, type ConnectorRunState } from "@emos/api-contract";
-import { ConnectorError, SchedulerConflict, SchedulerNotFound } from "@emos/connectors";
+import {
+  ConnectorError,
+  SchedulerConflict,
+  SchedulerNotFound,
+  sanitizeLastError,
+} from "@emos/connectors";
 import {
   clearConnectorSecrets,
   readConnectorConfigs,
@@ -9,13 +14,6 @@ import type { Handler } from "../context.js";
 
 function findRegistryEntry(ctx: Parameters<Handler<"connectors.list">>[0], id: string) {
   return ctx.registry.find((r) => r.def.id === id);
-}
-
-const LAST_ERROR_MAX_LENGTH = 500;
-
-function sanitizeLastError(message: string): string {
-  // Strip control and format characters (including ANSI escapes and newlines) and truncate.
-  return message.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, LAST_ERROR_MAX_LENGTH);
 }
 
 export const connectorsList: Handler<"connectors.list"> = (ctx) => {
@@ -29,7 +27,7 @@ export const connectorsList: Handler<"connectors.list"> = (ctx) => {
       enabled: stored?.enabled ?? false,
       state: state.state as ConnectorRunState,
       lastSuccessAt: state.lastSuccessAt,
-      lastError: state.lastError,
+      lastError: state.lastError != null ? sanitizeLastError(state.lastError) : null,
     };
   });
 };
