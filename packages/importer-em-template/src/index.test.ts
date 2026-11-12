@@ -147,14 +147,17 @@ describe("importer-em-template fixture workspace", () => {
     expect(found).toBe(true);
   });
 
-  it("has daily logs with auto-today and meeting headings", () => {
+  it("has daily logs with auto-today, auto-scheduled and meeting headings", () => {
     let found = false;
     for (const file of workspaceFiles) {
-      if (!file.match(/Daily-Logs\/\d{4}-\d{2}-\d{2}\.md$/)) continue;
+      const rel = relative(workspaceDir, file).split("\\").join("/");
+      if (!rel.match(/^Daily-Logs\/\d{4}-\d{2}-\d{2}\.md$/)) continue;
       const text = readText(file);
       if (
         text.includes("<!-- BEGIN auto-today -->") &&
         text.includes("<!-- END auto-today -->") &&
+        text.includes("<!-- BEGIN auto-scheduled -->") &&
+        text.includes("<!-- END auto-scheduled -->") &&
         /## Meeting — .+ \(\d{4}-\d{2}-\d{2}\)/.test(text)
       ) {
         found = true;
@@ -162,5 +165,18 @@ describe("importer-em-template fixture workspace", () => {
       }
     }
     expect(found).toBe(true);
+  });
+
+  it("uses 6-char ids for every single-id todo marker", () => {
+    for (const file of workspaceFiles) {
+      const lines = readText(file).split(/\r?\n/);
+      for (const line of lines) {
+        const ids = [...line.matchAll(/<!--\s*id:(\S+)\s*-->/g)].map((m) => m[1]);
+        if (ids.length === 0 || ids.length === 2) continue;
+        for (const id of ids) {
+          expect(id).toMatch(/^[a-z0-9]{6}$/);
+        }
+      }
+    }
   });
 });

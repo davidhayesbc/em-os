@@ -7,4 +7,4 @@
 
 ## Action items
 
-- [ ] 2026-10-25 — me: share anonymised themes with the team !p2 <!-- id:th001 -->
+- [ ] 2026-10-25 — me: share anonymised themes with the team !p2 <!-- id:th0001 -->
