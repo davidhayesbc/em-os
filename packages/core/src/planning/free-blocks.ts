@@ -7,7 +7,7 @@ export interface Block {
   minutes: number;
 }
 
-interface Interval {
+export interface Interval {
   start: number;
   end: number;
 }
@@ -76,7 +76,7 @@ function parseLocalDate(localDate: string): { y: number; m: number; d: number } 
  * The first UTC instant on `localDate` in `timeZone` when the local wall clock reads
  * `minuteOfDay`. A time inside a DST gap resolves to the first valid instant after the gap.
  */
-function localInstant(localDate: string, timeZone: string, minuteOfDay: number): Date {
+export function localInstant(localDate: string, timeZone: string, minuteOfDay: number): Date {
   const { y, m, d } = parseLocalDate(localDate);
   const hour = Math.floor(minuteOfDay / 60);
   const minute = minuteOfDay % 60;
@@ -109,7 +109,7 @@ function isBusy(meeting: Meeting): boolean {
   return true;
 }
 
-function mergeIntervals(intervals: Interval[]): Interval[] {
+export function mergeIntervals(intervals: Interval[]): Interval[] {
   if (intervals.length === 0) return [];
   const sorted = [...intervals].sort((a, b) => a.start - b.start || a.end - b.end);
   let current = sorted[0];
