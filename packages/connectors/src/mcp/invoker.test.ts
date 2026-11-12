@@ -181,7 +181,7 @@ describe("createMcpInvoker", () => {
     ).rejects.toSatisfy((e: unknown) => {
       expect(e).toBeInstanceOf(ConnectorError);
       const ce = e as ConnectorError;
-      expect(ce.kind).toBe("auth");
+      expect(ce.kind).toBe("config");
       expect(ce.message).not.toContain(token);
       expect(ce.message).toContain('"gateway"');
       expect(ce.message).toContain("400");
@@ -278,6 +278,65 @@ describe("createMcpInvoker", () => {
 
     await invoker.close();
     await stop();
+  });
+
+  it.each([
+    { status: 401, kind: "auth", description: "401" },
+    { status: 403, kind: "auth", description: "403" },
+    { status: 429, kind: "transient", description: "429" },
+    { status: 500, kind: "transient", description: "500" },
+    { status: 503, kind: "transient", description: "503" },
+    { status: 400, kind: "config", description: "400" },
+    { status: 404, kind: "config", description: "404" },
+  ] as const)("classifies HTTP $description as $kind", async ({ status, kind }) => {
+    const { url, stop } = await startMcpLoopback((req, body) => {
+      if (req.method === "GET") {
+        return { status: 405, body: "Method Not Allowed" };
+      }
+      const msg = JSON.parse(body);
+      if (msg.method === "initialize") {
+        return initializeResponse(msg);
+      }
+      if (msg.method === "notifications/initialized") {
+        return { status: 200, body: "" };
+      }
+      return { status, body: `error ${status}` };
+    });
+
+    const serverDef: McpServerDef = { name: "gateway", type: "http", url };
+    const invoker = createMcpInvoker(serverDef, examplePreset, memorySecretStore());
+
+    await expect(invoker.call("calendar.listEvents", {}, z.object({}))).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConnectorError && (e as ConnectorError).kind === kind,
+    );
+
+    await invoker.close();
+    await stop();
+  });
+
+  it("classifies a no-status network failure as offline", async () => {
+    const err = new Error("fetch failed");
+    const serverDef: McpServerDef = {
+      name: "gateway",
+      type: "http",
+      url: "http://127.0.0.1:1/mcp",
+    };
+    const invoker = createMcpInvokerForTest(serverDef, examplePreset, memorySecretStore(), {
+      createTransport: async () =>
+        ({
+          start: async () => {
+            throw err;
+          },
+          send: async () => {},
+          close: async () => {},
+        }) as unknown as import("@modelcontextprotocol/sdk/shared/transport.js").Transport,
+    });
+
+    await expect(invoker.call("calendar.listEvents", {}, z.object({}))).rejects.toSatisfy(
+      (e: unknown) => e instanceof ConnectorError && (e as ConnectorError).kind === "offline",
+    );
+
+    await invoker.close();
   });
 
   it("only resolves namespaced MCP secrets", async () => {

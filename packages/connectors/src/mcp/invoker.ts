@@ -59,10 +59,10 @@ function extractHttpStatus(e: unknown): number | undefined {
   return undefined;
 }
 
-function statusToKind(status: number): "auth" | "transient" | "offline" {
-  if (status >= 400 && status < 500) return "auth";
+function statusToKind(status: number): "auth" | "transient" | "offline" | "config" {
+  if (status === 401 || status === 403) return "auth";
   if (status === 429 || status >= 500) return "transient";
-  return "transient";
+  return "config";
 }
 
 function wrapTransportError(server: McpServerDef, e: unknown): never {
