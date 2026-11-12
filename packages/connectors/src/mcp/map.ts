@@ -12,6 +12,8 @@ interface ParsedPath {
   spread: boolean;
 }
 
+const FORBIDDEN_SEGMENTS = new Set<string>(["__proto__", "constructor", "prototype"]);
+
 function parsePath(path: string): ParsedPath {
   const trimmed = path.trim();
   let spread = false;
@@ -32,6 +34,9 @@ function parsePath(path: string): ParsedPath {
 function resolveOne(value: unknown, segments: string[]): unknown {
   let current = value;
   for (const segment of segments) {
+    if (FORBIDDEN_SEGMENTS.has(segment)) {
+      return undefined;
+    }
     if (current === null || current === undefined || typeof current !== "object") {
       return undefined;
     }
@@ -40,21 +45,36 @@ function resolveOne(value: unknown, segments: string[]): unknown {
   return current;
 }
 
-function resolvePath(raw: unknown, item: unknown, path: string): unknown {
+type Resolution =
+  | { kind: "value"; value: unknown }
+  | { kind: "missing" }
+  | { kind: "notArray"; value: unknown };
+
+function resolvePath(raw: unknown, item: unknown, path: string): Resolution {
   const alternatives = path.split("|").map((p) => p.trim());
+  let notArrayCandidate: unknown | undefined;
   for (const alt of alternatives) {
     const { root, segments, spread } = parsePath(alt);
     const base = root ? raw : item;
     const resolved = resolveOne(base, segments);
     if (spread) {
-      if (Array.isArray(resolved)) return resolved;
-      return null;
+      if (Array.isArray(resolved)) return { kind: "value", value: resolved };
+      if (resolved !== undefined && resolved !== null) {
+        notArrayCandidate = resolved;
+      }
+      continue;
     }
     if (resolved !== undefined && resolved !== null) {
-      return resolved;
+      return { kind: "value", value: resolved };
     }
   }
-  return null;
+  return notArrayCandidate !== undefined
+    ? { kind: "notArray", value: notArrayCandidate }
+    : { kind: "missing" };
+}
+
+function resolvedValue(res: Resolution): unknown {
+  return res.kind === "value" ? res.value : null;
 }
 
 /**
@@ -68,22 +88,30 @@ export function applyResultMapping(
   raw: unknown,
   mapping: ResultMapping,
 ): { items: Record<string, unknown>[]; nextCursor: string | null } {
-  const rawItems = resolvePath(raw, undefined, mapping.items);
-  if (!Array.isArray(rawItems)) {
-    throw new ConnectorError("schema", `items path "${mapping.items}" did not resolve to an array`);
+  const itemsRes = resolvePath(raw, undefined, mapping.items);
+  if (itemsRes.kind === "notArray") {
+    throw new ConnectorError(
+      "schema",
+      `items path "${mapping.items}" resolved to a non-array value`,
+    );
   }
+  const rawItems: unknown[] = itemsRes.kind === "missing" ? [] : (itemsRes.value as unknown[]);
 
   const items: Record<string, unknown>[] = rawItems.map((rawItem) => {
     const mapped: Record<string, unknown> = {};
     for (const [field, path] of Object.entries(mapping.fields)) {
-      mapped[field] = resolvePath(raw, rawItem, path);
+      mapped[field] = resolvedValue(resolvePath(raw, rawItem, path));
     }
     return mapped;
   });
 
-  const nextCursor = mapping.nextCursor
-    ? (resolvePath(raw, undefined, mapping.nextCursor) as string | null)
-    : null;
+  let nextCursor: string | null = null;
+  if (mapping.nextCursor) {
+    const cursorRes = resolvePath(raw, undefined, mapping.nextCursor);
+    if (cursorRes.kind === "value" && typeof cursorRes.value === "string") {
+      nextCursor = cursorRes.value;
+    }
+  }
 
   return { items, nextCursor };
 }

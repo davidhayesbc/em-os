@@ -20,7 +20,11 @@ export interface McpInvokerDeps {
 
 async function readBearerToken(server: McpServerDef, secrets: SecretStore): Promise<string | null> {
   if (server.auth?.kind !== "bearer") return null;
-  return secrets.get(server.auth.secretKey);
+  const token = await secrets.get(server.auth.secretKey);
+  if (token === null) {
+    throw new ConnectorError("config", `Bearer secret "${server.auth.secretKey}" is not set`);
+  }
+  return token;
 }
 
 async function defaultCreateTransport(
@@ -104,7 +108,7 @@ function makeMcpInvoker(
   let clientPromise: Promise<Client> | undefined;
 
   async function ensureClient(): Promise<Client> {
-    if (!clientPromise) {
+    clientPromise ??= (async () => {
       if (server.auth?.kind === "oauth") {
         throw new ConnectorError("config", "OAuth server: use the fallback recorded in ADR 0005");
       }
@@ -112,8 +116,8 @@ function makeMcpInvoker(
       const transport = await createTransport(server, secrets);
       const client = new Client({ name: "em-os-connectors", version: "0.0.0" });
       await client.connect(transport);
-      clientPromise = Promise.resolve(client);
-    }
+      return client;
+    })();
     return clientPromise;
   }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ConnectorError } from "../runtime/errors.js";
 import { applyResultMapping } from "./map.js";
 
 describe("applyResultMapping", () => {
@@ -80,5 +81,92 @@ describe("applyResultMapping", () => {
     const result = applyResultMapping(raw, mapping);
     expect(result.items).toEqual([{ missing: null }]);
     expect(result.nextCursor).toBeNull();
+  });
+
+  it("returns empty items when the items key is missing", () => {
+    const raw = { kind: "calendar#events" };
+    const mapping = {
+      items: "$.events[*]",
+      fields: { id: "id" },
+    };
+
+    const result = applyResultMapping(raw, mapping);
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it("returns empty items when the items array is empty", () => {
+    const raw = { events: [] };
+    const mapping = {
+      items: "$.events[*]",
+      fields: { id: "id" },
+    };
+
+    const result = applyResultMapping(raw, mapping);
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it("falls through spread alternatives until one resolves to an array", () => {
+    const raw = { data: { list: [{ id: "a" }] } };
+    const mapping = {
+      items: "$.events[*]|$.data.list[*]",
+      fields: { id: "id" },
+    };
+
+    const result = applyResultMapping(raw, mapping);
+    expect(result.items).toEqual([{ id: "a" }]);
+  });
+
+  it("falls through a non-array first spread alternative", () => {
+    const raw = { events: { n: 1 }, data: { list: [{ id: "b" }] } };
+    const mapping = {
+      items: "$.events[*]|$.data.list[*]",
+      fields: { id: "id" },
+    };
+
+    const result = applyResultMapping(raw, mapping);
+    expect(result.items).toEqual([{ id: "b" }]);
+  });
+
+  it("throws schema when the items path resolves to a non-array and has no fallback", () => {
+    const raw = { events: { n: 1 } };
+    const mapping = {
+      items: "$.events[*]",
+      fields: { id: "id" },
+    };
+
+    expect(() => applyResultMapping(raw, mapping)).toThrow(ConnectorError);
+    expect(() => applyResultMapping(raw, mapping)).toThrow(/non-array/);
+    try {
+      applyResultMapping(raw, mapping);
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConnectorError);
+      expect((e as ConnectorError).kind).toBe("schema");
+    }
+  });
+
+  it("treats a non-string nextCursor as null", () => {
+    const raw = { events: [{ id: "a" }], next: { page: 2 } };
+    const mapping = {
+      items: "$.events[*]",
+      nextCursor: "$.next",
+      fields: { id: "id" },
+    };
+
+    const result = applyResultMapping(raw, mapping);
+    expect(result.items).toEqual([{ id: "a" }]);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it("rejects prototype-polluting field paths", () => {
+    const raw = { events: [{ id: "a" }] };
+    const mapping = {
+      items: "$.events[*]",
+      fields: { evil: "constructor" },
+    };
+
+    const result = applyResultMapping(raw, mapping);
+    expect(result.items).toEqual([{ evil: null }]);
   });
 });
