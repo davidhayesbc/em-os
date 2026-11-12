@@ -112,7 +112,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [x] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: done · 106a8a0
 - [x] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: done · 0b1b50c
 - [x] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: done · 7107197
-- [ ] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09, P1-12 — claim: —
+- [ ] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09, P1-12 — claim: coder · p1-10-today-get
 - [ ] **P1-11** End-of-day wrap use case + ops — deps: P1-02, P1-10 — claim: —
 
 **Connectors**
