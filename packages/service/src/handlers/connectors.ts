@@ -1,5 +1,10 @@
 import { ApiError, type ConnectorRunState } from "@emos/api-contract";
-import { ConnectorError, SchedulerConflict, SchedulerNotFound } from "@emos/connectors";
+import {
+  ConnectorError,
+  SchedulerConflict,
+  SchedulerNotFound,
+  sanitizeLastError,
+} from "@emos/connectors";
 import {
   clearConnectorSecrets,
   readConnectorConfigs,
@@ -22,7 +27,7 @@ export const connectorsList: Handler<"connectors.list"> = (ctx) => {
       enabled: stored?.enabled ?? false,
       state: state.state as ConnectorRunState,
       lastSuccessAt: state.lastSuccessAt,
-      lastError: state.lastError,
+      lastError: state.lastError != null ? sanitizeLastError(state.lastError) : null,
     };
   });
 };
@@ -44,14 +49,10 @@ export const connectorsSync: Handler<"connectors.sync"> = async (ctx, { id }) =>
         state: "error" as ConnectorRunState,
         lastAttemptAt: now,
         lastSuccessAt: initial.lastSuccessAt,
-        lastError: e.message,
+        lastError: sanitizeLastError(e.message),
         itemCount: initial.itemCount,
       });
-      try {
-        ctx.events.publish({ type: "sync.status", connectorId: id, state: "error" });
-      } catch {
-        // A throwing subscriber must not abort the error transition.
-      }
+      ctx.events.publish({ type: "sync.status", connectorId: id, state: "error" });
       return { pages: 0, items: 0 };
     }
     throw e;

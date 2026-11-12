@@ -56,7 +56,8 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
       };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      throw new ConnectorError("config", `Failed to prepare connector ${def.id}: ${message}`);
+      const kind = e instanceof ConnectorError ? e.kind : "config";
+      throw new ConnectorError(kind, `Failed to prepare connector ${def.id}: ${message}`);
     }
   }
 

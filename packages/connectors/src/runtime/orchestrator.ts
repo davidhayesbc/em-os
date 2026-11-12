@@ -1,6 +1,7 @@
 import type { Clock, Store, SyncState } from "@emos/core";
 import { ConnectorError } from "./errors.js";
 import { classifyError, extractServerName } from "./network.js";
+import { sanitizeLastError } from "./sanitize.js";
 import type {
   Appliers,
   ConnectorContext,
@@ -185,7 +186,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
           state: "error",
           lastAttemptAt: at,
           lastSuccessAt: initial.lastSuccessAt,
-          lastError: message,
+          lastError: sanitizeLastError(message),
           itemCount: initial.itemCount + state.items,
         });
         return { pages: state.pages, items: state.items };
@@ -199,7 +200,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
           state: "offline",
           lastAttemptAt: at,
           lastSuccessAt: initial.lastSuccessAt,
-          lastError: message,
+          lastError: sanitizeLastError(message),
           itemCount: initial.itemCount + state.items,
         });
         return { pages: state.pages, items: state.items };
@@ -220,7 +221,7 @@ export async function runSync(deps: RunSyncDeps): Promise<{ pages: number; items
     state: "error",
     lastAttemptAt: at,
     lastSuccessAt: initial.lastSuccessAt,
-    lastError: exhausted,
+    lastError: sanitizeLastError(exhausted),
     itemCount: initial.itemCount + state.items,
   });
   return { pages: state.pages, items: state.items };

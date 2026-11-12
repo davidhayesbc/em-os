@@ -3,5 +3,6 @@ export * from "./runtime/errors.js";
 export * from "./runtime/fixture-invoker.js";
 export * from "./runtime/network.js";
 export * from "./runtime/orchestrator.js";
+export * from "./runtime/sanitize.js";
 export * from "./runtime/scheduler.js";
 export * from "./runtime/types.js";

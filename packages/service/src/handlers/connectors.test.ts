@@ -476,6 +476,116 @@ describe("connectors API", () => {
     expect(state?.lastSuccessAt).toBeNull();
   });
 
+  it("truncates and strips control characters from persisted last_error", async () => {
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z");
+    const clock: import("@emos/core").Clock = { now: () => fixedNow };
+    const longMessage = "x\n\u001b[31m".padEnd(2500, "y");
+    const throwingConnector: ConnectorDefinition<unknown> = {
+      id: "long-error",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const svc = await startTestService({
+      clock,
+      registry: [
+        ...connectorRegistry,
+        {
+          def: throwingConnector,
+          createInvoker: () => {
+            throw new Error(longMessage);
+          },
+        },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "long-error",
+      enabled: true,
+      config: {},
+    });
+
+    const result = await client.call("connectors.sync", { id: "long-error" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const row = svc.db
+      .prepare("SELECT last_error FROM sync_state WHERE connector_id = ?")
+      .get<{ last_error: string }>("long-error");
+    expect(row).toBeDefined();
+    expect(row?.last_error).toHaveLength(500);
+    expect(row?.last_error).not.toContain("\n");
+    expect(row?.last_error).not.toContain("\u001b");
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "long-error");
+    expect(state?.lastError).toBe(row?.last_error);
+  });
+
+  it("sanitizes last_error when the connector sync() throws (not createInvoker)", async () => {
+    const fixedNow = new Date("2026-11-12T10:00:00.000Z");
+    const clock: import("@emos/core").Clock = { now: () => fixedNow };
+    const { ConnectorError } = await import("@emos/connectors");
+    const longMessage = "schema-failure\n\u001b[31m".padEnd(2500, "x");
+    const throwingConnector: ConnectorDefinition<unknown> = {
+      id: "sync-throws-error",
+      kind: "calendar",
+      configSchema: z.any(),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      sync(): AsyncIterable<import("@emos/connectors").SyncPage> {
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              next: () => Promise.reject(new ConnectorError("schema", longMessage)),
+              return: () => Promise.resolve({ done: true, value: undefined }),
+            };
+          },
+        } as AsyncIterable<import("@emos/connectors").SyncPage>;
+      },
+    };
+    const svc = await startTestService({
+      clock,
+      registry: [
+        ...connectorRegistry,
+        { def: throwingConnector, createInvoker: () => fixtureInvoker({}) },
+      ],
+    });
+    const client = clientFor(svc);
+
+    await client.call("connectors.configure", {
+      id: "sync-throws-error",
+      enabled: true,
+      config: {},
+    });
+
+    const result = await client.call("connectors.sync", { id: "sync-throws-error" });
+    expect(result).toEqual({ pages: 0, items: 0 });
+
+    const row = svc.db
+      .prepare("SELECT last_error FROM sync_state WHERE connector_id = ?")
+      .get<{ last_error: string }>("sync-throws-error");
+    expect(row).toBeDefined();
+    expect(row?.last_error.length).toBeLessThanOrEqual(500);
+    expect(row?.last_error).not.toContain("\n");
+    expect(row?.last_error).not.toContain("\u001b");
+    expect(row?.last_error).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+
+    const list = (await client.call("connectors.list", {})) as Array<{
+      id: string;
+      lastError: string | null;
+    }>;
+    const state = list.find((c) => c.id === "sync-throws-error");
+    expect(state?.lastError).toBe(row?.last_error);
+  });
+
   it("removes a connector config and deletes its keychain secrets", async () => {
     const svc = await startTestService();
     const client = clientFor(svc);
