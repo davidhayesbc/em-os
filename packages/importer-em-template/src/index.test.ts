@@ -25,6 +25,221 @@ function readText(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+const IMPORT_DATE = new Date("2026-10-20T00:00:00Z");
+const RECENT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+function relativeToFixture(path: string): string {
+  return relative(fixtureDir, path).split("\\").join("/");
+}
+
+function parseExpectedTable(): Map<string, number> {
+  const expected = readText(join(fixtureDir, "EXPECTED.md"));
+  const counts = new Map<string, number>();
+  for (const line of expected.split(/\r?\n/)) {
+    const match = line.match(/^\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|/);
+    if (!match) continue;
+    const key = match[1].trim();
+    const value = Number.parseInt(match[2], 10);
+    counts.set(key, value);
+  }
+  return counts;
+}
+
+function readFrontmatterAliases(text: string): string[] {
+  if (!text.startsWith("---")) return [];
+  const end = text.search(/\r?\n---\r?\n/);
+  if (end === -1) return [];
+  const fm = text.slice(3, end);
+  const aliasesMatch = fm.match(/aliases:\s*\[(.*?)\]/s);
+  if (!aliasesMatch) return [];
+  return aliasesMatch[1]
+    .split(",")
+    .map((s) => s.trim().replace(/^['"]|['"]$/g, ""))
+    .filter(Boolean);
+}
+
+function readName(text: string): string | undefined {
+  const match = text.match(/\*\*Name:\*\*\s*(.+)/);
+  return match?.[1].trim();
+}
+
+function fileIdentities(text: string): string[] {
+  const ids: string[] = [];
+  ids.push(...readFrontmatterAliases(text));
+  const chat = text.match(/Chat:\s*@(\S+)/);
+  if (chat) ids.push(chat[1]);
+  const codeHost = text.match(/Code host:\s*(\S+)/);
+  if (codeHost) ids.push(codeHost[1]);
+  const email = text.match(/Email:\s*(\S+)/);
+  if (email) ids.push(email[1]);
+  return ids;
+}
+
+function derivePersonsAndIdentities(): { persons: number; identities: number } {
+  const peopleDir = join(workspaceDir, "People");
+  const stakeholdersDir = join(workspaceDir, "Stakeholders");
+  const peopleFiles = existsSync(peopleDir) ? readdirSync(peopleDir).filter((n) => n.endsWith(".md")).map((n) => join(peopleDir, n)) : [];
+  const stakeholderFiles = existsSync(stakeholdersDir) ? readdirSync(stakeholdersDir).filter((n) => n.endsWith(".md")).map((n) => join(stakeholdersDir, n)) : [];
+
+  const byName = new Map<string, { identities: Set<string>; origins: Set<string> }>();
+  for (const file of peopleFiles) {
+    const text = readText(file);
+    const name = readName(text);
+    if (!name) continue;
+    const entry = byName.get(name) ?? { identities: new Set<string>(), origins: new Set<string>() };
+    entry.origins.add("people");
+    for (const id of fileIdentities(text)) entry.identities.add(id);
+    byName.set(name, entry);
+  }
+  for (const file of stakeholderFiles) {
+    const text = readText(file);
+    const name = readName(text);
+    if (!name) continue;
+    const entry = byName.get(name) ?? { identities: new Set<string>(), origins: new Set<string>() };
+    entry.origins.add("stakeholder");
+    for (const id of fileIdentities(text)) entry.identities.add(id);
+    byName.set(name, entry);
+  }
+
+  return {
+    persons: byName.size,
+    identities: [...byName.values()].reduce((sum, e) => sum + e.identities.size, 0),
+  };
+}
+
+function countFilesInDir(dir: string, predicate: (name: string) => boolean = () => true): number {
+  if (!existsSync(dir)) return 0;
+  return readdirSync(dir).filter((n) => n.endsWith(".md") && predicate(n)).length;
+}
+
+function countFilesRecursive(dir: string, predicate: (relPath: string) => boolean = () => true): number {
+  let count = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      count += countFilesRecursive(path, predicate);
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      const rel = relative(workspaceDir, path).split("\\").join("/");
+      if (predicate(rel)) count++;
+    }
+  }
+  return count;
+}
+
+function deriveMeetings(): number {
+  const oneOnOnes = countFilesRecursive(join(workspaceDir, "1-1s"));
+  const standups = countFilesInDir(join(workspaceDir, "Daily-Logs/Standups"));
+  return oneOnOnes + standups;
+}
+
+function deriveSourceItems(files: string[]): number {
+  const oneOnOnes = countFilesRecursive(join(workspaceDir, "1-1s"));
+  const standups = countFilesInDir(join(workspaceDir, "Daily-Logs/Standups"));
+  const dailyLogs = countFilesInDir(join(workspaceDir, "Daily-Logs"), (n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n));
+  const weeklySummaries = countFilesInDir(join(workspaceDir, "Weekly-Summaries"));
+  const reports = countFilesInDir(join(workspaceDir, "Reports"));
+  const decisions = countFilesInDir(join(workspaceDir, "Decisions"));
+
+  let dailyLogMeetings = 0;
+  for (const file of files) {
+    const rel = relative(workspaceDir, file).split("\\").join("/");
+    if (!/^Daily-Logs\/\d{4}-\d{2}-\d{2}\.md$/.test(rel)) continue;
+    const text = readText(file);
+    if (/## Meeting — .+ \(\d{4}-\d{2}-\d{2}\)/.test(text)) dailyLogMeetings++;
+  }
+
+  return oneOnOnes + standups + dailyLogs + weeklySummaries + reports + decisions + dailyLogMeetings;
+}
+
+function deriveGoals(): number {
+  return countFilesInDir(join(workspaceDir, "Workstreams"));
+}
+
+function deriveDecisions(): number {
+  return countFilesInDir(join(workspaceDir, "Decisions"));
+}
+
+function deriveRisks(): number {
+  const path = join(workspaceDir, "Risks/risk-register.md");
+  if (!existsSync(path)) return 0;
+  const text = readText(path);
+  const matches = [...text.matchAll(/^\|\s*(R\d+)\s*\|/gm)];
+  return matches.length;
+}
+
+function deriveDocuments(): number {
+  return countFilesInDir(join(workspaceDir, "My-Growth")) + countFilesInDir(join(workspaceDir, "JobDescriptions"));
+}
+
+function deriveDrafts(): number {
+  return countFilesInDir(join(workspaceDir, "Weekly-Summaries")) + countFilesInDir(join(workspaceDir, "Reports"));
+}
+
+function fileMtimeMs(relPath: string, mtimes: Record<string, string>): number {
+  const key = relativeToFixture(join(workspaceDir, relPath));
+  const value = mtimes[key];
+  return value ? Date.parse(value) : 0;
+}
+
+function isFileRecent(relPath: string, mtimes: Record<string, string>): boolean {
+  const mtime = fileMtimeMs(relPath, mtimes);
+  return mtime > 0 && IMPORT_DATE.getTime() - mtime <= RECENT_WINDOW_MS;
+}
+
+function isUserOwned(line: string, fileRel: string): boolean {
+  const beforeTags = line.split("<!--")[0] ?? line;
+  // Any explicit non-self person (wiki-link or bare name) makes it other-owned.
+  if (/\[\[People\/[^\]|]+\|[^\]]+\]\]\s*:/.test(beforeTags)) return false;
+  if (/\b(Alex|Sam|Zoë|Zoe|Jordan|Priya)\s*:/.test(beforeTags)) return false;
+  // me: or absent owner resolves to the fixture user.
+  if (/\bme\s*:/.test(beforeTags)) return true;
+  // Placeholder "them:" resolves from the file's subject. In Todos.md the subject is the self person.
+  if (/\bthem\s*:/.test(beforeTags) && fileRel === "Todos.md") return true;
+  // Owed-to-me markers are treated as user-owned for activation.
+  if (/!(blocked|waiting-)/.test(line)) return true;
+  return true;
+}
+
+function hasActivationTag(line: string): boolean {
+  return /!(\d{4}-\d{2}-\d{2}|p[0-3]|now|next|soon|later|someday|blocked|waiting-)/.test(line);
+}
+
+function deriveCommitments(
+  files: string[],
+  mtimes: Record<string, string>,
+): { active: number; dropped: number; done: number; unparseable: number } {
+  const result = { active: 0, dropped: 0, done: 0, unparseable: 0 };
+  for (const file of files) {
+    const rel = relative(workspaceDir, file).split("\\").join("/");
+    // Generated TODO.md is skipped as a whole; real commitments live in Todos.md.
+    if (rel === "TODO.md") continue;
+    const lines = readText(file).split(/\r?\n/);
+    const recent = isFileRecent(rel, mtimes);
+    for (const line of lines) {
+      const checkbox = line.match(/^-\s*\[(x| )\]\s*(.*)$/);
+      if (!checkbox) continue;
+      const checked = checkbox[1] === "x";
+      const rest = checkbox[2];
+      const hasId = /<!--\s*id:/.test(rest);
+      if (!hasId) {
+        result.unparseable++;
+        continue;
+      }
+      if (checked) {
+        result.done++;
+        continue;
+      }
+      const userOwned = isUserOwned(rest, rel);
+      if (userOwned && (hasActivationTag(rest) || recent)) {
+        result.active++;
+      } else {
+        result.dropped++;
+      }
+    }
+  }
+  return result;
+}
+
 describe("importer-em-template fixture workspace", () => {
   const mtimes = JSON.parse(readText(mtimesPath)) as Record<string, string>;
   const workspaceFiles = allWorkspaceFiles();
@@ -167,16 +382,37 @@ describe("importer-em-template fixture workspace", () => {
     expect(found).toBe(true);
   });
 
-  it("uses 6-char ids for every single-id todo marker", () => {
+  it("uses 6-char ids for every todo marker, keying on the last id on two-id lines", () => {
     for (const file of workspaceFiles) {
       const lines = readText(file).split(/\r?\n/);
       for (const line of lines) {
-        const ids = [...line.matchAll(/<!--\s*id:(\S+)\s*-->/g)].map((m) => m[1]);
-        if (ids.length === 0 || ids.length === 2) continue;
-        for (const id of ids) {
-          expect(id).toMatch(/^[a-z0-9]{6}$/);
-        }
+        // Match only the standard todo id comment, capturing the last id on two-id lines.
+        const match = line.match(/<!--\s*(?:id:\S+\s+)*id:(\S+)\s*-->/);
+        if (!match) continue;
+        expect(match[1]).toMatch(/^[a-z0-9]{6}$/);
       }
     }
+  });
+
+  it("EXPECTED.md entity counts re-derive from the fixture tree", () => {
+    const expected = parseExpectedTable();
+
+    const { persons, identities } = derivePersonsAndIdentities();
+    expect(persons).toBe(expected.get("persons"));
+    expect(identities).toBe(expected.get("identities"));
+
+    expect(deriveMeetings()).toBe(expected.get("meetings"));
+    expect(deriveSourceItems(workspaceFiles)).toBe(expected.get("source_items"));
+    expect(deriveGoals()).toBe(expected.get("goals"));
+    expect(deriveDecisions()).toBe(expected.get("decisions"));
+    expect(deriveRisks()).toBe(expected.get("risks"));
+    expect(deriveDocuments()).toBe(expected.get("documents"));
+    expect(deriveDrafts()).toBe(expected.get("drafts"));
+
+    const commitments = deriveCommitments(workspaceFiles, mtimes);
+    expect(commitments.active).toBe(expected.get("commitments (active)"));
+    expect(commitments.dropped).toBe(expected.get("commitments (dropped)"));
+    expect(commitments.done).toBe(expected.get("commitments (done)"));
+    expect(commitments.unparseable).toBe(expected.get("Unparseable todo line"));
   });
 });

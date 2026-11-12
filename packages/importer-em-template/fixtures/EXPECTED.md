@@ -36,14 +36,14 @@ Counts below were recomputed from the fixture tree. Each row states its derivati
 |---|---|---|
 | persons | 5 | 3 People files + 3 Stakeholder files − 1 duplicate (Sam Chen) = 5 humans: Alex Rivera, Sam Chen, Zoë Quinn, Jordan Patel, Priya Nair. |
 | identities | 18 | Per-file handles/aliases after merging Sam Chen: Alex (3), Sam (6), Zoë (3), Jordan (3), Priya (3) = 3 + 6 + 3 + 3 + 3. |
-| person_notes | 31 | People/Stakeholder sensitive sections/dated bullets (13): Alex 3 + Sam 3 + Zoë 3 + Jordan 2 + Priya 1 + Stakeholder Sam 1; 1:1 sensitive sections (16) = 4 meetings × 4 sections; Team-Health named notes (2) = Alex + Zoë. 13 + 16 + 2 = 31. |
+| person_notes | 32 | People/Stakeholder sensitive sections/dated bullets (14): Alex 3 + Sam 3 + Zoë 3 + Jordan 2 + Priya 1 + Stakeholder Sam 2; 1:1 sensitive sections (16) = 4 meetings × 4 sections; Team-Health named notes (2) = Alex + Zoë. 14 + 16 + 2 = 32. |
 | growth_goals (People) | 2 | `People/sam-chen.md` and `People/zoe-quinn.md`; `People/alex-rivera.md` intentionally omits the section. |
 | growth_goals (My-Growth) | 1 | `My-Growth/brag-doc.md` line "Improve delegation in Q4." |
 | meetings | 7 | 4 one-on-ones + 3 standups. |
 | source_items | 16 | 4 one-on-ones + 3 standups + 3 daily logs + 1 weekly summary + 1 report + 1 decision + 3 daily-log meeting sections. |
-| commitments (active) | 22 | 34 parseable open checkboxes − 12 dropped = 22 active. Active items are user-owned or `!waiting-*` and have a due date, priority or urgency tag, or their source file mtime is within 30 days of 2026-10-20. |
+| commitments (active) | 23 | 34 parseable open checkboxes − 11 dropped = 23 active. Active items are user-owned or `!waiting-*` and have a due date, priority or urgency tag, or their source file mtime is within 30 days of 2026-10-20. |
 | commitments (done) | 1 | Only one `[x]` line exists: `Todos.md` "explore AI tooling". |
-| commitments (dropped) | 12 | 10 other-owned items (Alex 5, Sam 2, Zoë 2, Priya 1) + 1 placeholder `them:` item in `Todos.md` + 1 stale undated user-owned item in `1-1s/Alex-Rivera/2026-10-13.md` (pinned mtime 2026-09-01, outside the 30-day window). |
+| commitments (dropped) | 11 | 10 other-owned items (Alex 5, Sam 2, Zoë 2, Priya 1) + 1 stale undated user-owned item in `1-1s/Alex-Rivera/2026-10-13.md` (pinned mtime 2026-09-01, outside the 30-day window). The placeholder `them:` line in `Todos.md` resolves to the self person because the file's subject is the fixture user, so it is user-owned and active. |
 | risks | 2 | R1 and R2 from the risk register. |
 | risk_linked_notes | 1 | Dated corroboration on R1. |
 | goals | 1 | `Workstreams/api-cleanup.md`. |
@@ -67,8 +67,8 @@ Activation rule: `[x]` → done; `[ ]` owned by or owed to the user → active o
 
 | Category | Count | Explanation |
 |---|---|---|
-| Active (proposed) open todos | 22 | User-owned or `!waiting-*` items with due/priority/urgency, or from recently pinned files. |
+| Active (proposed) open todos | 23 | User-owned or `!waiting-*` items with due/priority/urgency, or from recently pinned files. |
 | Done todos | 1 | The single `[x]` line in `Todos.md`. |
-| Dropped / archived todos | 12 | 10 other-owned items + 1 placeholder-`them` item + 1 stale undated user-owned item in `1-1s/Alex-Rivera/2026-10-13.md` (mtime pinned to 2026-09-01). |
+| Dropped / archived todos | 11 | 10 other-owned items + 1 stale undated user-owned item in `1-1s/Alex-Rivera/2026-10-13.md` (mtime pinned to 2026-09-01). The placeholder `them:` item in `Todos.md` resolves to self and is active. |
 | Unparseable todo line | 1 | `Todos.md` line 17; reported in the dry-run, not imported as a commitment. |
 | Generated skipped lines | 2 | `TODO.md` task A and task B; not imported. |
