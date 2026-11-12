@@ -118,7 +118,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 **Connectors**
 
 - [x] **P1-12** Connector runtime, registry, scheduler, offline handling, fixture invoker — deps: Phase 0 — claim: done · 00db3b2
-- [ ] **P1-13** MCP direct transport + tool-mapping presets — deps: P1-12 — claim: coder · p1-13-mcp-transport
+- [x] **P1-13** MCP direct transport + tool-mapping presets — deps: P1-12 — claim: done · <merge commit>
 - [ ] **P1-14** Calendar connector (MCP capability + ICS native) — deps: P1-01, P1-04, P1-09, P1-12, P1-13 — claim: —
 
 **MCP server + Claude Code**
@@ -772,16 +772,16 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - **Tool calls:** tool text content parsed as JSON. A non-JSON result → `ConnectorError("schema")`.
 - **OAuth:** `{kind: "oauth"}` is implemented only if spike S2 recorded `mcp_direct: yes` for an OAuth server. Otherwise it throws `ConnectorError("config")` with message `"OAuth server: use the fallback recorded in ADR 0005"`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `applyResultMapping` resolves `start.dateTime|start.date` to the date for all-day events.
   - Unknown paths → null.
   - The invoker refuses `calendar.deleteEvent` (not in the preset).
   - Against an in-process MCP test server (`McpServer` + `InMemoryTransport`), `calendar.listEvents` returns mapped items and the next cursor.
   - Fixture presets pass `check-fixtures`.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-13): mcp transport with declarative tool-mapping presets`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-13): mcp transport with declarative tool-mapping presets`.
 
 **Acceptance:** Any MCP server can be bound to capabilities with YAML alone, and only mapped tools are callable.
 

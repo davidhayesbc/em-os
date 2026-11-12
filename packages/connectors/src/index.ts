@@ -1,3 +1,4 @@
+export * from "./mcp/index.js";
 export * from "./runtime/appliers.js";
 export * from "./runtime/errors.js";
 export * from "./runtime/fixture-invoker.js";

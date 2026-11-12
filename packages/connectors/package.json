@@ -17,6 +17,8 @@
   "dependencies": {
     "@emos/api-contract": "0.0.0",
     "@emos/core": "0.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "yaml": "^2.7.0",
     "zod": "^4.6.7"
   }
 }
