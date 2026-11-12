@@ -110,7 +110,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 - [x] **P1-06** Ranking engine `rank` + `selectTop` — deps: P1-05 — claim: done · 1f2991c253a19eb5e29b19afcdfb1a799cb5a936
 - [x] **t_a0575589** Ranking signal contracts: low-confidence penalty + assigned-ticket eligibility gate — deps: P1-06, t_43e3c03a, t_e9515b7b — claim: done · 44509b2
 - [x] **P1-07** Planner `plan` (free blocks + placement) — deps: P1-06 — claim: done · 106a8a0
-- [ ] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: coder · p1-08-week-load
+- [x] **P1-08** Week load `weekLoad` — deps: P1-07 — claim: done · 0b1b50c
 - [x] **P1-09** Meeting classification + `prep.get` — deps: P1-01, P1-02, P1-04, P1-05 — claim: done · 7107197
 - [ ] **P1-10** `today.get` aggregation + stable day plan — deps: P1-02, P1-04, P1-05, P1-06, P1-07, P1-08, P1-09, P1-12 — claim: —
 - [ ] **P1-11** End-of-day wrap use case + ops — deps: P1-02, P1-10 — claim: —
@@ -563,15 +563,15 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
 - `overloaded` is `loadRatio ≥ 0.75`.
 - `due` holds the active `mine` commitments due that day.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - 6h of meetings on Thu → `overloaded`.
   - A Sun–Thu `workWeek` (`[0,1,2,3,4]`) for `weekOf: "2026-11-03"` returns 5 entries starting Sunday `2026-11-01`. That's the US DST fall-back day, and a 09:00 meeting that day lands on `2026-11-01`.
   - A due item on Wed shows under Wed.
   - A Mon–Fri week of `2026-10-21` starts on `2026-10-19`.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.** Reuse the busy-merging helper from `free-blocks.ts` (import it; don't copy it).
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-08): week load`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.** Reuse the busy-merging helper from `free-blocks.ts` (import it; don't copy it).
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-08): week load`.
 
 **Acceptance:** It's pure and DST-correct, and it uses the same busy rules as the planner.
 
