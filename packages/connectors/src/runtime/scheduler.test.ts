@@ -39,4 +39,86 @@ describe("createScheduler", () => {
     await expect(second).rejects.toBeInstanceOf(SchedulerConflict);
     expect(runs).toBe(1);
   });
+
+  it("awaits prepareConfig before createInvoker and passes the prepared config to runSync", async () => {
+    const def: ConnectorDefinition<unknown> = {
+      id: "prep",
+      kind: "calendar",
+      configSchema: (await import("zod")).z.object({}),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const order: string[] = [];
+    let capturedConfig: unknown;
+    const scheduler = createScheduler({
+      registry: [def],
+      prepareConfig: async (_id, config) => {
+        order.push("prepareConfig");
+        return { ...(config as Record<string, unknown>), injected: true };
+      },
+      createInvoker: (_def, config) => {
+        order.push("createInvoker");
+        capturedConfig = config;
+        return fixtureInvoker({});
+      },
+      getConfig: () => ({ enabled: true, config: { base: 1 } }),
+      runSync: async (_def, ctx) => {
+        order.push("runSync");
+        capturedConfig = ctx.config;
+        return { pages: 1, items: 0 };
+      },
+      clock,
+      log: nullLog,
+    });
+
+    await expect(scheduler.sync("prep")).resolves.toEqual({ pages: 1, items: 0 });
+    expect(order).toEqual(["prepareConfig", "createInvoker", "runSync"]);
+    expect(capturedConfig).toEqual({ base: 1, injected: true });
+  });
+
+  it("rejects a concurrent sync with conflict after prepareConfig resolves", async () => {
+    const def: ConnectorDefinition<unknown> = {
+      id: "slow-prep",
+      kind: "calendar",
+      configSchema: (await import("zod")).z.object({}),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    let resolveDeferred: (() => void) | undefined;
+    const deferred = new Promise<void>((r) => {
+      resolveDeferred = r;
+    });
+    let runs = 0;
+    const scheduler = createScheduler({
+      registry: [def],
+      prepareConfig: async () => {
+        await deferred;
+        return {};
+      },
+      createInvoker: () => fixtureInvoker({}),
+      getConfig: () => ({ enabled: true, config: {} }),
+      runSync: async () => {
+        runs++;
+        return { pages: 1, items: 0 };
+      },
+      clock,
+      log: nullLog,
+    });
+
+    const first = scheduler.sync("slow-prep");
+    const second = scheduler.sync("slow-prep");
+
+    // Both calls are blocked inside the same prepareConfig; release them now.
+    resolveDeferred?.();
+
+    await expect(first).resolves.toEqual({ pages: 1, items: 0 });
+    await expect(second).rejects.toBeInstanceOf(SchedulerConflict);
+    expect(runs).toBe(1);
+  });
 });

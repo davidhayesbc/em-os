@@ -37,15 +37,21 @@ export const connectorsSync: Handler<"connectors.sync"> = async (ctx, { id }) =>
     if (e instanceof SchedulerNotFound) throw new ApiError("not_found", e.message);
     if (e instanceof ConnectorError) {
       const initial = ctx.store.syncState.get(id);
+      const now = ctx.clock.now().toISOString();
       ctx.store.syncState.set({
         connectorId: id,
         cursor: initial.cursor,
         state: "error" as ConnectorRunState,
-        lastAttemptAt: new Date().toISOString(),
+        lastAttemptAt: now,
         lastSuccessAt: initial.lastSuccessAt,
         lastError: e.message,
         itemCount: initial.itemCount,
       });
+      try {
+        ctx.events.publish({ type: "sync.status", connectorId: id, state: "error" });
+      } catch {
+        // A throwing subscriber must not abort the error transition.
+      }
       return { pages: 0, items: 0 };
     }
     throw e;

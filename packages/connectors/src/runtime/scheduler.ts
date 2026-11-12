@@ -1,4 +1,5 @@
 import type { Clock, Logger } from "@emos/core";
+import { ConnectorError } from "./errors.js";
 import type { CapabilityInvoker, ConnectorContext, ConnectorDefinition } from "./types.js";
 
 export interface SchedulerDeps {
@@ -44,14 +45,19 @@ export function createScheduler(deps: SchedulerDeps): Scheduler {
     const stored = getConfig(def.id);
     // Unconfigured connectors fall back to {} here; the invoker factory validates/defaults it.
     const rawConfig = stored?.config ?? {};
-    const config = stored && prepareConfig ? await prepareConfig(def.id, rawConfig) : rawConfig;
-    const caps = createInvoker(def, config);
-    return {
-      config,
-      caps,
-      log,
-      now: () => clock.now(),
-    };
+    try {
+      const config = stored && prepareConfig ? await prepareConfig(def.id, rawConfig) : rawConfig;
+      const caps = createInvoker(def, config);
+      return {
+        config,
+        caps,
+        log,
+        now: () => clock.now(),
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      throw new ConnectorError("config", `Failed to prepare connector ${def.id}: ${message}`);
+    }
   }
 
   function intervalMinutes(def: ConnectorDefinition<unknown>): number {

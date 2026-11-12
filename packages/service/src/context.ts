@@ -56,7 +56,7 @@ export async function createContext(deps: {
   const store = createStore(db);
   const registry = deps.registry ?? connectorRegistry;
 
-  await sanitizeLegacyConnectorConfigs(db, deps.secrets);
+  await sanitizeLegacyConnectorConfigs(db, deps.secrets, deps.log);
 
   function connectorConfig(id: string): { enabled: boolean; config: unknown } | undefined {
     return readConnectorConfigs(db)[id];
