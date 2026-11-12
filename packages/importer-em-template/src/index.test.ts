@@ -38,8 +38,8 @@ function parseExpectedTable(): Map<string, number> {
   for (const line of expected.split(/\r?\n/)) {
     const match = line.match(/^\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|/);
     if (!match) continue;
-    const key = match[1].trim();
-    const value = Number.parseInt(match[2], 10);
+    const key = match[1]!.trim();
+    const value = Number.parseInt(match[2]!, 10);
     counts.set(key, value);
   }
   return counts;
@@ -52,7 +52,7 @@ function readFrontmatterAliases(text: string): string[] {
   const fm = text.slice(3, end);
   const aliasesMatch = fm.match(/aliases:\s*\[(.*?)\]/s);
   if (!aliasesMatch) return [];
-  return aliasesMatch[1]
+  return aliasesMatch[1]!
     .split(",")
     .map((s) => s.trim().replace(/^['"]|['"]$/g, ""))
     .filter(Boolean);
@@ -60,18 +60,18 @@ function readFrontmatterAliases(text: string): string[] {
 
 function readName(text: string): string | undefined {
   const match = text.match(/\*\*Name:\*\*\s*(.+)/);
-  return match?.[1].trim();
+  return match?.[1]?.trim();
 }
 
 function fileIdentities(text: string): string[] {
   const ids: string[] = [];
   ids.push(...readFrontmatterAliases(text));
   const chat = text.match(/Chat:\s*@(\S+)/);
-  if (chat) ids.push(chat[1]);
+  if (chat) ids.push(chat[1]!);
   const codeHost = text.match(/Code host:\s*(\S+)/);
-  if (codeHost) ids.push(codeHost[1]);
+  if (codeHost) ids.push(codeHost[1]!);
   const email = text.match(/Email:\s*(\S+)/);
-  if (email) ids.push(email[1]);
+  if (email) ids.push(email[1]!);
   return ids;
 }
 
@@ -240,7 +240,7 @@ function deriveCommitments(
       const checkbox = line.match(/^-\s*\[(x| )\]\s*(.*)$/);
       if (!checkbox) continue;
       const checked = checkbox[1] === "x";
-      const rest = checkbox[2];
+      const rest = checkbox[2]!;
       const hasId = /<!--\s*id:/.test(rest);
       if (!hasId) {
         result.unparseable++;
