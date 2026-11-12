@@ -3,6 +3,7 @@ import type { Db } from "./driver.js";
 import { createAccomplishmentsRepo } from "./repos/accomplishments.js";
 import { createCommitmentsRepo } from "./repos/commitments.js";
 import { createGoalsRepo } from "./repos/goals.js";
+import { createImportKeysRepo } from "./repos/import-keys.js";
 import { createMeetingsRepo } from "./repos/meetings.js";
 import { createPeopleRepo } from "./repos/people.js";
 import { createSettingsRepo } from "./repos/settings.js";
@@ -19,6 +20,7 @@ export function createStore(db: Db): Store {
     accomplishments: createAccomplishmentsRepo(db),
     commitments: createCommitmentsRepo(db),
     goals: createGoalsRepo(db),
+    importKeys: createImportKeysRepo(db),
     meetings: createMeetingsRepo(db),
     people: createPeopleRepo(db),
     settings: createSettingsRepo(db),
