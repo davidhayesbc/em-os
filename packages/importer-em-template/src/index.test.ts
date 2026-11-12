@@ -78,8 +78,16 @@ function fileIdentities(text: string): string[] {
 function derivePersonsAndIdentities(): { persons: number; identities: number } {
   const peopleDir = join(workspaceDir, "People");
   const stakeholdersDir = join(workspaceDir, "Stakeholders");
-  const peopleFiles = existsSync(peopleDir) ? readdirSync(peopleDir).filter((n) => n.endsWith(".md")).map((n) => join(peopleDir, n)) : [];
-  const stakeholderFiles = existsSync(stakeholdersDir) ? readdirSync(stakeholdersDir).filter((n) => n.endsWith(".md")).map((n) => join(stakeholdersDir, n)) : [];
+  const peopleFiles = existsSync(peopleDir)
+    ? readdirSync(peopleDir)
+        .filter((n) => n.endsWith(".md"))
+        .map((n) => join(peopleDir, n))
+    : [];
+  const stakeholderFiles = existsSync(stakeholdersDir)
+    ? readdirSync(stakeholdersDir)
+        .filter((n) => n.endsWith(".md"))
+        .map((n) => join(stakeholdersDir, n))
+    : [];
 
   const byName = new Map<string, { identities: Set<string>; origins: Set<string> }>();
   for (const file of peopleFiles) {
@@ -112,7 +120,10 @@ function countFilesInDir(dir: string, predicate: (name: string) => boolean = () 
   return readdirSync(dir).filter((n) => n.endsWith(".md") && predicate(n)).length;
 }
 
-function countFilesRecursive(dir: string, predicate: (relPath: string) => boolean = () => true): number {
+function countFilesRecursive(
+  dir: string,
+  predicate: (relPath: string) => boolean = () => true,
+): number {
   let count = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
@@ -135,7 +146,9 @@ function deriveMeetings(): number {
 function deriveSourceItems(files: string[]): number {
   const oneOnOnes = countFilesRecursive(join(workspaceDir, "1-1s"));
   const standups = countFilesInDir(join(workspaceDir, "Daily-Logs/Standups"));
-  const dailyLogs = countFilesInDir(join(workspaceDir, "Daily-Logs"), (n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n));
+  const dailyLogs = countFilesInDir(join(workspaceDir, "Daily-Logs"), (n) =>
+    /^\d{4}-\d{2}-\d{2}\.md$/.test(n),
+  );
   const weeklySummaries = countFilesInDir(join(workspaceDir, "Weekly-Summaries"));
   const reports = countFilesInDir(join(workspaceDir, "Reports"));
   const decisions = countFilesInDir(join(workspaceDir, "Decisions"));
@@ -148,7 +161,9 @@ function deriveSourceItems(files: string[]): number {
     if (/## Meeting — .+ \(\d{4}-\d{2}-\d{2}\)/.test(text)) dailyLogMeetings++;
   }
 
-  return oneOnOnes + standups + dailyLogs + weeklySummaries + reports + decisions + dailyLogMeetings;
+  return (
+    oneOnOnes + standups + dailyLogs + weeklySummaries + reports + decisions + dailyLogMeetings
+  );
 }
 
 function deriveGoals(): number {
@@ -168,11 +183,17 @@ function deriveRisks(): number {
 }
 
 function deriveDocuments(): number {
-  return countFilesInDir(join(workspaceDir, "My-Growth")) + countFilesInDir(join(workspaceDir, "JobDescriptions"));
+  return (
+    countFilesInDir(join(workspaceDir, "My-Growth")) +
+    countFilesInDir(join(workspaceDir, "JobDescriptions"))
+  );
 }
 
 function deriveDrafts(): number {
-  return countFilesInDir(join(workspaceDir, "Weekly-Summaries")) + countFilesInDir(join(workspaceDir, "Reports"));
+  return (
+    countFilesInDir(join(workspaceDir, "Weekly-Summaries")) +
+    countFilesInDir(join(workspaceDir, "Reports"))
+  );
 }
 
 function fileMtimeMs(relPath: string, mtimes: Record<string, string>): number {
