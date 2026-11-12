@@ -207,4 +207,16 @@ describe("applyResultMapping", () => {
     const result = applyResultMapping(raw, mapping);
     expect(result.items).toEqual([{ evil: null }]);
   });
+
+  it("ignores prototype-polluting field names", () => {
+    const raw = { events: [{ id: "a" }] };
+    const mapping = {
+      items: "$.events[*]",
+      fields: { __proto__: "id", constructor: "id", prototype: "id" },
+    };
+
+    const result = applyResultMapping(raw, mapping);
+    expect(result.items).toEqual([{}]);
+    expect(Object.getPrototypeOf(result.items[0])).toBe(Object.prototype);
+  });
 });

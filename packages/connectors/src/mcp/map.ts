@@ -97,6 +97,9 @@ export function applyResultMapping(
   const items: Record<string, unknown>[] = rawItems.map((rawItem) => {
     const mapped: Record<string, unknown> = {};
     for (const [field, path] of Object.entries(mapping.fields)) {
+      if (FORBIDDEN_SEGMENTS.has(field)) {
+        continue;
+      }
       mapped[field] = resolvedValue(resolvePath(raw, rawItem, path));
     }
     return mapped;
