@@ -129,7 +129,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 **Importer (ephemeral, `@emos/importer-em-template`)**
 
-- [x] **P1-16** Synthetic em-template fixture workspace (with pinned mtimes) — deps: Phase 0 — claim: done · 6aa9dc1
+- [x] **P1-16** Synthetic em-template fixture workspace (with pinned mtimes) — deps: Phase 0 — claim: done · 4494479
 - [ ] **P1-17** Importer framework + Markdown / todo-line parsers — deps: P1-16 — claim: —
 - [ ] **P1-18** People + Stakeholders import — deps: P1-01, P1-17 — claim: —
 - [ ] **P1-19** Meetings, notes and daily-log import — deps: P1-04, P1-09, P1-18 — claim: —
