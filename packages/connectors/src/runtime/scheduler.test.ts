@@ -1,5 +1,6 @@
 import type { Clock, Logger } from "@emos/core";
 import { describe, expect, it } from "vitest";
+import { ConnectorError } from "./errors.js";
 import { fixtureInvoker } from "./fixture-invoker.js";
 import { createScheduler, SchedulerConflict } from "./scheduler.js";
 import type { ConnectorDefinition } from "./types.js";
@@ -77,6 +78,34 @@ describe("createScheduler", () => {
     await expect(scheduler.sync("prep")).resolves.toEqual({ pages: 1, items: 0 });
     expect(order).toEqual(["prepareConfig", "createInvoker", "runSync"]);
     expect(capturedConfig).toEqual({ base: 1, injected: true });
+  });
+
+  it("preserves the original ConnectorError kind when prepareConfig fails", async () => {
+    const def: ConnectorDefinition<unknown> = {
+      id: "schema-boom",
+      kind: "calendar",
+      configSchema: (await import("zod")).z.object({}),
+      requiredCapabilities: [],
+      defaultIntervalMinutes: 15,
+      async *sync() {
+        yield { items: [], nextCursor: null };
+      },
+    };
+    const scheduler = createScheduler({
+      registry: [def],
+      prepareConfig: async () => {
+        throw new ConnectorError("schema", "Bad schema");
+      },
+      createInvoker: () => fixtureInvoker({}),
+      getConfig: () => ({ enabled: true, config: {} }),
+      runSync: async () => ({ pages: 1, items: 0 }),
+      clock,
+      log: nullLog,
+    });
+
+    await expect(scheduler.sync("schema-boom")).rejects.toThrow(
+      new ConnectorError("schema", "Failed to prepare connector schema-boom: Bad schema"),
+    );
   });
 
   it("rejects a concurrent sync with conflict after prepareConfig resolves", async () => {

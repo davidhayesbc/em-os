@@ -11,6 +11,13 @@ function findRegistryEntry(ctx: Parameters<Handler<"connectors.list">>[0], id: s
   return ctx.registry.find((r) => r.def.id === id);
 }
 
+const LAST_ERROR_MAX_LENGTH = 500;
+
+function sanitizeLastError(message: string): string {
+  // Strip control and format characters (including ANSI escapes and newlines) and truncate.
+  return message.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, LAST_ERROR_MAX_LENGTH);
+}
+
 export const connectorsList: Handler<"connectors.list"> = (ctx) => {
   const configs = readConnectorConfigs(ctx.db);
   return ctx.registry.map((entry) => {
@@ -44,14 +51,10 @@ export const connectorsSync: Handler<"connectors.sync"> = async (ctx, { id }) =>
         state: "error" as ConnectorRunState,
         lastAttemptAt: now,
         lastSuccessAt: initial.lastSuccessAt,
-        lastError: e.message,
+        lastError: sanitizeLastError(e.message),
         itemCount: initial.itemCount,
       });
-      try {
-        ctx.events.publish({ type: "sync.status", connectorId: id, state: "error" });
-      } catch {
-        // A throwing subscriber must not abort the error transition.
-      }
+      ctx.events.publish({ type: "sync.status", connectorId: id, state: "error" });
       return { pages: 0, items: 0 };
     }
     throw e;
