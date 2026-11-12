@@ -91,7 +91,7 @@ export function localInstant(localDate: string, timeZone: string, minuteOfDay: n
   return instant;
 }
 
-function parseWallTime(s: string): number {
+export function parseWallTime(s: string): number {
   const match = /^(\d{1,2}):(\d{2})$/.exec(s);
   if (!match) throw new RangeError(`Invalid wall time (expected HH:MM): ${s}`);
   const h = Number(match[1]);
@@ -102,10 +102,10 @@ function parseWallTime(s: string): number {
   return h * 60 + min;
 }
 
-function isBusy(meeting: Meeting): boolean {
+export function isBusy(meeting: Meeting): boolean {
   if (meeting.allDay) return false;
   if (meeting.status !== "confirmed") return false;
-  if (meeting.selfResponse === "declined") return false;
+  if (meeting.selfResponse === "declined" || meeting.selfResponse === "tentative") return false;
   return true;
 }
 

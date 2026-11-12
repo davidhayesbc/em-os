@@ -1,6 +1,12 @@
 import type { Commitment, LocalDate, Meeting } from "@emos/api-contract";
 import { addLocalDays, localWeekdayIndex, startOfLocalDay } from "../time/zoned.js";
-import { type Interval, localInstant, mergeIntervals } from "./free-blocks.js";
+import {
+  type Interval,
+  isBusy,
+  localInstant,
+  mergeIntervals,
+  parseWallTime,
+} from "./free-blocks.js";
 
 export interface DayLoad {
   date: LocalDate;
@@ -11,26 +17,15 @@ export interface DayLoad {
   due: { commitmentId: string; title: string }[];
 }
 
-const WALL_TIME_RE = /^(\d{1,2}):(\d{2})$/;
-
-function parseWallTime(s: string): number {
-  const match = WALL_TIME_RE.exec(s);
-  if (!match) throw new RangeError(`Invalid wall time (expected HH:MM): ${s}`);
-  const h = Number(match[1]);
-  const min = Number(match[2]);
-  if (h < 0 || h > 23 || min < 0 || min > 59) {
-    throw new RangeError(`Invalid wall time: ${s}`);
-  }
-  return h * 60 + min;
-}
-
-function isBusy(meeting: Meeting): boolean {
-  if (meeting.allDay) return false;
-  if (meeting.status !== "confirmed") return false;
-  if (meeting.selfResponse === "declined") return false;
-  return true;
-}
-
+/**
+ * Compute per-day meeting load for a work week.
+ *
+ * `workWeek` is a list of weekday indexes (0 = Sunday, 6 = Saturday). It is not
+ * required to be contiguous, sorted, or unique. The week starts on the first
+ * `workWeek` day on or before `weekOf`, where `workWeek[0]` defines the first
+ * day. The result has one entry per distinct `workWeek` day, in listed order,
+ * with duplicates collapsed by resolved date.
+ */
 export function weekLoad(i: {
   weekOf: LocalDate;
   workWeek: number[];
@@ -55,9 +50,14 @@ export function weekLoad(i: {
   }
 
   const result: DayLoad[] = [];
+  const seenDates = new Set<LocalDate>();
 
   for (let index = 0; index < i.workWeek.length; index += 1) {
-    const date = addLocalDays(weekStart, index);
+    const weekday = i.workWeek[index];
+    if (weekday == null) continue;
+    const date = addLocalDays(weekStart, (weekday - firstDay + 7) % 7);
+    if (seenDates.has(date)) continue;
+    seenDates.add(date);
 
     const workStartMs = localInstant(date, i.timeZone, workStart).getTime();
     const workEndMs = localInstant(date, i.timeZone, workEnd).getTime();
