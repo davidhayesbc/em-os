@@ -216,22 +216,22 @@ describe("weekLoad", () => {
     expect(loads.map((d) => d.date)).toEqual(["2026-10-19", "2026-10-20"]);
   });
 
-  it("only counts confirmed accepted non-all-day meetings as busy", () => {
+  it("counts confirmed non-declined non-all-day meetings as busy (tentative included)", () => {
     const loads = weekLoad(
       workWeekParams({
         meetings: [
-          meeting({ id: "confirmed", start: "2026-10-21T17:00:00Z", end: "2026-10-21T18:00:00Z" }), // 09:00-10:00 LA
+          meeting({ id: "confirmed", start: "2026-10-21T17:00:00Z", end: "2026-10-21T18:00:00Z" }), // 10:00-11:00 LA
           meeting({
             id: "tentative",
             selfResponse: "tentative",
             start: "2026-10-21T18:00:00Z",
-            end: "2026-10-21T19:00:00Z",
+            end: "2026-10-21T19:00:00Z", // 11:00-12:00 LA
           }),
           meeting({
             id: "declined",
             selfResponse: "declined",
             start: "2026-10-21T19:00:00Z",
-            end: "2026-10-21T20:00:00Z",
+            end: "2026-10-21T20:00:00Z", // 12:00-13:00 LA
           }),
           meeting({
             id: "all-day",
@@ -245,7 +245,7 @@ describe("weekLoad", () => {
 
     const wed = loads.find((d) => d.date === "2026-10-21");
     expect(wed).toBeDefined();
-    expect(wed?.meetingMinutes).toBe(60);
+    expect(wed?.meetingMinutes).toBe(120); // confirmed 60 + tentative 60
   });
 
   it("clips meeting minutes to the working-hours window", () => {

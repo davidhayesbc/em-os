@@ -116,6 +116,38 @@ describe("freeBlocks", () => {
     });
   });
 
+  it("blocks time for a tentative confirmed meeting", () => {
+    const localDate = "2026-10-21";
+    const blocks = freeBlocks({
+      localDate,
+      timeZone: LA,
+      workingHours: { start: "09:00", end: "17:00" },
+      meetings: [
+        meeting({
+          start: "2026-10-21T17:00:00Z",
+          end: "2026-10-21T18:00:00Z",
+          selfResponse: "tentative",
+        }),
+      ],
+      now: new Date("2026-10-19T12:00:00Z"),
+      minMinutes: 15,
+    });
+
+    expect(blocks).toHaveLength(2);
+    expect(blocks).toEqual([
+      {
+        start: "2026-10-21T16:00:00.000Z",
+        end: "2026-10-21T17:00:00.000Z",
+        minutes: 60,
+      },
+      {
+        start: "2026-10-21T18:00:00.000Z",
+        end: "2026-10-22T00:00:00.000Z",
+        minutes: 360,
+      },
+    ]);
+  });
+
   it("clips today's free blocks to now", () => {
     const localDate = "2026-10-20";
     const blocks = freeBlocks({

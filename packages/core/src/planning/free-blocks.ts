@@ -105,7 +105,7 @@ export function parseWallTime(s: string): number {
 export function isBusy(meeting: Meeting): boolean {
   if (meeting.allDay) return false;
   if (meeting.status !== "confirmed") return false;
-  if (meeting.selfResponse === "declined" || meeting.selfResponse === "tentative") return false;
+  if (meeting.selfResponse === "declined") return false;
   return true;
 }
 
