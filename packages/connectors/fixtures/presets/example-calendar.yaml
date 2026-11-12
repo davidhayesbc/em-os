@@ -1,0 +1,18 @@
+preset: example-calendar
+server: example-server
+capabilities:
+  calendar.listEvents:
+    tool: list_events
+    args: { start: "{{timeMin}}", end: "{{timeMax}}", page: "{{cursor}}" }
+    result:
+      items: "$.events[*]"
+      nextCursor: "$.next"
+      fields:
+        externalId: "id"
+        title: "summary"
+        start: "start.dateTime|start.date"
+        end: "end.dateTime|end.date"
+        attendees: "attendees"
+        url: "htmlLink"
+        status: "status"
+        recurringEventId: "recurringEventId"
