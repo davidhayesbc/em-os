@@ -20,6 +20,7 @@ export const MAX_ICS_FILE_BYTES = 5 * 1024 * 1024;
 
 const MAX_OCCURRENCES_PER_EVENT = 500;
 const MAX_ITERATIONS_PER_EVENT = 20_000;
+const MAX_ITERATIONS_TOTAL = 200_000;
 const MAX_EVENTS_TOTAL = 2000;
 const MAX_TITLE_LENGTH = 2000;
 const MAX_EXTERNAL_ID_LENGTH = 2000;
@@ -32,26 +33,44 @@ const ICS_RECURRENCE_TOTAL_LIMIT_MESSAGE =
   "Calendar ICS recurrence expansion exceeded the total event limit";
 const ICS_RECURRENCE_ITERATION_LIMIT_MESSAGE =
   "Calendar ICS recurrence expansion exceeded the iteration limit";
+const ICS_RECURRENCE_TOTAL_ITERATION_LIMIT_MESSAGE =
+  "Calendar ICS recurrence expansion exceeded the total iteration limit";
 const ICS_FIELD_TOO_LONG_MESSAGE = "Calendar ICS event field exceeds maximum length";
+const ICS_INVALID_UID_MESSAGE = "Calendar ICS event has an invalid UID";
 
 /**
- * Removes C0/C1 control characters and Unicode format characters from a user-supplied
- * ICS value before it reaches the database.
+ * Removes C0/C1 control characters and all Unicode format characters from a
+ * user-supplied ICS value before it reaches the database. Legitimate joiners
+ * (ZWJ/U+200D and ZWNJ/U+200C) are intentionally preserved so names and emoji
+ * sequences render correctly.
  */
-function sanitizeString(value: unknown): string | null {
+export function sanitizeString(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  return value.replace(/[\p{Cc}\p{Cf}]/gu, "");
+  return value
+    .replace(/[\p{Cc}]/gu, "")
+    .replace(/\p{Cf}/gu, (ch) => (ch === "\u200C" || ch === "\u200D" ? ch : ""));
+}
+
+/** Returns true when `value` contains no control or format characters except ZWJ/ZWNJ. */
+export function isSanitizedString(value: string): boolean {
+  return !/\p{Cc}/u.test(value) && !/\p{Cf}/u.test(value.replace(/[\u200C\u200D]/gu, ""));
 }
 
 /**
- * Allow-lists ICS URL values to http/https schemes only. Everything else is dropped
- * to null so a stored URL can never be rendered as an executable link.
+ * Sanitizes an ICS URL value, then allow-lists http/https schemes only. Everything
+ * else is dropped to null so a stored URL can never be rendered as an executable link.
  */
 function sanitizeUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0) return null;
-  const trimmed = value.trim();
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith("http:") || lower.startsWith("https:")) return trimmed;
+  const sanitized = sanitizeString(value);
+  if (sanitized === null) return null;
+  const trimmed = sanitized.trim();
+  if (trimmed.length === 0) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol === "http:" || url.protocol === "https:") return trimmed;
+  } catch {
+    // Drop malformed or non-http(s) URLs.
+  }
   return null;
 }
 
@@ -178,7 +197,12 @@ function buildEventDto(
   const end = icalTimeToUtcIso(endTime, displayZone);
 
   const rawUid = typeof event.uid === "string" ? event.uid : "";
-  const externalId = `${rawUid}:${start.iso}`;
+  const sanitizedUid = sanitizeString(rawUid) ?? "";
+  if (sanitizedUid.length === 0) {
+    // Fail closed: an empty (or all-control) UID would create a non-unique externalId.
+    throw new ConnectorError("schema", ICS_INVALID_UID_MESSAGE);
+  }
+  const externalId = `${sanitizedUid}:${start.iso}`;
   assertStringLength(externalId, MAX_EXTERNAL_ID_LENGTH);
 
   const title = sanitizeString(event.summary);
@@ -200,7 +224,7 @@ function buildEventDto(
     status: statusFromIcs(event.component),
     attendees,
     url: sanitizeUrl(urlFromIcs(event.component)),
-    recurringEventId: event.isRecurring() || event.recurrenceId ? event.uid : null,
+    recurringEventId: event.isRecurring() || event.recurrenceId ? sanitizedUid : null,
   };
 }
 
@@ -210,6 +234,7 @@ export function parseIcsEvents(deps: ParseIcsDeps): CalendarEventDraft[] {
   const events: CalendarEventDraft[] = [];
   const selfEmail = deps.selfEmail;
   let totalCount = 0;
+  let totalIterationCount = 0;
 
   for (const vevent of root.getAllSubcomponents("vevent")) {
     const event = new ICAL.Event(vevent);
@@ -220,6 +245,10 @@ export function parseIcsEvents(deps: ParseIcsDeps): CalendarEventDraft[] {
       let perEventCount = 0;
       for (let next = iterator.next(); next; next = iterator.next()) {
         iterationCount++;
+        totalIterationCount++;
+        if (totalIterationCount > MAX_ITERATIONS_TOTAL) {
+          throw new ConnectorError("schema", ICS_RECURRENCE_TOTAL_ITERATION_LIMIT_MESSAGE);
+        }
         if (iterationCount > MAX_ITERATIONS_PER_EVENT) {
           throw new ConnectorError("schema", ICS_RECURRENCE_ITERATION_LIMIT_MESSAGE);
         }

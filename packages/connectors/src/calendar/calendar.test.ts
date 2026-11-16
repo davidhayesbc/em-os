@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import type { Meeting } from "@emos/api-contract";
 import type { Clock, Store } from "@emos/core";
@@ -11,7 +12,7 @@ import { calendarConnector, createAppliers, fixtureInvoker } from "../index.js";
 import { ConnectorError } from "../runtime/errors.js";
 import { runSync } from "../runtime/orchestrator.js";
 import type { CapabilityInvoker, ConnectorContext } from "../runtime/types.js";
-import { MAX_ICS_FILE_BYTES } from "./ics.js";
+import { isSanitizedString, MAX_ICS_FILE_BYTES, parseIcsEvents, sanitizeString } from "./ics.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(__dirname, "..", "..", "fixtures", "calendar");
@@ -839,7 +840,7 @@ describe("calendarConnector ICS transport", () => {
       const attendee = meeting.attendees[0];
       expect(attendee).toBeDefined();
       expect(attendee?.email).toBe("bademail@example.com");
-      expect(/[\p{Cc}\p{Cf}]/u.test(attendee?.email ?? "")).toBe(false);
+      expect(isSanitizedString(attendee?.email ?? "")).toBe(true);
     } finally {
       cleanup();
     }
@@ -859,6 +860,50 @@ describe("calendarConnector ICS transport", () => {
       const state = sqlite.store.syncState.get("calendar");
       expect(state.state).toBe("error");
       expect(state.lastError).toBe("Calendar ICS file exceeds maximum size");
+
+      // No partial row should have been written.
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-20T00:00:00.000Z",
+        "2026-10-21T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("pins the bounded-read growth branch when read exceeds the budget", async () => {
+    const { readIcsFile } = await import("./definition.js");
+    const fs = {
+      openSync: () => 42,
+      fstatSync: () => ({ isFile: () => true, size: 1 }),
+      readSync: () => MAX_ICS_FILE_BYTES + 1,
+      closeSync: () => {},
+      constants: { O_RDONLY: 0, O_NONBLOCK: 0 },
+    };
+
+    expect(() => readIcsFile("/any/path", MAX_ICS_FILE_BYTES, fs)).toThrow(
+      new ConnectorError("schema", "Calendar ICS file exceeds maximum size"),
+    );
+  });
+
+  it("reads a large ICS file completely without truncating a short read", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "large.ics");
+    const big = Buffer.alloc(MAX_ICS_FILE_BYTES, "A");
+    writeFileSync(path, big);
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      // This must not throw and must not silently truncate.
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe("Calendar ICS data is malformed");
     } finally {
       cleanup();
     }
@@ -896,10 +941,10 @@ describe("calendarConnector ICS transport", () => {
         .find((m) => m.title.includes("Team Sync")) as Meeting;
       expect(meeting).toBeDefined();
       expect(meeting.title).toBe("[31mTeam Sync[0m");
-      expect(/[\p{Cc}\p{Cf}]/u.test(meeting.title)).toBe(false);
+      expect(isSanitizedString(meeting.title)).toBe(true);
       const sam = meeting.attendees.find((a) => a.email === "sam@example.com");
       expect(sam?.displayName).toBe("[31mSam Chen[0m");
-      expect(/[\p{Cc}\p{Cf}]/u.test(sam?.displayName ?? "")).toBe(false);
+      expect(isSanitizedString(sam?.displayName ?? "")).toBe(true);
     } finally {
       cleanup();
     }
@@ -936,6 +981,96 @@ describe("calendarConnector ICS transport", () => {
         .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
         .find((m) => m.title === "Meeting with bad URL") as Meeting;
       expect(meeting.url).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("sanitizes http URLs by stripping control and format characters", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "url-sanitize.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:url-sanitize-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "SUMMARY:Control URL",
+        "URL:http://example.com/\u0000evil",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:url-sanitize-2@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T150000Z",
+        "DTEND:20261020T160000Z",
+        "SUMMARY:Bidi URL",
+        "URL:http://example.com/\u202Ex",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:url-sanitize-3@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T170000Z",
+        "DTEND:20261020T180000Z",
+        "SUMMARY:Javascript URL",
+        "URL:javascript:alert(1)",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:url-sanitize-4@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T190000Z",
+        "DTEND:20261020T200000Z",
+        "SUMMARY:Tab obfuscated URL",
+        "URL:java\u0009script:alert(1)",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:url-sanitize-5@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T210000Z",
+        "DTEND:20261020T220000Z",
+        "SUMMARY:Http prefix URL",
+        "URL:http:javascript:alert(1)",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      await runCalendar(ctx, sqlite.store);
+
+      const controlMeeting = sqlite.store.meetings
+        .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
+        .find((m) => m.title === "Control URL") as Meeting;
+      expect(controlMeeting.url).toBe("http://example.com/evil");
+      expect(controlMeeting.url).not.toBeNull();
+      expect(isSanitizedString(controlMeeting.url!)).toBe(true);
+
+      const bidiMeeting = sqlite.store.meetings
+        .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
+        .find((m) => m.title === "Bidi URL") as Meeting;
+      expect(bidiMeeting.url).toBe("http://example.com/x");
+      expect(bidiMeeting.url).not.toBeNull();
+      expect(isSanitizedString(bidiMeeting.url!)).toBe(true);
+
+      const nullUrls = sqlite.store.meetings
+        .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
+        .filter((m) =>
+          ["Javascript URL", "Tab obfuscated URL", "Http prefix URL"].includes(m.title),
+        );
+      for (const meeting of nullUrls) {
+        expect(meeting.url).toBeNull();
+      }
     } finally {
       cleanup();
     }
@@ -981,5 +1116,162 @@ describe("calendarConnector ICS transport", () => {
     } finally {
       cleanup();
     }
+  });
+
+  it("rejects an aggregate recurrence iteration budget across multiple heavy VEVENTs", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "total-iterations.ics");
+    const lines = ["BEGIN:VCALENDAR", "VERSION:2.0"];
+    for (let i = 0; i < 11; i++) {
+      lines.push(
+        "BEGIN:VEVENT",
+        `UID:heavy-${i}@example.com`,
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:19750101T000000Z",
+        "RRULE:FREQ=DAILY;COUNT=19000",
+        `SUMMARY:Heavy ${i}`,
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+      );
+    }
+    lines.push("END:VCALENDAR");
+    writeFileSync(path, lines.join("\n"), "utf8");
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+    const start = performance.now();
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe(
+        "Calendar ICS recurrence expansion exceeded the total iteration limit",
+      );
+      expect(performance.now() - start).toBeLessThan(15000);
+
+      const meetings = sqlite.store.meetings.listRange(
+        "1970-01-01T00:00:00.000Z",
+        "2030-01-01T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  }, 15_000);
+
+  it("sanitizes UID before composing externalId and recurringEventId", async () => {
+    const rawUid = "evt\u001b[31m\u0000raw@example.com";
+    const text = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      `UID:${rawUid}`,
+      "DTSTAMP:20261020T120000Z",
+      "DTSTART:20261020T130000Z",
+      "DTEND:20261020T140000Z",
+      "RRULE:FREQ=DAILY;COUNT=3",
+      "SUMMARY:UID sanitize check",
+      "STATUS:CONFIRMED",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\n");
+
+    const dtos = parseIcsEvents({
+      text,
+      windowStart: new Date("2026-10-13T12:00:00.000Z"),
+      windowEnd: new Date("2026-11-03T12:00:00.000Z"),
+      displayZone: "America/Vancouver",
+      selfEmail: null,
+    });
+
+    expect(dtos.length).toBeGreaterThan(0);
+    for (const dto of dtos) {
+      expect(dto.externalId).toContain("evt[31mraw@example.com");
+      expect(isSanitizedString(dto.externalId)).toBe(true);
+      expect(dto.recurringEventId).toBe("evt[31mraw@example.com");
+      expect(isSanitizedString(dto.recurringEventId ?? "")).toBe(true);
+    }
+  });
+
+  it("rejects a VEVENT whose UID sanitizes to empty as a terminal schema error", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "empty-uid.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:\u001b\u202e",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "SUMMARY:Empty UID",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe("Calendar ICS event has an invalid UID");
+
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-20T00:00:00.000Z",
+        "2026-10-21T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("sanitizeString", () => {
+  it("strips every C0/C1 control character", () => {
+    for (let cp = 0x00; cp <= 0x1f; cp++) {
+      const input = `X${String.fromCodePoint(cp)}Y`;
+      expect(sanitizeString(input)).toBe("XY");
+    }
+    for (let cp = 0x80; cp <= 0x9f; cp++) {
+      const input = `X${String.fromCodePoint(cp)}Y`;
+      expect(sanitizeString(input)).toBe("XY");
+    }
+    expect(sanitizeString(`X${String.fromCodePoint(0x7f)}Y`)).toBe("XY");
+  });
+
+  it("strips every Unicode format character except ZWJ/ZWNJ", () => {
+    const preserved = new Set([0x200c, 0x200d]);
+    const formatChars: number[] = [];
+    for (let cp = 0; cp <= 0x10_ffff; cp++) {
+      if (preserved.has(cp)) continue;
+      if (/\p{Cf}/u.test(String.fromCodePoint(cp))) {
+        formatChars.push(cp);
+      }
+    }
+    expect(formatChars.length).toBeGreaterThan(0);
+    for (const cp of formatChars) {
+      const input = `X${String.fromCodePoint(cp)}Y`;
+      expect(sanitizeString(input)).toBe("XY");
+    }
+  });
+
+  it("preserves ZWJ and ZWNJ", () => {
+    const family = "Alex \u{1f468}\u200d\u{1f469}\u200d\u{1f467} Rivera";
+    expect(sanitizeString(family)).toBe(family);
+    expect(sanitizeString(family)).toMatch(/\u200d/);
+    const persian = "\u0639\u0644\u06cc\u200c\u0631\u0636\u0627";
+    expect(sanitizeString(persian)).toBe(persian);
+    expect(sanitizeString(persian)).toMatch(/\u200c/);
   });
 });

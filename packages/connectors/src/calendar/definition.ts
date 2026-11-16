@@ -1,3 +1,4 @@
+import { closeSync, constants as fsConstants, fstatSync, openSync, readSync } from "node:fs";
 import type { Store } from "@emos/core";
 import { z } from "zod";
 import { ConnectorError, isConnectorError } from "../runtime/errors.js";
@@ -6,6 +7,60 @@ import { applyCalendarEvent } from "./apply.js";
 import type { CalendarEventDTO as CalendarEventDTOT } from "./dto.js";
 import { CalendarEventDTO } from "./dto.js";
 import { MAX_ICS_FILE_BYTES, parseIcsEvents } from "./ics.js";
+
+interface IcsFileSystem {
+  openSync(path: string, flags: number): number;
+  readSync(
+    fd: number,
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number | null,
+  ): number;
+  closeSync(fd: number): void;
+  fstatSync(fd: number): { isFile(): boolean; size: number };
+  constants: { O_RDONLY: number; O_NONBLOCK: number };
+}
+
+const realFs: IcsFileSystem = {
+  openSync,
+  readSync,
+  closeSync,
+  fstatSync,
+  constants: fsConstants,
+};
+
+export function readIcsFile(path: string, maxBytes: number, fs: IcsFileSystem = realFs): string {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile()) {
+      throw new ConnectorError("config", "Calendar ICS file is not readable");
+    }
+    if (stats.size > maxBytes) {
+      throw new ConnectorError("schema", "Calendar ICS file exceeds maximum size");
+    }
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < stats.size) {
+      const chunk = fs.readSync(fd, buffer, bytesRead, maxBytes + 1 - bytesRead, bytesRead);
+      if (chunk === 0) break;
+      bytesRead += chunk;
+      if (bytesRead > maxBytes) {
+        throw new ConnectorError("schema", "Calendar ICS file exceeds maximum size");
+      }
+    }
+    if (stats.size > 0 && bytesRead !== stats.size) {
+      throw new ConnectorError("config", "Calendar ICS file is not readable");
+    }
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    if (fd !== undefined) {
+      fs.closeSync(fd);
+    }
+  }
+}
 
 const McpConfig = z.object({
   transport: z.literal("mcp"),
@@ -94,24 +149,12 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
 
   let text: string;
   if (cfg.filePath) {
-    const { readFileSync, statSync } = await import("node:fs");
     try {
-      const stats = statSync(cfg.filePath);
-      if (!stats.isFile()) {
-        throw new ConnectorError("config", "Calendar ICS file is not readable");
-      }
-      if (stats.size > MAX_ICS_FILE_BYTES) {
-        throw new ConnectorError("schema", "Calendar ICS file exceeds maximum size");
-      }
+      text = readIcsFile(cfg.filePath, MAX_ICS_FILE_BYTES);
     } catch (e) {
       if (isConnectorError(e)) {
         throw e;
       }
-      throw new ConnectorError("config", "Calendar ICS file is not readable");
-    }
-    try {
-      text = readFileSync(cfg.filePath, "utf8");
-    } catch {
       throw new ConnectorError("config", "Calendar ICS file is not readable");
     }
   } else if (cfg.urlSecretKey) {
