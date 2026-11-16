@@ -21,11 +21,11 @@ export const MAX_ICS_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_OCCURRENCES_PER_EVENT = 500;
 const MAX_ITERATIONS_PER_EVENT = 20_000;
 const MAX_ITERATIONS_TOTAL = 200_000;
-const MAX_EVENTS_TOTAL = 2000;
-const MAX_TITLE_LENGTH = 2000;
+export const MAX_EVENTS_TOTAL = 2000;
+export const MAX_TITLE_LENGTH = 2000;
 const MAX_EXTERNAL_ID_LENGTH = 2000;
-const MAX_ATTENDEE_EMAIL_LENGTH = 254;
-const MAX_ATTENDEE_DISPLAY_NAME_LENGTH = 500;
+export const MAX_ATTENDEE_EMAIL_LENGTH = 254;
+export const MAX_ATTENDEE_DISPLAY_NAME_LENGTH = 500;
 
 const ICS_RECURRENCE_PER_EVENT_LIMIT_MESSAGE =
   "Calendar ICS recurrence expansion exceeded the per-event limit";
@@ -60,7 +60,7 @@ export function isSanitizedString(value: string): boolean {
  * Sanitizes an ICS URL value, then allow-lists http/https schemes only. Everything
  * else is dropped to null so a stored URL can never be rendered as an executable link.
  */
-function sanitizeUrl(value: unknown): string | null {
+export function sanitizeUrl(value: unknown): string | null {
   const sanitized = sanitizeString(value);
   if (sanitized === null) return null;
   const trimmed = sanitized.trim();
