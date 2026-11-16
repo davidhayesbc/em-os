@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import type { Meeting } from "@emos/api-contract";
 import type { Clock, Store } from "@emos/core";
@@ -11,7 +12,7 @@ import { calendarConnector, createAppliers, fixtureInvoker } from "../index.js";
 import { ConnectorError } from "../runtime/errors.js";
 import { runSync } from "../runtime/orchestrator.js";
 import type { CapabilityInvoker, ConnectorContext } from "../runtime/types.js";
-import { MAX_ICS_FILE_BYTES } from "./ics.js";
+import { MAX_ICS_FILE_BYTES, parseIcsEvents, sanitizeString } from "./ics.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(__dirname, "..", "..", "fixtures", "calendar");
@@ -981,5 +982,157 @@ describe("calendarConnector ICS transport", () => {
     } finally {
       cleanup();
     }
+  });
+
+  it("rejects an aggregate recurrence iteration budget across multiple heavy VEVENTs", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "total-iterations.ics");
+    const lines = ["BEGIN:VCALENDAR", "VERSION:2.0"];
+    for (let i = 0; i < 11; i++) {
+      lines.push(
+        "BEGIN:VEVENT",
+        `UID:heavy-${i}@example.com`,
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:19750101T000000Z",
+        "RRULE:FREQ=DAILY;COUNT=19000",
+        `SUMMARY:Heavy ${i}`,
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+      );
+    }
+    lines.push("END:VCALENDAR");
+    writeFileSync(path, lines.join("\n"), "utf8");
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+    const start = performance.now();
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe(
+        "Calendar ICS recurrence expansion exceeded the total iteration limit",
+      );
+      expect(performance.now() - start).toBeLessThan(15000);
+
+      const meetings = sqlite.store.meetings.listRange(
+        "1970-01-01T00:00:00.000Z",
+        "2030-01-01T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("sanitizes UID before composing externalId and recurringEventId", async () => {
+    const rawUid = "evt\u001b[31m\u0000raw@example.com";
+    const text = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      `UID:${rawUid}`,
+      "DTSTAMP:20261020T120000Z",
+      "DTSTART:20261020T130000Z",
+      "DTEND:20261020T140000Z",
+      "RRULE:FREQ=DAILY;COUNT=3",
+      "SUMMARY:UID sanitize check",
+      "STATUS:CONFIRMED",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\n");
+
+    const dtos = parseIcsEvents({
+      text,
+      windowStart: new Date("2026-10-13T12:00:00.000Z"),
+      windowEnd: new Date("2026-11-03T12:00:00.000Z"),
+      displayZone: "America/Vancouver",
+      selfEmail: null,
+    });
+
+    expect(dtos.length).toBeGreaterThan(0);
+    for (const dto of dtos) {
+      expect(dto.externalId).toContain("evt[31mraw@example.com");
+      expect(/[\p{Cc}\p{Cf}]/u.test(dto.externalId)).toBe(false);
+      expect(dto.recurringEventId).toBe("evt[31mraw@example.com");
+      expect(/[\p{Cc}\p{Cf}]/u.test(dto.recurringEventId ?? "")).toBe(false);
+    }
+  });
+
+  it("rejects a VEVENT whose UID sanitizes to empty as a terminal schema error", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "empty-uid.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:\u001b\u202e",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "SUMMARY:Empty UID",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe("Calendar ICS event has an invalid UID");
+
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-20T00:00:00.000Z",
+        "2026-10-21T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("sanitizeString", () => {
+  it("strips every C0/C1 control character", () => {
+    for (let cp = 0x00; cp <= 0x1f; cp++) {
+      const input = `X${String.fromCodePoint(cp)}Y`;
+      expect(sanitizeString(input)).toBe("XY");
+    }
+    for (let cp = 0x80; cp <= 0x9f; cp++) {
+      const input = `X${String.fromCodePoint(cp)}Y`;
+      expect(sanitizeString(input)).toBe("XY");
+    }
+    expect(sanitizeString(`X${String.fromCodePoint(0x7f)}Y`)).toBe("XY");
+  });
+
+  it("strips the bidi/format subset used for attacks", () => {
+    const formatChars = [
+      0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068,
+      0x2069, 0xfeff,
+    ];
+    for (const cp of formatChars) {
+      const input = `X${String.fromCodePoint(cp)}Y`;
+      expect(sanitizeString(input)).toBe("XY");
+    }
+  });
+
+  it("preserves ZWJ and ZWNJ", () => {
+    const family = "Alex \u{1f468}\u200d\u{1f469}\u200d\u{1f467} Rivera";
+    expect(sanitizeString(family)).toBe(family);
+    expect(sanitizeString(family)).toMatch(/\u200d/);
+    const persian = "\u0639\u0644\u06cc\u200c\u0631\u0636\u0627";
+    expect(sanitizeString(persian)).toBe(persian);
+    expect(sanitizeString(persian)).toMatch(/\u200c/);
   });
 });

@@ -94,7 +94,8 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
 
   let text: string;
   if (cfg.filePath) {
-    const { readFileSync, statSync } = await import("node:fs");
+    const { statSync, openSync, readSync, closeSync } = await import("node:fs");
+    let fd: number | undefined;
     try {
       const stats = statSync(cfg.filePath);
       if (!stats.isFile()) {
@@ -103,16 +104,22 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
       if (stats.size > MAX_ICS_FILE_BYTES) {
         throw new ConnectorError("schema", "Calendar ICS file exceeds maximum size");
       }
+      fd = openSync(cfg.filePath, "r");
+      const buffer = Buffer.alloc(MAX_ICS_FILE_BYTES + 1);
+      const bytesRead = readSync(fd, buffer, 0, MAX_ICS_FILE_BYTES + 1, 0);
+      if (bytesRead > MAX_ICS_FILE_BYTES) {
+        throw new ConnectorError("schema", "Calendar ICS file exceeds maximum size");
+      }
+      text = buffer.subarray(0, bytesRead).toString("utf8");
     } catch (e) {
       if (isConnectorError(e)) {
         throw e;
       }
       throw new ConnectorError("config", "Calendar ICS file is not readable");
-    }
-    try {
-      text = readFileSync(cfg.filePath, "utf8");
-    } catch {
-      throw new ConnectorError("config", "Calendar ICS file is not readable");
+    } finally {
+      if (fd !== undefined) {
+        closeSync(fd);
+      }
     }
   } else if (cfg.urlSecretKey) {
     // Fixture-driven builds only read files; URL path kept for the owner spike in ADR 0005.
