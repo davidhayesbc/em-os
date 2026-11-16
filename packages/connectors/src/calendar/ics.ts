@@ -19,6 +19,7 @@ export interface ParseIcsDeps {
 export const MAX_ICS_FILE_BYTES = 5 * 1024 * 1024;
 
 const MAX_OCCURRENCES_PER_EVENT = 500;
+const MAX_ITERATIONS_PER_EVENT = 20_000;
 const MAX_EVENTS_TOTAL = 2000;
 const MAX_TITLE_LENGTH = 2000;
 const MAX_EXTERNAL_ID_LENGTH = 2000;
@@ -29,6 +30,8 @@ const ICS_RECURRENCE_PER_EVENT_LIMIT_MESSAGE =
   "Calendar ICS recurrence expansion exceeded the per-event limit";
 const ICS_RECURRENCE_TOTAL_LIMIT_MESSAGE =
   "Calendar ICS recurrence expansion exceeded the total event limit";
+const ICS_RECURRENCE_ITERATION_LIMIT_MESSAGE =
+  "Calendar ICS recurrence expansion exceeded the iteration limit";
 const ICS_FIELD_TOO_LONG_MESSAGE = "Calendar ICS event field exceeds maximum length";
 
 /**
@@ -213,16 +216,21 @@ export function parseIcsEvents(deps: ParseIcsDeps): CalendarEventDraft[] {
 
     if (event.isRecurring()) {
       const iterator = event.iterator();
+      let iterationCount = 0;
       let perEventCount = 0;
       for (let next = iterator.next(); next; next = iterator.next()) {
-        perEventCount++;
-        if (perEventCount > MAX_OCCURRENCES_PER_EVENT) {
-          throw new ConnectorError("schema", ICS_RECURRENCE_PER_EVENT_LIMIT_MESSAGE);
+        iterationCount++;
+        if (iterationCount > MAX_ITERATIONS_PER_EVENT) {
+          throw new ConnectorError("schema", ICS_RECURRENCE_ITERATION_LIMIT_MESSAGE);
         }
         const occurrence = event.getOccurrenceDetails(next);
         const startDate = new Date(occurrence.startDate.toUnixTime() * 1000);
         if (startDate >= deps.windowEnd) break;
         if (startDate >= deps.windowStart) {
+          perEventCount++;
+          if (perEventCount > MAX_OCCURRENCES_PER_EVENT) {
+            throw new ConnectorError("schema", ICS_RECURRENCE_PER_EVENT_LIMIT_MESSAGE);
+          }
           totalCount++;
           if (totalCount > MAX_EVENTS_TOTAL) {
             throw new ConnectorError("schema", ICS_RECURRENCE_TOTAL_LIMIT_MESSAGE);
