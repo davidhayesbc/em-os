@@ -38,18 +38,22 @@ const ICS_RECURRENCE_TOTAL_ITERATION_LIMIT_MESSAGE =
 const ICS_FIELD_TOO_LONG_MESSAGE = "Calendar ICS event field exceeds maximum length";
 const ICS_INVALID_UID_MESSAGE = "Calendar ICS event has an invalid UID";
 
-/** Unicode format characters used for bidirectional attacks and invisible markers. */
-const BIDI_AND_FORMAT_CHARS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
-
 /**
- * Removes C0/C1 control characters and dangerous Unicode format characters from a
+ * Removes C0/C1 control characters and all Unicode format characters from a
  * user-supplied ICS value before it reaches the database. Legitimate joiners
  * (ZWJ/U+200D and ZWNJ/U+200C) are intentionally preserved so names and emoji
  * sequences render correctly.
  */
 export function sanitizeString(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  return value.replace(/[\p{Cc}]/gu, "").replace(BIDI_AND_FORMAT_CHARS, "");
+  return value
+    .replace(/[\p{Cc}]/gu, "")
+    .replace(/\p{Cf}/gu, (ch) => (ch === "\u200C" || ch === "\u200D" ? ch : ""));
+}
+
+/** Returns true when `value` contains no control or format characters except ZWJ/ZWNJ. */
+export function isSanitizedString(value: string): boolean {
+  return !/\p{Cc}/u.test(value) && !/\p{Cf}/u.test(value.replace(/[\u200C\u200D]/gu, ""));
 }
 
 /**
