@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ConnectorError } from "../runtime/errors.js";
 import type { ConnectorContext, ConnectorDefinition, SyncPage } from "../runtime/types.js";
 import { applyCalendarEvent } from "./apply.js";
+import type { CalendarEventDTO as CalendarEventDTOT } from "./dto.js";
 import { CalendarEventDTO } from "./dto.js";
 import { parseIcsEvents } from "./ics.js";
 
@@ -42,22 +43,23 @@ function requireStore(ctx: ConnectorContext<CalendarConfig>): Store {
 
 async function* syncMcp(
   ctx: ConnectorContext<CalendarConfig>,
-  cursor: string | null,
+  // The cursor is the provider page token *within a run*; the window is
+  // recomputed each run, so we always start pagination from the beginning.
+  _cursor: string | null,
 ): AsyncIterableIterator<SyncPage> {
   const { start, end } = syncWindow(ctx.now());
 
-  let nextCursor = cursor;
+  let nextCursor: string | null = null;
   do {
-    const raw = await ctx.caps.call(
+    const page: z.infer<typeof CalendarPage> = await ctx.caps.call(
       "calendar.listEvents",
       {
         start: start.toISOString(),
         end: end.toISOString(),
         page: nextCursor,
       },
-      z.any(),
+      CalendarPage,
     );
-    const page = CalendarPage.parse(raw);
     const store = requireStore(ctx);
     const profile = store.settings.getProfile();
 
@@ -82,10 +84,22 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
   const profile = store.settings.getProfile();
   const { start, end } = syncWindow(ctx.now());
 
+  function selfEmail(): string | null {
+    const selfId = profile.selfPersonId;
+    if (!selfId) return null;
+    const identities = store.people.identities(selfId);
+    const email = identities.find((i) => i.source === "email");
+    return email?.handle ?? null;
+  }
+
   let text: string;
   if (cfg.filePath) {
     const { readFileSync } = await import("node:fs");
-    text = readFileSync(cfg.filePath, "utf8");
+    try {
+      text = readFileSync(cfg.filePath, "utf8");
+    } catch {
+      throw new ConnectorError("config", "Calendar ICS file is not readable");
+    }
   } else if (cfg.urlSecretKey) {
     // Fixture-driven builds only read files; URL path kept for the owner spike in ADR 0005.
     throw new ConnectorError("config", "Calendar ICS URL transport is not enabled in fixture mode");
@@ -93,12 +107,18 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
     throw new ConnectorError("config", "Calendar ICS transport requires filePath or urlSecretKey");
   }
 
-  const dtos = parseIcsEvents({
-    text,
-    windowStart: start,
-    windowEnd: end,
-    displayZone: profile.displayTimeZone,
-  });
+  let dtos: CalendarEventDTOT[];
+  try {
+    dtos = parseIcsEvents({
+      text,
+      windowStart: start,
+      windowEnd: end,
+      displayZone: profile.displayTimeZone,
+      selfEmail: selfEmail(),
+    });
+  } catch {
+    throw new ConnectorError("schema", "Calendar ICS data is malformed");
+  }
 
   yield {
     items: dtos.map((dto) => ({

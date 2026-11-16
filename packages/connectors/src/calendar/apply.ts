@@ -10,7 +10,7 @@ export interface ApplyDeps {
 
 function normalizeResponseStatus(responseStatus: string | null): ExternalMeeting["selfResponse"] {
   if (responseStatus === null) return null;
-  const normalized = responseStatus.toLowerCase().replace(/_/g, "");
+  const normalized = responseStatus.toLowerCase().replace(/[_-]/g, "");
   switch (normalized) {
     case "accepted":
       return "accepted";

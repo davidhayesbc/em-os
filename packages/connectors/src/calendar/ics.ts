@@ -10,9 +10,14 @@ export interface ParseIcsDeps {
   windowEnd: Date;
   /** IANA time zone used to interpret all-day events. */
   displayZone: string;
+  /** Optional self attendee email used to mark the owner's participation. */
+  selfEmail?: string | null;
 }
 
-function formatAttendee(prop: ICAL.Property): CalendarEventDTO["attendees"][number] {
+function formatAttendee(
+  prop: ICAL.Property,
+  selfEmail: string | null | undefined,
+): CalendarEventDTO["attendees"][number] {
   const value = String(prop.getFirstValue?.() ?? "");
   const email = value.startsWith("mailto:") ? value.slice(7) : value;
   // ical.js stores parameter names lower-cased in jCal.
@@ -22,10 +27,11 @@ function formatAttendee(prop: ICAL.Property): CalendarEventDTO["attendees"][numb
   const responseStatus = (
     prop as unknown as { getParameter(name: string): string | null }
   ).getParameter("partstat");
+  const isSelf = !!(email && selfEmail && email.toLowerCase() === selfEmail.toLowerCase());
   return {
     email: email || null,
     displayName: displayName ?? null,
-    self: false,
+    self: isSelf,
     responseStatus: responseStatus?.toLowerCase() ?? null,
   };
 }
@@ -106,13 +112,14 @@ function buildEventDto(
   startTime: ICAL.Time,
   endTime: ICAL.Time,
   displayZone: string,
+  selfEmail: string | null | undefined,
 ): CalendarEventDTO {
   const start = icalTimeToUtcIso(startTime, displayZone);
   const end = icalTimeToUtcIso(endTime, displayZone);
 
   const attendees: CalendarEventDTO["attendees"] = [];
   for (const prop of event.component.getAllProperties("attendee")) {
-    attendees.push(formatAttendee(prop));
+    attendees.push(formatAttendee(prop, selfEmail));
   }
 
   return {
@@ -132,6 +139,7 @@ export function parseIcsEvents(deps: ParseIcsDeps): CalendarEventDTO[] {
   const parsed = ICAL.parse(deps.text);
   const root = new ICAL.Component(parsed);
   const events: CalendarEventDTO[] = [];
+  const selfEmail = deps.selfEmail;
 
   for (const vevent of root.getAllSubcomponents("vevent")) {
     const event = new ICAL.Event(vevent);
@@ -144,14 +152,22 @@ export function parseIcsEvents(deps: ParseIcsDeps): CalendarEventDTO[] {
         if (startDate >= deps.windowEnd) break;
         if (startDate >= deps.windowStart) {
           events.push(
-            buildEventDto(event, occurrence.startDate, occurrence.endDate, deps.displayZone),
+            buildEventDto(
+              event,
+              occurrence.startDate,
+              occurrence.endDate,
+              deps.displayZone,
+              selfEmail,
+            ),
           );
         }
       }
     } else {
       const startDate = new Date(event.startDate.toUnixTime() * 1000);
       if (startDate >= deps.windowStart && startDate < deps.windowEnd) {
-        events.push(buildEventDto(event, event.startDate, event.endDate, deps.displayZone));
+        events.push(
+          buildEventDto(event, event.startDate, event.endDate, deps.displayZone, selfEmail),
+        );
       }
     }
   }

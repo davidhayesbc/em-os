@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,9 +6,11 @@ import type { Meeting } from "@emos/api-contract";
 import type { Clock, Store } from "@emos/core";
 import { createStore, openDb } from "@emos/store-sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { z } from "zod";
 import { calendarConnector, createAppliers, fixtureInvoker } from "../index.js";
+import { ConnectorError } from "../runtime/errors.js";
 import { runSync } from "../runtime/orchestrator.js";
-import type { ConnectorContext } from "../runtime/types.js";
+import type { CapabilityInvoker, ConnectorContext } from "../runtime/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(__dirname, "..", "..", "fixtures", "calendar");
@@ -98,6 +100,56 @@ function eventsBus() {
     calls: [] as Array<{ type: string; connectorId: string; state: string }>,
     publish(e: { type: "sync.status"; connectorId: string; state: string }) {
       this.calls.push(e);
+    },
+  };
+}
+
+function tempDir() {
+  const dir = mkdtempSync(join(tmpdir(), "emos-calendar-test-"));
+  return {
+    dir,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+/**
+ * A fixture invoker that records every call (capability, args, schema) and returns
+ * successive canned responses per capability. Useful for asserting that a sync made
+ * exactly the expected invocations.
+ */
+function recordingFixtureInvoker(responses: Record<string, unknown[]>): CapabilityInvoker & {
+  calls: Array<{ capability: string; args: Record<string, unknown>; schema: z.ZodType<unknown> }>;
+} {
+  const counters: Record<string, number> = {};
+  const calls: Array<{
+    capability: string;
+    args: Record<string, unknown>;
+    schema: z.ZodType<unknown>;
+  }> = [];
+
+  return {
+    calls,
+    async call<T>(
+      capability: string,
+      args: Record<string, unknown>,
+      schema: z.ZodType<T>,
+    ): Promise<T> {
+      calls.push({ capability, args, schema: schema as z.ZodType<unknown> });
+      const list = responses[capability];
+      if (!list || list.length === 0) {
+        throw new ConnectorError("config", `No fixture response for capability ${capability}`);
+      }
+      const index = counters[capability] ?? 0;
+      counters[capability] = index + 1;
+      if (index >= list.length) {
+        throw new ConnectorError("config", `Fixture responses exhausted for ${capability}`);
+      }
+      const value = structuredClone(list[index] as T);
+      const parsed = schema.safeParse(value);
+      if (!parsed.success) {
+        throw new ConnectorError("schema", `Fixture response for ${capability} failed validation`);
+      }
+      return parsed.data;
     },
   };
 }
@@ -244,6 +296,77 @@ describe("calendarConnector MCP transport", () => {
     )[0] as Meeting;
     expect(meeting.selfResponse).toBe("accepted");
   });
+
+  it("starts pagination from null even when a cursor is already persisted", async () => {
+    const page1 = JSON.parse(readFileSync(join(fixtureDir, "events.page1.json"), "utf8")) as {
+      items: unknown[];
+      nextCursor: string | null;
+    };
+    sqlite.store.syncState.set({
+      connectorId: "calendar",
+      cursor: "page2",
+      state: "ok",
+      lastAttemptAt: fixedNow.toISOString(),
+      lastSuccessAt: fixedNow.toISOString(),
+      lastError: null,
+      itemCount: 0,
+    });
+
+    const caps = recordingFixtureInvoker({
+      "calendar.listEvents": [{ ...page1, nextCursor: null }],
+    });
+    const ctx = makeContext(
+      { transport: "mcp", server: "example-server", preset: "example-calendar" },
+      caps,
+      sqlite.store,
+    );
+
+    const result = await runCalendar(ctx, sqlite.store);
+
+    expect(result).toEqual({ pages: 1, items: 3 });
+    expect(caps.calls).toHaveLength(1);
+    expect(caps.calls[0]?.args.page).toBeNull();
+
+    const meetings = sqlite.store.meetings.listRange(
+      "2026-10-13T12:00:00.000Z",
+      "2026-11-03T12:00:00.000Z",
+      { includeCancelled: true },
+    );
+    expect(meetings.map((m) => m.externalId).sort()).toContain("evt-1");
+  });
+
+  it("classifies a DTO schema mismatch as a terminal error with one attempt", async () => {
+    const badPage = {
+      items: [
+        {
+          externalId: "bad-1",
+          title: "Bad event",
+          start: "2026-10-20T13:00:00.000Z",
+          end: "2026-10-20T14:00:00.000Z",
+          allDay: false,
+          status: "provisional",
+          attendees: [],
+          url: null,
+          recurringEventId: null,
+        },
+      ],
+      nextCursor: null,
+    };
+    const caps = recordingFixtureInvoker({ "calendar.listEvents": [badPage] });
+    const ctx = makeContext(
+      { transport: "mcp", server: "example-server", preset: "example-calendar" },
+      caps,
+      sqlite.store,
+    );
+
+    const result = await runCalendar(ctx, sqlite.store);
+
+    expect(result).toEqual({ pages: 0, items: 0 });
+    expect(caps.calls).toHaveLength(1);
+    const state = sqlite.store.syncState.get("calendar");
+    expect(state.state).toBe("error");
+    expect(state.lastError).not.toContain("provisional");
+  });
 });
 
 describe("calendarConnector ICS transport", () => {
@@ -306,5 +429,76 @@ describe("calendarConnector ICS transport", () => {
     expect(meeting.allDay).toBe(true);
     expect(meeting.start).toBe("2026-10-23T07:00:00.000Z");
     expect(meeting.end).toBe("2026-10-24T07:00:00.000Z");
+  });
+
+  it("classifies a missing ICS file as a terminal config error", async () => {
+    const ctx = makeContext(
+      { transport: "ics", filePath: join(fixtureDir, "does-not-exist.ics") },
+      fixtureInvoker({}),
+      sqlite.store,
+    );
+
+    const result = await runCalendar(ctx, sqlite.store);
+
+    expect(result).toEqual({ pages: 0, items: 0 });
+    const state = sqlite.store.syncState.get("calendar");
+    expect(state.state).toBe("error");
+    expect(state.lastError).toBe("Calendar ICS file is not readable");
+  });
+
+  it("classifies malformed ICS text as a terminal schema error", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "bad.ics");
+    writeFileSync(path, "this is not ical data", "utf8");
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe("Calendar ICS data is malformed");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("resolves self response from an ATTENDEE matching the profile email", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "self-attendee.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:self-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "SUMMARY:Self attendee meeting",
+        "STATUS:CONFIRMED",
+        'ATTENDEE;CN="Alex Rivera";PARTSTAT=ACCEPTED:mailto:alex@example.com',
+        'ATTENDEE;CN="Sam Chen";PARTSTAT=NEEDS-ACTION:mailto:sam@example.com',
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      await runCalendar(ctx, sqlite.store);
+
+      const meeting = sqlite.store.meetings
+        .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
+        .find((m) => m.title === "Self attendee meeting") as Meeting;
+      expect(meeting.selfResponse).toBe("accepted");
+    } finally {
+      cleanup();
+    }
   });
 });
