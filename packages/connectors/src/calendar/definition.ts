@@ -3,10 +3,10 @@ import type { Store } from "@emos/core";
 import { z } from "zod";
 import { ConnectorError, isConnectorError } from "../runtime/errors.js";
 import type { ConnectorContext, ConnectorDefinition, SyncPage } from "../runtime/types.js";
-import { applyCalendarEvent } from "./apply.js";
+import { applyCalendarEvent, normalizeEventDto } from "./apply.js";
 import type { CalendarEventDTO as CalendarEventDTOT } from "./dto.js";
 import { CalendarEventDTO } from "./dto.js";
-import { MAX_ICS_FILE_BYTES, parseIcsEvents } from "./ics.js";
+import { MAX_EVENTS_TOTAL, MAX_ICS_FILE_BYTES, parseIcsEvents } from "./ics.js";
 
 interface IcsFileSystem {
   openSync(path: string, flags: number): number;
@@ -96,6 +96,9 @@ function requireStore(ctx: ConnectorContext<CalendarConfig>): Store {
   return ctx.store;
 }
 
+const MCP_PAGE_ITEM_LIMIT_MESSAGE = "Calendar MCP page exceeds maximum event count";
+const MCP_SYNC_ITEM_LIMIT_MESSAGE = "Calendar MCP sync exceeded the maximum event count";
+
 async function* syncMcp(
   ctx: ConnectorContext<CalendarConfig>,
   // The cursor is the provider page token *within a run*; the window is
@@ -105,6 +108,7 @@ async function* syncMcp(
   const { start, end } = syncWindow(ctx.now());
 
   let nextCursor: string | null = null;
+  let totalItems = 0;
   do {
     const page: z.infer<typeof CalendarPage> = await ctx.caps.call(
       "calendar.listEvents",
@@ -115,13 +119,22 @@ async function* syncMcp(
       },
       CalendarPage,
     );
+
+    if (page.items.length > MAX_EVENTS_TOTAL) {
+      throw new ConnectorError("schema", MCP_PAGE_ITEM_LIMIT_MESSAGE);
+    }
+    if (totalItems + page.items.length > MAX_EVENTS_TOTAL) {
+      throw new ConnectorError("schema", MCP_SYNC_ITEM_LIMIT_MESSAGE);
+    }
+    totalItems += page.items.length;
+
     const store = requireStore(ctx);
     const profile = store.settings.getProfile();
 
     yield {
       items: page.items.map((dto) => ({
         entity: "meeting",
-        data: applyCalendarEvent(dto, {
+        data: applyCalendarEvent(normalizeEventDto(dto), {
           connectorId: "calendar",
           people: store.people,
           profile,
@@ -191,7 +204,7 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
   yield {
     items: dtos.map((dto) => ({
       entity: "meeting",
-      data: applyCalendarEvent(dto, {
+      data: applyCalendarEvent(normalizeEventDto(dto), {
         connectorId: "calendar",
         people: store.people,
         profile,

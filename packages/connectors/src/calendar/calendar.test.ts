@@ -402,6 +402,220 @@ describe("calendarConnector MCP transport", () => {
     expect(state.state).toBe("error");
     expect(state.lastError).not.toContain("provisional");
   });
+
+  it("strips control and format characters from MCP event titles and attendee display names", async () => {
+    const page = {
+      items: [
+        {
+          externalId: "ctrl-1",
+          title: "Esc\u001b[31mInjected\u0000 \u202eRTL",
+          start: "2026-10-20T13:00:00.000Z",
+          end: "2026-10-20T14:00:00.000Z",
+          allDay: false,
+          status: "confirmed",
+          attendees: [
+            {
+              email: "sam@example.com",
+              displayName: "Sam\u001b[0m\u200b Chen",
+              self: false,
+              responseStatus: "needsAction",
+            },
+          ],
+          url: null,
+          recurringEventId: null,
+        },
+      ],
+      nextCursor: null,
+    };
+    const caps = recordingFixtureInvoker({ "calendar.listEvents": [page] });
+    const ctx = makeContext(
+      { transport: "mcp", server: "example-server", preset: "example-calendar" },
+      caps,
+      sqlite.store,
+    );
+
+    const result = await runCalendar(ctx, sqlite.store);
+    expect(result).toEqual({ pages: 1, items: 1 });
+
+    const meeting = sqlite.store.meetings.listRange(
+      "2026-10-20T00:00:00.000Z",
+      "2026-10-21T00:00:00.000Z",
+      { includeCancelled: true },
+    )[0] as Meeting;
+    expect(meeting).toBeDefined();
+    expect(/[\p{Cc}\p{Cf}]/u.test(meeting.title)).toBe(false);
+    const sam = meeting.attendees.find((a) => a.email === "sam@example.com");
+    expect(sam).toBeDefined();
+    expect(/[\p{Cc}\p{Cf}]/u.test(sam?.displayName ?? "")).toBe(false);
+  });
+
+  it("rejects an MCP event with an oversized title as a terminal schema error", async () => {
+    const page = {
+      items: [
+        {
+          externalId: "long-title-1",
+          title: "x".repeat(5000),
+          start: "2026-10-20T13:00:00.000Z",
+          end: "2026-10-20T14:00:00.000Z",
+          allDay: false,
+          status: "confirmed",
+          attendees: [],
+          url: null,
+          recurringEventId: null,
+        },
+      ],
+      nextCursor: null,
+    };
+    const caps = recordingFixtureInvoker({ "calendar.listEvents": [page] });
+    const ctx = makeContext(
+      { transport: "mcp", server: "example-server", preset: "example-calendar" },
+      caps,
+      sqlite.store,
+    );
+
+    const result = await runCalendar(ctx, sqlite.store);
+
+    expect(result).toEqual({ pages: 0, items: 0 });
+    const state = sqlite.store.syncState.get("calendar");
+    expect(state.state).toBe("error");
+    expect(state.lastError).toBe("Calendar event title exceeds maximum length");
+
+    const meetings = sqlite.store.meetings.listRange(
+      "2026-10-20T00:00:00.000Z",
+      "2026-10-21T00:00:00.000Z",
+      { includeCancelled: true },
+    );
+    expect(meetings).toHaveLength(0);
+  });
+
+  it("rejects an MCP page that exceeds the per-page event ceiling with zero rows", async () => {
+    const items: unknown[] = [];
+    const base = new Date("2026-10-13T12:00:00.000Z").getTime();
+    for (let i = 0; i < 2001; i++) {
+      const start = new Date(base + i * 1000).toISOString();
+      const end = new Date(base + i * 1000 + 60_000).toISOString();
+      items.push({
+        externalId: `bulk-${i}`,
+        title: `Bulk ${i}`,
+        start,
+        end,
+        allDay: false,
+        status: "confirmed",
+        attendees: [],
+        url: null,
+        recurringEventId: null,
+      });
+    }
+    const caps = recordingFixtureInvoker({ "calendar.listEvents": [{ items, nextCursor: null }] });
+    const ctx = makeContext(
+      { transport: "mcp", server: "example-server", preset: "example-calendar" },
+      caps,
+      sqlite.store,
+    );
+
+    const result = await runCalendar(ctx, sqlite.store);
+
+    expect(result).toEqual({ pages: 0, items: 0 });
+    expect(caps.calls).toHaveLength(1);
+    const state = sqlite.store.syncState.get("calendar");
+    expect(state.state).toBe("error");
+    expect(state.lastError).toBe("Calendar MCP page exceeds maximum event count");
+    expect(state.lastError).not.toContain("bulk-");
+    expect(state.lastError).not.toContain("example-server");
+
+    const meetings = sqlite.store.meetings.listRange(
+      "2026-10-13T12:00:00.000Z",
+      "2026-11-03T12:00:00.000Z",
+      { includeCancelled: true },
+    );
+    expect(meetings).toHaveLength(0);
+  });
+
+  it("rejects an MCP sync that exceeds the per-sync event ceiling after committing the first page", async () => {
+    function buildPage(count: number, prefix: string): unknown[] {
+      const items: unknown[] = [];
+      const base = new Date("2026-10-13T12:00:00.000Z").getTime();
+      for (let i = 0; i < count; i++) {
+        const start = new Date(base + i * 1000).toISOString();
+        const end = new Date(base + i * 1000 + 60_000).toISOString();
+        items.push({
+          externalId: `${prefix}-${i}`,
+          title: `Sync ${prefix} ${i}`,
+          start,
+          end,
+          allDay: false,
+          status: "confirmed",
+          attendees: [],
+          url: null,
+          recurringEventId: null,
+        });
+      }
+      return items;
+    }
+
+    const caps = recordingFixtureInvoker({
+      "calendar.listEvents": [
+        { items: buildPage(1500, "page1"), nextCursor: "page-2" },
+        { items: buildPage(600, "page2"), nextCursor: null },
+      ],
+    });
+    const ctx = makeContext(
+      { transport: "mcp", server: "example-server", preset: "example-calendar" },
+      caps,
+      sqlite.store,
+    );
+
+    const result = await runCalendar(ctx, sqlite.store);
+
+    expect(result).toEqual({ pages: 1, items: 1500 });
+    expect(caps.calls).toHaveLength(2);
+    const state = sqlite.store.syncState.get("calendar");
+    expect(state.state).toBe("error");
+    expect(state.lastError).toBe("Calendar MCP sync exceeded the maximum event count");
+    expect(state.lastError).not.toContain("bulk-");
+    expect(state.lastError).not.toContain("example-server");
+
+    const meetings = sqlite.store.meetings.listRange(
+      "2026-10-13T12:00:00.000Z",
+      "2026-11-03T12:00:00.000Z",
+      { includeCancelled: true },
+    );
+    expect(meetings).toHaveLength(1500);
+  });
+
+  it("drops a non-http(s) URL from an MCP event", async () => {
+    const page = {
+      items: [
+        {
+          externalId: "url-1",
+          title: "Meeting with bad URL",
+          start: "2026-10-20T13:00:00.000Z",
+          end: "2026-10-20T14:00:00.000Z",
+          allDay: false,
+          status: "confirmed",
+          attendees: [],
+          url: "javascript:alert(1)",
+          recurringEventId: null,
+        },
+      ],
+      nextCursor: null,
+    };
+    const caps = fixtureInvoker({ "calendar.listEvents": [page] });
+    const ctx = makeContext(
+      { transport: "mcp", server: "example-server", preset: "example-calendar" },
+      caps,
+      sqlite.store,
+    );
+
+    await runCalendar(ctx, sqlite.store);
+
+    const meeting = sqlite.store.meetings.listRange(
+      "2026-10-20T00:00:00.000Z",
+      "2026-10-21T00:00:00.000Z",
+      { includeCancelled: true },
+    )[0] as Meeting;
+    expect(meeting.url).toBeNull();
+  });
 });
 
 describe("calendarConnector ICS transport", () => {
