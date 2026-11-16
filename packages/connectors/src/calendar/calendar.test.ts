@@ -11,6 +11,7 @@ import { calendarConnector, createAppliers, fixtureInvoker } from "../index.js";
 import { ConnectorError } from "../runtime/errors.js";
 import { runSync } from "../runtime/orchestrator.js";
 import type { CapabilityInvoker, ConnectorContext } from "../runtime/types.js";
+import { MAX_ICS_FILE_BYTES } from "./ics.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(__dirname, "..", "..", "fixtures", "calendar");
@@ -591,6 +592,188 @@ describe("calendarConnector ICS transport", () => {
         .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
         .find((m) => m.title === "Self attendee meeting") as Meeting;
       expect(meeting.selfResponse).toBe("accepted");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects a SECONDLY recurrence flood as a terminal schema error with no rows written", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "flood.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:flood-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T120000Z",
+        "RRULE:FREQ=SECONDLY;COUNT=1000",
+        "SUMMARY:Flood event",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe(
+        "Calendar ICS recurrence expansion exceeded the per-event limit",
+      );
+
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-20T00:00:00.000Z",
+        "2026-10-21T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects an oversized ICS file as a terminal schema error", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "huge.ics");
+    writeFileSync(path, Buffer.alloc(MAX_ICS_FILE_BYTES + 1, "A"));
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe("Calendar ICS file exceeds maximum size");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("strips control characters from ICS-derived strings", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "control-chars.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:ctrl-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "SUMMARY:\u001b[31m\u0000Team Sync\u0000\u001b[0m",
+        "STATUS:CONFIRMED",
+        'ATTENDEE;CN="\u001b[31mSam Chen\u001b[0m":mailto:sam@example.com',
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      await runCalendar(ctx, sqlite.store);
+
+      const meeting = sqlite.store.meetings
+        .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
+        .find((m) => m.title.includes("Team Sync")) as Meeting;
+      expect(meeting).toBeDefined();
+      expect(meeting.title).toBe("[31mTeam Sync[0m");
+      expect(/[\p{Cc}\p{Cf}]/u.test(meeting.title)).toBe(false);
+      const sam = meeting.attendees.find((a) => a.email === "sam@example.com");
+      expect(sam?.displayName).toBe("[31mSam Chen[0m");
+      expect(/[\p{Cc}\p{Cf}]/u.test(sam?.displayName ?? "")).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("drops a non-http URL value as null", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "bad-url.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:url-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "SUMMARY:Meeting with bad URL",
+        "URL:javascript:alert(1)",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      await runCalendar(ctx, sqlite.store);
+
+      const meeting = sqlite.store.meetings
+        .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
+        .find((m) => m.title === "Meeting with bad URL") as Meeting;
+      expect(meeting.url).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects an ICS event field that exceeds the maximum length", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "long-title.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:long-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        `SUMMARY:${"x".repeat(2001)}`,
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe("Calendar ICS event field exceeds maximum length");
+
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-20T00:00:00.000Z",
+        "2026-10-21T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
     } finally {
       cleanup();
     }

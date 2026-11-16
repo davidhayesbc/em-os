@@ -1,11 +1,11 @@
 import type { Store } from "@emos/core";
 import { z } from "zod";
-import { ConnectorError } from "../runtime/errors.js";
+import { ConnectorError, isConnectorError } from "../runtime/errors.js";
 import type { ConnectorContext, ConnectorDefinition, SyncPage } from "../runtime/types.js";
 import { applyCalendarEvent } from "./apply.js";
 import type { CalendarEventDTO as CalendarEventDTOT } from "./dto.js";
 import { CalendarEventDTO } from "./dto.js";
-import { parseIcsEvents } from "./ics.js";
+import { MAX_ICS_FILE_BYTES, parseIcsEvents } from "./ics.js";
 
 const McpConfig = z.object({
   transport: z.literal("mcp"),
@@ -94,7 +94,21 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
 
   let text: string;
   if (cfg.filePath) {
-    const { readFileSync } = await import("node:fs");
+    const { readFileSync, statSync } = await import("node:fs");
+    try {
+      const stats = statSync(cfg.filePath);
+      if (!stats.isFile()) {
+        throw new ConnectorError("config", "Calendar ICS file is not readable");
+      }
+      if (stats.size > MAX_ICS_FILE_BYTES) {
+        throw new ConnectorError("schema", "Calendar ICS file exceeds maximum size");
+      }
+    } catch (e) {
+      if (isConnectorError(e)) {
+        throw e;
+      }
+      throw new ConnectorError("config", "Calendar ICS file is not readable");
+    }
     try {
       text = readFileSync(cfg.filePath, "utf8");
     } catch {
@@ -119,12 +133,15 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
       windowEnd: end,
       displayZone: profile.displayTimeZone,
       selfEmail: selfEmailValue,
-    });
+    }) as CalendarEventDTOT[];
     // parseIcsEvents returns plain objects typed as CalendarEventDTO; validate
     // the shape so DTO drift (e.g. a missing SUMMARY becoming undefined) becomes
     // a classified schema error instead of a raw database error (R5).
     CalendarEventDTO.array().parse(dtos);
-  } catch {
+  } catch (e) {
+    if (isConnectorError(e)) {
+      throw e;
+    }
     throw new ConnectorError("schema", "Calendar ICS data is malformed");
   }
 
