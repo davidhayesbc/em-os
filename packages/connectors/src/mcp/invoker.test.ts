@@ -495,6 +495,56 @@ describe("createMcpInvoker", () => {
     );
   });
 
+  it("throws config when reading the bearer secret fails", async () => {
+    const serverDef: McpServerDef = {
+      name: "gateway",
+      type: "http",
+      url: "https://gateway.example.com/mcp",
+      auth: { kind: "bearer", secretKey: "mcp:gateway:token" },
+    };
+
+    const throwingStore: SecretStore = {
+      get: async () => {
+        throw new Error("something went wrong with secret-key");
+      },
+      set: async () => {},
+      delete: async () => {},
+    };
+
+    const invoker = createMcpInvoker(serverDef, examplePreset, throwingStore);
+    await expect(invoker.call("calendar.listEvents", {}, z.object({}))).rejects.toSatisfy(
+      (e: unknown) => {
+        expect(e).toBeInstanceOf(ConnectorError);
+        const ce = e as ConnectorError;
+        expect(ce.kind).toBe("config");
+        expect(ce.message).toBe('Failed to read bearer secret for "gateway"');
+        expect(ce.message).not.toContain("secret-key");
+        expect(ce.message).not.toContain("mcp:gateway:token");
+        return true;
+      },
+    );
+  });
+
+  it("throws config when the http server URL is malformed", async () => {
+    const serverDef: McpServerDef = {
+      name: "gateway",
+      type: "http",
+      url: "not a url",
+    };
+
+    const invoker = createMcpInvoker(serverDef, examplePreset, memorySecretStore());
+    await expect(invoker.call("calendar.listEvents", {}, z.object({}))).rejects.toSatisfy(
+      (e: unknown) => {
+        expect(e).toBeInstanceOf(ConnectorError);
+        const ce = e as ConnectorError;
+        expect(ce.kind).toBe("config");
+        expect(ce.message).toBe('Malformed URL for http server "gateway"');
+        expect(ce.message).not.toContain("not a url");
+        return true;
+      },
+    );
+  });
+
   it("throws config when bearer secret key is not namespaced", async () => {
     const serverDef: McpServerDef = {
       name: "gateway",

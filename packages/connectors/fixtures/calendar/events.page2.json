@@ -1,0 +1,29 @@
+{
+  "items": [
+    {
+      "externalId": "evt-4",
+      "title": "Design review",
+      "start": "2026-10-23T16:00:00.000Z",
+      "end": "2026-10-23T17:00:00.000Z",
+      "allDay": false,
+      "status": "confirmed",
+      "attendees": [
+        {
+          "email": "alex@example.com",
+          "displayName": "Alex Rivera",
+          "self": true,
+          "responseStatus": "accepted"
+        },
+        {
+          "email": "sam@example.com",
+          "displayName": "Sam Chen",
+          "self": false,
+          "responseStatus": "needs_action"
+        }
+      ],
+      "url": "https://cal.example.com/e/4",
+      "recurringEventId": null
+    }
+  ],
+  "nextCursor": null
+}

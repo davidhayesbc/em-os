@@ -31,6 +31,14 @@ describe("connectors API", () => {
         lastSuccessAt: null,
         lastError: null,
       },
+      {
+        id: "calendar",
+        kind: "calendar",
+        enabled: false,
+        state: "never",
+        lastSuccessAt: null,
+        lastError: null,
+      },
     ]);
   });
 
@@ -50,6 +58,14 @@ describe("connectors API", () => {
         id: "synthetic-fixture",
         kind: "calendar",
         enabled: true,
+        state: "never",
+        lastSuccessAt: null,
+        lastError: null,
+      },
+      {
+        id: "calendar",
+        kind: "calendar",
+        enabled: false,
         state: "never",
         lastSuccessAt: null,
         lastError: null,
@@ -88,6 +104,14 @@ describe("connectors API", () => {
         enabled: false,
         state: "ok",
         lastSuccessAt: expect.any(String),
+        lastError: null,
+      },
+      {
+        id: "calendar",
+        kind: "calendar",
+        enabled: false,
+        state: "never",
+        lastSuccessAt: null,
         lastError: null,
       },
     ]);

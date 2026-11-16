@@ -119,7 +119,7 @@ Everything in Phase 0's Global Constraints applies, plus:
 
 - [x] **P1-12** Connector runtime, registry, scheduler, offline handling, fixture invoker — deps: Phase 0 — claim: done · 00db3b2
 - [x] **P1-13** MCP direct transport + tool-mapping presets — deps: P1-12 — claim: done · 8e04828
-- [ ] **P1-14** Calendar connector (MCP capability + ICS native) — deps: P1-01, P1-04, P1-09, P1-12, P1-13 — claim: coder · p1-14-calendar-connector
+- [x] **P1-14** Calendar connector (MCP capability + ICS native) — deps: P1-01, P1-04, P1-09, P1-12, P1-13 — claim: done · 9c2722d5c838608c1520880dd02d6d5a85642fc0
 
 **MCP server + Claude Code**
 
@@ -820,18 +820,18 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - the DTO `end` is local midnight of the day *after* the last day (exclusive, like ICS `DTEND;VALUE=DATE`);
   - both are expressed as UTC instants for the display time zone. For example, a one-day event on 2026-10-23 in `America/Vancouver` (UTC−7 that day) has `start: "2026-10-23T07:00:00.000Z"` and `end: "2026-10-24T07:00:00.000Z"`.
 
-- [ ] **Step 1: Write the failing tests.**
-  - A two-page fixture produces N meetings.
-  - A re-sync produces no duplicates.
-  - A cancelled event is marked cancelled.
-  - An attendee email matching a person's identity sets `personId`.
-  - A weekly RRULE in `sample.ics` yields 3 instances in the window.
-  - A timed event with `TZID=America/New_York` stores the correct UTC.
-  - An all-day event sets `allDay: true`.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-14): calendar connector over mcp or ics`.
+- [x] **Step 1: Write the failing tests.**
+  - [x] A two-page fixture produces N meetings.
+  - [x] A re-sync produces no duplicates.
+  - [x] A cancelled event is marked cancelled.
+  - [x] An attendee email matching a person's identity sets `personId`.
+  - [x] A weekly RRULE in `sample.ics` yields 3 instances in the window.
+  - [x] A timed event with `TZID=America/New_York` stores the correct UTC.
+  - [x] An all-day event sets `allDay: true`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-14): calendar connector over mcp or ics`.
 
 **Acceptance:**
 - Fixture-driven tests pass for both transports.

@@ -1,5 +1,5 @@
 import type { ExternalMeeting, NewSourceItem } from "@emos/api-contract";
-import type { Logger } from "@emos/core";
+import type { Logger, Store } from "@emos/core";
 import type { z } from "zod";
 
 export type ConnectorKind =
@@ -21,6 +21,8 @@ export interface ConnectorContext<C> {
   caps: CapabilityInvoker;
   log: Logger;
   now(): Date;
+  /** Available when the runtime is wired to a store (required by the calendar connector). */
+  store?: Store;
 }
 
 export type ConnectorItem =
