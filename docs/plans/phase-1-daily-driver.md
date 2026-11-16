@@ -932,7 +932,7 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   export function runUnits(store: Store, units: ImportUnit[], ctx: ImportCtx, dryRun: boolean): ImportReportCounts;   // idempotent via import_keys; dryRun applies inside a rolled-back transaction
   ```
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `parseMarkdown` on a CRLF file gives the same sections as on LF.
   - Nested `##` / `###` build a tree.
   - `parseTodoLine("- [ ] 2026-09-22 — ([[People/Jane-Doe|Jane]] + Morgan) **Share test matrix** !next #ws:proj-x #risk-R8 <!-- id:teamv2readpaths --> <!-- id:a1b2c3 -->", 3)` → owners `["Jane Doe", "Morgan"]`, urgency `next`, workstream `proj-x`, tags `["risk-R8"]`, ids `["a1b2c3", "teamv2readpaths"]` (6-char first).
@@ -941,10 +941,10 @@ Repo methods are synchronous. Handlers validate foreign ids and throw `ApiError(
   - A plain bullet → null.
   - `runUnits` twice → the second run creates 0 records.
   - `dryRun` leaves the DB unchanged.
-- [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(p1-17): importer framework and markdown/todo parsers`.
+- [x] **Step 2: Run.** Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(p1-17): importer framework and markdown/todo parsers`.
 
 **Acceptance:** The parsers tolerate the fixture's drift cases. Units are idempotent.
 

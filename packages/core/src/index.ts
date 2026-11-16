@@ -9,6 +9,7 @@ export * from "./ports/logger.js";
 export * from "./ports/repos/accomplishments.js";
 export * from "./ports/repos/commitments.js";
 export * from "./ports/repos/goals.js";
+export * from "./ports/repos/import-keys.js";
 export * from "./ports/repos/meetings.js";
 export * from "./ports/repos/people.js";
 export * from "./ports/repos/settings.js";
