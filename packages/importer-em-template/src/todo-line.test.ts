@@ -61,6 +61,27 @@ describe("parseTodoLine", () => {
     expect(todo?.text).toBe("confirm scope");
   });
 
+  it("parses date-first owner after an em-dash separator", () => {
+    const todo = parseTodoLine(
+      "- [ ] 2026-10-23 — Sam: schedule retro !p0 #tag:planning <!-- id:d4e5f6 -->",
+      1,
+    );
+    expect(todo?.date).toBe("2026-10-23");
+    expect(todo?.owners).toEqual(["Sam"]);
+    expect(todo?.text).toBe("schedule retro");
+    expect(todo?.priority).toBe(0);
+  });
+
+  it("parses a date-first wiki-linked owner", () => {
+    const todo = parseTodoLine(
+      "- [ ] 2026-10-22 — [[People/Alex Rivera|Alex]]: update API docs !p2 #ws:api-cleanup <!-- id:c3d4e5 -->",
+      1,
+    );
+    expect(todo?.date).toBe("2026-10-22");
+    expect(todo?.owners).toEqual(["Alex Rivera"]);
+    expect(todo?.text).toBe("update API docs");
+  });
+
   it("returns a TodoLine for unparseable checkbox lines instead of null", () => {
     const todo = parseTodoLine("- [ ] not a valid todo line", 5);
     expect(todo).not.toBeNull();

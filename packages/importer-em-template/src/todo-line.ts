@@ -19,7 +19,7 @@ export interface TodoLine {
 
 const CHECKBOX_RE = /^\s*-\s*\[(x| )\]\s*(.*)$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}/;
-const ID_INNER_RE = /id:(\S+)/g;
+const ID_INNER_RE = /\bid:(\S+)/g;
 
 const URGENCY_VALUES = new Set<Urgency>(["now", "next", "soon", "later", "someday"]);
 const VALID_PRIORITY = new Set<number>([0, 1, 2, 3]);
@@ -39,10 +39,15 @@ export function parseTodoLine(line: string, lineNo: number): TodoLine | null {
   let date = extractDate(rest);
   if (date) rest = rest.slice(date.length).trimStart();
 
+  // Remove the em-dash/dash separator used in the date-first form before
+  // looking for an owner prefix, e.g. "2026-10-23 — Sam: ...".
+  rest = rest.replace(/^[—–-]\s*/, "").trimStart();
+
   let owners: string[] = [];
 
   // Owner-first order: owner token(s) before a colon at the very start.
-  const ownerFirst = /^([^\s:]+?)\s*:\s*/.exec(rest);
+  // Allow Obsidian wiki-links as the owner token so "[[People/Alex Rivera|Alex]]: ..." parses.
+  const ownerFirst = /^(\[\[[^\]]+\]\]|[^\s:]+?)\s*:\s*/.exec(rest);
   if (ownerFirst) {
     owners = parseOwners(ownerFirst[1] ?? "");
     rest = rest.slice(ownerFirst[0].length);
@@ -55,7 +60,7 @@ export function parseTodoLine(line: string, lineNo: number): TodoLine | null {
     }
   }
 
-  // Remove any leading dash/em-dash separator after date/owner prefix.
+  // Remove any remaining leading dash/em-dash separator after date/owner prefix.
   rest = rest.replace(/^[—–-]\s*/, "").trimStart();
 
   // Owner group in parentheses (date-first form).

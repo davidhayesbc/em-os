@@ -19,6 +19,15 @@ function stripFrontmatter(text: string): string {
   return text.slice(after + 1);
 }
 
+/**
+ * Parse an Obsidian-flavoured Markdown file into a section tree and any
+ * leading YAML frontmatter.
+ *
+ * Line semantics: `startLine` values are 1-based positions in the original
+ * (unstripped) file, and `lineCount` is the total number of lines in the
+ * original file including frontmatter. Any body text that appears between the
+ * frontmatter and the first heading is not represented in the section tree.
+ */
 export function parseMarkdown(text: string): {
   frontmatter: Record<string, unknown>;
   sections: Section[];
@@ -28,8 +37,11 @@ export function parseMarkdown(text: string): {
   const frontmatter = parseFrontmatter(normalized);
   const content = stripFrontmatter(normalized);
 
-  const lines = content.split("\n");
-  const lineCount = lines.length;
+  const contentLines = content.split("\n");
+  const lines = contentLines;
+  // Number of lines stripped from the top of the file (frontmatter block).
+  const frontmatterLineCount = normalized.split("\n").length - contentLines.length;
+  const lineCount = normalized.split("\n").length;
 
   const root: Section = { heading: "", level: 0, startLine: 1, lines: [], children: [] };
   const stack: Section[] = [root];
@@ -48,7 +60,7 @@ export function parseMarkdown(text: string): {
       const section: Section = {
         heading,
         level,
-        startLine: i + 1,
+        startLine: i + frontmatterLineCount + 1,
         lines: [],
         children: [],
       };

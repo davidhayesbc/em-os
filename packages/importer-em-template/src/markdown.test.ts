@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseMarkdown } from "./markdown.js";
 
+const fixtureDir = join(import.meta.dirname, "../fixtures/workspace");
 const LF_TEXT = `---\naliases: ["test"]\n---\n
 # One\nline a\n\n## Two\nline b\n\n### Three\nline c\n\n## Two again\nline d\n`;
 
@@ -37,5 +40,13 @@ describe("parseMarkdown", () => {
   it("attaches body lines to the active section", () => {
     const { sections } = parseMarkdown(LF_TEXT);
     expect(sections[0]?.lines).toContain("line a");
+  });
+
+  it("reports file-absolute line numbers for frontmatter files", () => {
+    const text = readFileSync(join(fixtureDir, "Stakeholders/jordan-patel.md"), "utf8");
+    const { sections, lineCount } = parseMarkdown(text);
+    const basics = sections.find((s) => s.heading === "Basics");
+    expect(basics?.startLine).toBe(5);
+    expect(lineCount).toBe(24);
   });
 });
