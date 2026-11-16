@@ -465,6 +465,100 @@ describe("calendarConnector ICS transport", () => {
     }
   });
 
+  it("classifies a SUMMARY-less VEVENT as a terminal schema error with one attempt", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "no-summary.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:no-summary-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe("Calendar ICS data is malformed");
+      expect(state.lastError).not.toContain("NOT NULL");
+      expect(state.lastError).not.toContain("meetings.title");
+
+      // No row with a silent undefined title should have been written.
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-20T00:00:00.000Z",
+        "2026-10-21T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects a mixed ICS page as schema rather than importing any events", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "mixed.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:good-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "SUMMARY:Valid event",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:no-summary-2@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T150000Z",
+        "DTEND:20261020T160000Z",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe("Calendar ICS data is malformed");
+
+      // The whole page is rolled back, so even the valid event is not imported.
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-20T00:00:00.000Z",
+        "2026-10-21T00:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("resolves self response from an ATTENDEE matching the profile email", async () => {
     const { dir, cleanup } = tempDir();
     const path = join(dir, "self-attendee.ics");

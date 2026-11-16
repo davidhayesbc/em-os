@@ -107,6 +107,10 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
     throw new ConnectorError("config", "Calendar ICS transport requires filePath or urlSecretKey");
   }
 
+  // Resolve self identity outside the parse/validation try so store failures are
+  // classified independently of ICS schema errors (O2).
+  const selfEmailValue = selfEmail();
+
   let dtos: CalendarEventDTOT[];
   try {
     dtos = parseIcsEvents({
@@ -114,8 +118,12 @@ async function* syncIcs(ctx: ConnectorContext<CalendarConfig>): AsyncIterableIte
       windowStart: start,
       windowEnd: end,
       displayZone: profile.displayTimeZone,
-      selfEmail: selfEmail(),
+      selfEmail: selfEmailValue,
     });
+    // parseIcsEvents returns plain objects typed as CalendarEventDTO; validate
+    // the shape so DTO drift (e.g. a missing SUMMARY becoming undefined) becomes
+    // a classified schema error instead of a raw database error (R5).
+    CalendarEventDTO.array().parse(dtos);
   } catch {
     throw new ConnectorError("schema", "Calendar ICS data is malformed");
   }
