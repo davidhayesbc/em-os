@@ -114,6 +114,39 @@ function tempDir() {
 }
 
 /**
+ * Build an ICS calendar containing `count` distinct in-window VEVENTs, used to
+ * exercise the total-event boundary (2,000 ok / 2,001 rejected).
+ */
+function buildEventCountFixture(count: number): string {
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0"];
+  const base = new Date("2026-10-13T12:00:00.000Z").getTime();
+  for (let i = 0; i < count; i++) {
+    const start = new Date(base + i * 1000);
+    const end = new Date(base + i * 1000 + 60_000);
+    const dtStart = start
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\.\d{3}Z$/, "Z");
+    const dtEnd = end
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\.\d{3}Z$/, "Z");
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:count-${i}@example.com`,
+      "DTSTAMP:20261020T120000Z",
+      `DTSTART:${dtStart}`,
+      `DTEND:${dtEnd}`,
+      `SUMMARY:Count ${i}`,
+      "STATUS:CONFIRMED",
+      "END:VEVENT",
+    );
+  }
+  lines.push("END:VCALENDAR");
+  return lines.join("\n");
+}
+
+/**
  * A fixture invoker that records every call (capability, args, schema) and returns
  * successive canned responses per capability. Useful for asserting that a sync made
  * exactly the expected invocations.
@@ -636,6 +669,177 @@ describe("calendarConnector ICS transport", () => {
         { includeCancelled: true },
       );
       expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("syncs a long-running daily recurrence whose DTSTART predates the window", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "long-recurrence.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:long-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20240101T170000Z",
+        "RRULE:FREQ=DAILY",
+        "SUMMARY:Long-running daily",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 1, items: 21 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("ok");
+
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-13T12:00:00.000Z",
+        "2026-11-03T12:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(21);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects a MINUTELY recurrence from an old DTSTART as an iteration-limit error", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "minutely.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:minutely-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20240101T000000Z",
+        "RRULE:FREQ=MINUTELY",
+        "SUMMARY:Minutely flood",
+        "STATUS:CONFIRMED",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe(
+        "Calendar ICS recurrence expansion exceeded the iteration limit",
+      );
+
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-20T00:00:00.000Z",
+        "2026-11-03T12:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("accepts 2000 in-window VEVENTs at the total event boundary", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "boundary-ok.ics");
+    writeFileSync(path, buildEventCountFixture(2000), "utf8");
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 1, items: 2000 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("ok");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects 2001 in-window VEVENTs with the total event limit", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "boundary-bad.ics");
+    writeFileSync(path, buildEventCountFixture(2001), "utf8");
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      const result = await runCalendar(ctx, sqlite.store);
+
+      expect(result).toEqual({ pages: 0, items: 0 });
+      const state = sqlite.store.syncState.get("calendar");
+      expect(state.state).toBe("error");
+      expect(state.lastError).toBe(
+        "Calendar ICS recurrence expansion exceeded the total event limit",
+      );
+
+      const meetings = sqlite.store.meetings.listRange(
+        "2026-10-13T12:00:00.000Z",
+        "2026-11-03T12:00:00.000Z",
+        { includeCancelled: true },
+      );
+      expect(meetings).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("sanitizes C0/C1 control characters from attendee mailto values", async () => {
+    const { dir, cleanup } = tempDir();
+    const path = join(dir, "attendee-email.ics");
+    writeFileSync(
+      path,
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:attendee-email-1@example.com",
+        "DTSTAMP:20261020T120000Z",
+        "DTSTART:20261020T130000Z",
+        "DTEND:20261020T140000Z",
+        "SUMMARY:Bad attendee email",
+        "STATUS:CONFIRMED",
+        'ATTENDEE;CN="Bad Actor":mailto:bad\u0000\u0001\u0007\u0080\u009femail@example.com',
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const ctx = makeContext({ transport: "ics", filePath: path }, fixtureInvoker({}), sqlite.store);
+
+    try {
+      await runCalendar(ctx, sqlite.store);
+
+      const meeting = sqlite.store.meetings
+        .listRange("2026-10-20T00:00:00.000Z", "2026-10-21T00:00:00.000Z")
+        .find((m) => m.title === "Bad attendee email") as Meeting;
+      expect(meeting).toBeDefined();
+      const attendee = meeting.attendees[0];
+      expect(attendee).toBeDefined();
+      expect(attendee?.email).toBe("bademail@example.com");
+      expect(/[\p{Cc}\p{Cf}]/u.test(attendee?.email ?? "")).toBe(false);
     } finally {
       cleanup();
     }
